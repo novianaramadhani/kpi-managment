@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:16
+    container_name: kpi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: kpi_app
+    ports:
+      - "5433:5432"
+    volumes:
+      - kpi_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  kpi_postgres_data:
