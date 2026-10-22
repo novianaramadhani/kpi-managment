@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { employees, auditLogs } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { getCurrentUser } from "@/lib/auth";
+import { requireAdmin, requireAuth } from "@/lib/auth-guard";
 import { getDefaultPermissionsForRole } from "./rbac-catalog";
 
 export interface SaveEmployeePermissionsInput {
@@ -18,8 +18,8 @@ export interface SaveEmployeePermissionsInput {
  */
 export async function saveEmployeePermissionsAction(input: SaveEmployeePermissionsInput) {
   try {
-    const currentUser = await getCurrentUser();
-    const actorName = currentUser ? `${currentUser.name} (${currentUser.nik})` : "Sistem";
+    const currentUser = await requireAdmin();
+    const actorName = `${currentUser.name} (${currentUser.nik})`;
 
     const [emp] = await db
       .select()
@@ -73,6 +73,7 @@ export async function getEmployeeEffectivePermissionsAction(employeeId: number):
   role: string;
 }> {
   try {
+    await requireAuth();
     const [emp] = await db
       .select()
       .from(employees)

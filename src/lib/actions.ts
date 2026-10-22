@@ -36,6 +36,8 @@ import { seedDemoData } from "@/db/seed-data";
 import { syncAllFromOdoo, ODOO_CONFIG } from "@/lib/odoo";
 import { matchesSite, matchesDeptName } from "./department-mapping-utils";
 import { parseConditionString } from "./excel-template-kpi";
+import bcrypt from "bcryptjs";
+import { requireAuth, requireRole, requireAdmin, requireAdminOrHr } from "@/lib/auth-guard";
 
 const s = (fd: FormData, k: string) => (fd.get(k)?.toString().trim() ?? "");
 const n = (fd: FormData, k: string): number | null => {
@@ -1044,6 +1046,7 @@ export async function createJobLevelHierarchy(fd: FormData) {
 }
 
 export async function upsertEmployee(fd: FormData) {
+  const currentUser = await requireAdminOrHr();
   const id = i(fd, "id");
   let jobPositionId = i(fd, "jobPositionId") || null;
   let jobPosition = s(fd, "jobPosition").trim();
@@ -1068,7 +1071,24 @@ export async function upsertEmployee(fd: FormData) {
     }
   }
 
-  const data = {
+  const requestedRole = s(fd, "role") || "KARYAWAN";
+  if (requestedRole === "ADMIN" && currentUser.role !== "ADMIN") {
+    throw new Error("Akses ditolak: Hanya Administrator yang berwenang menetapkan role ADMIN.");
+  }
+
+  const rawPassword = s(fd, "password").trim();
+  let hashedPassword: string | undefined = undefined;
+  if (rawPassword) {
+    if (rawPassword.length < 8) {
+      throw new Error("Kata sandi minimal harus 8 karakter.");
+    }
+    hashedPassword = await bcrypt.hash(rawPassword, 10);
+  } else if (!id) {
+    // Karyawan baru default kata sandi adalah hash NIK
+    hashedPassword = await bcrypt.hash(s(fd, "nik").trim(), 10);
+  }
+
+  const data: Record<string, any> = {
     nik: s(fd, "nik").trim(),
     name: s(fd, "name").trim(),
     departmentId,
@@ -1080,7 +1100,7 @@ export async function upsertEmployee(fd: FormData) {
     appraiserId: i(fd, "appraiserId") || null,
     headDeptId: i(fd, "headDeptId") || null,
     managerId: i(fd, "managerId") || null,
-    role: s(fd, "role") || "KARYAWAN",
+    role: requestedRole,
     isCustomRole: s(fd, "isCustomRole") === "true",
     customPermissions: (() => {
       const raw = s(fd, "customPermissions");
@@ -1092,11 +1112,15 @@ export async function upsertEmployee(fd: FormData) {
         return [];
       }
     })(),
-    password: s(fd, "password") || s(fd, "nik").trim() || "123456",
     polaPenggajian: s(fd, "polaPenggajian") || "All In",
     pitId: i(fd, "pitId") || null,
     isActive: s(fd, "isActive") !== "false",
   };
+
+  if (hashedPassword) {
+    data.password = hashedPassword;
+  }
+
   if (!data.nik) throw new Error("NIK wajib diisi!");
   if (!data.name) throw new Error("Nama karyawan wajib diisi!");
   if (!data.departmentId) throw new Error("Departemen wajib dipilih!");
@@ -1130,10 +1154,10 @@ export async function upsertEmployee(fd: FormData) {
 
   if (id) {
     await db.update(employees).set(data).where(eq(employees.id, id));
-    await audit("employee", id, "UPDATE", data);
+    await audit("employee", id, "UPDATE", data, currentUser.name);
   } else {
-    const [row] = await db.insert(employees).values(data).returning();
-    await audit("employee", row.id, "CREATE", data);
+    const [row] = await db.insert(employees).values(data as typeof employees.$inferInsert).returning();
+    await audit("employee", row.id, "CREATE", data, currentUser.name);
   }
   revalidateAll();
 }
@@ -1336,33 +1360,37 @@ export async function syncExistingEmployeesPitAction(): Promise<{
 }
 
 export async function assignAppraiser(fd: FormData) {
+  const currentUser = await requireAdminOrHr();
   const id = i(fd, "id");
   const data = { appraiserId: i(fd, "appraiserId") || null, headDeptId: i(fd, "headDeptId") || null };
   await db.update(employees).set(data).where(eq(employees.id, id));
-  await audit("employee", id, "ASSIGN_APPRAISER", data);
+  await audit("employee", id, "ASSIGN_APPRAISER", data, currentUser.name);
   revalidateAll();
 }
 
 export async function deleteEmployee(fd: FormData) {
+  const currentUser = await requireAdminOrHr();
   const id = i(fd, "id");
   await db.update(employees).set({ isActive: false }).where(eq(employees.id, id));
-  await audit("employee", id, "DEACTIVATE", { isActive: false });
+  await audit("employee", id, "DEACTIVATE", { isActive: false }, currentUser.name);
   revalidateAll();
   safeRevalidate("/setup/master", "page");
 }
 
 export async function reactivateEmployee(fd: FormData) {
+  const currentUser = await requireAdminOrHr();
   const id = i(fd, "id");
   await db.update(employees).set({ isActive: true }).where(eq(employees.id, id));
-  await audit("employee", id, "REACTIVATE", { isActive: true });
+  await audit("employee", id, "REACTIVATE", { isActive: true }, currentUser.name);
   revalidateAll();
   safeRevalidate("/setup/master", "page");
 }
 
 export async function permanentDeleteEmployee(fd: FormData) {
+  const currentUser = await requireAdmin();
   const id = i(fd, "id");
   await db.delete(employees).where(eq(employees.id, id));
-  await audit("employee", id, "PERMANENT_DELETE", null);
+  await audit("employee", id, "PERMANENT_DELETE", null, currentUser.name);
   revalidateAll();
   safeRevalidate("/setup/master", "page");
 }
@@ -1375,6 +1403,7 @@ export async function deleteEmployeeFromImportAction({
   nik?: string;
 }): Promise<{ success: boolean; message: string; employeeId?: number; nik?: string }> {
   try {
+    const currentUser = await requireAdmin();
     let targetEmployee = null;
     if (id) {
       const [emp] = await db.select().from(employees).where(eq(employees.id, id));
@@ -5796,12 +5825,14 @@ export async function assignTemplateToEmployees(fd: FormData) {
 
 // ---------- DEMO ----------
 export async function seedDemo() {
+  await requireAdmin();
   await seedDemoData();
   revalidateAll();
 }
 
 // ---------- ODOO SYNC & AUTH ----------
 export async function syncOdooEmployeesAction(fd?: FormData) {
+  await requireAdmin();
   const customUser = fd ? s(fd, "username") : undefined;
   const customPass = fd ? s(fd, "password") : undefined;
 
@@ -5815,6 +5846,7 @@ export async function syncOdooEmployeesAction(fd?: FormData) {
 }
 
 export async function resetOdooSyncedEmployeesAction() {
+  await requireAdmin();
   const devNik = ODOO_CONFIG.devSuperadminNik;
 
   // 1. Delete dependent appraisal data for non-superadmin employees

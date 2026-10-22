@@ -26,15 +26,17 @@ export async function submitMyAssessmentAction(params: {
   notes?: string;
 }) {
   try {
-    let actor = params.actor;
-    if (!actor) {
-      const user = await getCurrentUser();
-      if (user) {
-        actor = { id: user.id, name: user.name, role: user.role };
-      } else {
-        actor = { id: 1, name: "Penilai", role: "PENILAI" };
-      }
+    const user = await getCurrentUser();
+    if (!user) {
+      return {
+        success: false,
+        isAllSubmitted: false,
+        submittedCount: 0,
+        unfilledCount: 0,
+        error: "Sesi Anda telah kedaluwarsa. Silakan login kembali.",
+      };
     }
+    const actor = { id: user.id, name: user.name, role: user.role };
     const res = await submitMyAssessorAssessment({
       ...params,
       actor,

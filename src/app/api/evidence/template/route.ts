@@ -4,10 +4,16 @@ import { kpiParameters } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import { generateEvidenceTemplate } from "@/lib/excel-evidence";
+import { getCurrentUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { searchParams } = new URL(request.url);
   const parameterId = Number(searchParams.get("parameterId"));
   const employeeName = searchParams.get("employeeName") || undefined;

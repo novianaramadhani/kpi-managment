@@ -16,6 +16,19 @@ export const ODOO_CONFIG = {
   devSuperadminNik: process.env.DEV_SUPERADMIN_NIK || "",
 };
 
+function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || secret.trim().length < 32) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "CRITICAL SECURITY ERROR: JWT_SECRET environment variable must be set with at least 32 characters in production."
+      );
+    }
+    return "kpi_system_dev_secret_key_minimum_32_characters_random_fallback";
+  }
+  return secret.trim();
+}
+
 export interface OdooEmployeeProfile {
   nik: string;
   name: string;
@@ -32,7 +45,6 @@ export interface OdooEmployeeProfile {
  * Buat JSON Web Token (JWT) standar HS256 menggunakan modul bawaan Node.js Crypto
  */
 export function signJwt(payload: Record<string, unknown>): string {
-  // Hitung durasi expired (misal "8h" -> 8 * 3600 detik)
   let expSeconds = 8 * 3600;
   if (ODOO_CONFIG.jwtExpiresIn.endsWith("h")) {
     expSeconds = parseInt(ODOO_CONFIG.jwtExpiresIn, 10) * 3600;
@@ -46,7 +58,7 @@ export function signJwt(payload: Record<string, unknown>): string {
   const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
   const body = Buffer.from(JSON.stringify({ ...payload, exp, iat: Math.floor(Date.now() / 1000) })).toString("base64url");
   const signature = crypto
-    .createHmac("sha256", ODOO_CONFIG.jwtSecret)
+    .createHmac("sha256", getJwtSecret())
     .update(`${header}.${body}`)
     .digest("base64url");
 
@@ -54,7 +66,7 @@ export function signJwt(payload: Record<string, unknown>): string {
 }
 
 /**
- * Verifikasi dan decode JSON Web Token (JWT)
+ * Verifikasi dan decode JSON Web Token (JWT) secara timing-safe
  */
 export function verifyJwt<T = Record<string, unknown>>(token: string): T | null {
   try {
@@ -63,17 +75,19 @@ export function verifyJwt<T = Record<string, unknown>>(token: string): T | null 
 
     const [header, body, signature] = parts;
     const expectedSignature = crypto
-      .createHmac("sha256", ODOO_CONFIG.jwtSecret)
+      .createHmac("sha256", getJwtSecret())
       .update(`${header}.${body}`)
       .digest("base64url");
 
-    if (signature !== expectedSignature) {
+    const sigBuf = Buffer.from(signature, "utf8");
+    const expBuf = Buffer.from(expectedSignature, "utf8");
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
       return null;
     }
 
     const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as T & { exp?: number };
     if (payload.exp && Math.floor(Date.now() / 1000) > payload.exp) {
-      return null; // Token kedaluwarsa
+      return null;
     }
 
     return payload;

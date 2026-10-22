@@ -271,7 +271,7 @@ export const employees = pgTable("employees", {
   role: text("role").notNull().default("KARYAWAN"), // 'ADMIN' | 'HR' | 'MANAGER' | 'HEAD_DEPT' | 'PENILAI' | 'KARYAWAN'
   isCustomRole: boolean("is_custom_role").notNull().default(false),
   customPermissions: jsonb("custom_permissions").$type<string[]>().default([]),
-  password: text("password").default("123456"),
+  password: text("password"),
   polaPenggajian: text("pola_penggajian").default("All In"),
   pitId: integer("pit_id").references(() => pits.id, { onDelete: "set null" }),
   isActive: boolean("is_active").notNull().default(true),

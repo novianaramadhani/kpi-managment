@@ -12,6 +12,7 @@ import {
 } from "@/db/schema";
 import { and, eq, inArray, sql, asc, desc, ne } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { requireAdminOrHr } from "@/lib/auth-guard";
 
 const s = (fd: FormData, k: string) => (fd.get(k)?.toString().trim() ?? "");
 const i = (fd: FormData, k: string) => Number(s(fd, k)) || 0;
@@ -201,6 +202,7 @@ export async function createDepartmentMappingAction(
   fd: FormData
 ): Promise<{ success: boolean; id: number; error?: string }> {
   try {
+    await requireAdminOrHr();
     const site = (s(fd, "site") || "ALL").toUpperCase();
     const siteIdVal = i(fd, "siteId");
     const rawDepartmentName = s(fd, "rawDepartmentName");
@@ -322,6 +324,7 @@ export async function updateDepartmentMappingAction(
   fd: FormData
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    await requireAdminOrHr();
     const id = i(fd, "id");
     if (!id) return { success: false, error: "ID mapping wajib ada." };
 
@@ -427,6 +430,7 @@ export async function deleteDepartmentMappingAction(
   fd: FormData
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    await requireAdminOrHr();
     const id = i(fd, "id");
     if (!id) return { success: false, error: "ID mapping wajib diisi." };
 
@@ -445,6 +449,7 @@ export async function deleteDepartmentMappingAction(
  * Hapus batch mapping
  */
 export async function batchDeleteDepartmentMappingsAction(ids: number[]): Promise<{ count: number }> {
+  await requireAdminOrHr();
   if (!ids || ids.length === 0) return { count: 0 };
 
   await db.delete(departmentMappings).where(inArray(departmentMappings.id, ids));
@@ -462,6 +467,7 @@ export async function batchAssignStandardDepartmentAction(
   departmentId: number,
   pitId?: number | null
 ): Promise<{ count: number }> {
+  await requireAdminOrHr();
   if (!mappingIds || mappingIds.length === 0) return { count: 0 };
   if (!departmentId) throw new Error("Departemen standar wajib dipilih.");
 
@@ -501,6 +507,7 @@ export async function batchAssignStandardDepartmentAction(
 export async function importDepartmentMappingsBatch(
   items: ParsedDepartmentMappingItem[]
 ): Promise<{ count: number; updatedCount: number; errors: string[] }> {
+  await requireAdminOrHr();
   if (!items || items.length === 0) return { count: 0, updatedCount: 0, errors: [] };
 
   const [allDepts, allPits] = await Promise.all([
@@ -623,6 +630,7 @@ export async function getDepartmentMappingLookupMap() {
 export async function importDepartmentsWithMappingAction(
   payload: SmartDepartmentImportPayload
 ): Promise<SmartDepartmentImportResult> {
+  await requireAdminOrHr();
   const errors: string[] = [];
   let createdDepartmentsCount = 0;
   let savedMappingsCount = 0;

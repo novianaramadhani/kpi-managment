@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { sites, pits, departmentMappings, employees } from "@/db/schema";
 import { and, asc, eq, ilike, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { requireAdmin } from "@/lib/auth-guard";
 
 export interface SiteWithStats {
   id: number;
@@ -106,6 +107,7 @@ export async function getSitesAction(): Promise<SiteWithStats[]> {
  * Tambah Site Baru
  */
 export async function createSiteAction(fd: FormData): Promise<{ success: boolean; id: number }> {
+  await requireAdmin();
   const code = s(fd, "code").toUpperCase().replace(/[^A-Z0-9_-]/g, "");
   const name = s(fd, "name");
   const description = s(fd, "description") || null;
@@ -144,6 +146,7 @@ export async function createSiteAction(fd: FormData): Promise<{ success: boolean
  * Ubah Data Site
  */
 export async function updateSiteAction(fd: FormData): Promise<{ success: boolean }> {
+  await requireAdmin();
   const id = i(fd, "id");
   if (!id) throw new Error("ID Site tidak valid.");
 
@@ -194,6 +197,7 @@ export async function updateSiteAction(fd: FormData): Promise<{ success: boolean
  * Hapus Site
  */
 export async function deleteSiteAction(fd: FormData): Promise<{ success: boolean }> {
+  await requireAdmin();
   const id = i(fd, "id");
   if (!id) throw new Error("ID Site tidak valid.");
 
@@ -236,6 +240,7 @@ export async function deleteSiteAction(fd: FormData): Promise<{ success: boolean
 export async function toggleSiteStatusAction(
   id: number
 ): Promise<{ success: boolean; newStatus: boolean }> {
+  await requireAdmin();
   const [target] = await db.select().from(sites).where(eq(sites.id, id)).limit(1);
   if (!target) throw new Error("Site tidak ditemukan.");
 

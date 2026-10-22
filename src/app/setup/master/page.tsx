@@ -83,10 +83,13 @@ export default async function MasterDataPage({
 
   const currentUser = await getCurrentUser();
   if (!currentUser) redirect("/login");
+  if (currentUser.role !== "ADMIN" && currentUser.role !== "HR") {
+    redirect("/dashboard");
+  }
 
   const activeTab = tab === "master" ? "departemen" : tab;
 
-  const [deps, lvls, positions, emps, tpls, systemDate, savedOUsJson, deptHeads, mappings, pitList, siteList] =
+  const [deps, lvls, positions, rawEmps, tpls, systemDate, savedOUsJson, deptHeads, mappings, pitList, siteList] =
     await Promise.all([
       db.select().from(departments).orderBy(asc(departments.code)),
       db.select().from(jobLevels).orderBy(asc(jobLevels.rank)),
@@ -100,6 +103,12 @@ export default async function MasterDataPage({
       getPitsAction(),
       getSitesAction(),
     ]);
+
+  // Sanitasi data karyawan agar kolom password tidak terkirim ke klien
+  const emps = rawEmps.map(({ password: _pwd, ...rest }) => ({
+    ...rest,
+    password: null,
+  }));
 
   let savedUnits: { id: string; name: string; status: string }[] | undefined = undefined;
   if (savedOUsJson) {

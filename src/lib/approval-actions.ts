@@ -7,59 +7,60 @@ import { revalidatePath } from "next/cache";
 import { recalculateAppraisal } from "./actions";
 import { getMonthlyAssessmentDetail } from "./monthly-assessment-service";
 import { getEmployeeApprovalLine } from "./employee-hierarchy";
+import { requireAuth } from "./auth-guard";
+import type { RoleType } from "./auth";
 
 export interface ApprovalActionActor {
   id?: number | null;
-  name: string;
-  role: string;
+  name?: string;
+  role?: string;
 }
 
-async function resolveValidActorId(actorId?: number | null): Promise<number | null> {
-  if (!actorId || actorId <= 0) return null;
-  try {
-    const [emp] = await db
-      .select({ id: employees.id })
-      .from(employees)
-      .where(eq(employees.id, actorId))
-      .limit(1);
-    return emp ? emp.id : null;
-  } catch {
-    return null;
-  }
+/**
+ * Mengambil identitas aktor strictly dari sesi server (JWT session terverifikasi)
+ * untuk mencegah client memalsukan ID, nama, atau wewenang role.
+ */
+async function getSessionActor(): Promise<{ id: number; name: string; role: RoleType }> {
+  const user = await requireAuth();
+  return {
+    id: user.id,
+    name: user.name,
+    role: user.role,
+  };
 }
 
 export interface SubmitToHeadDeptParams {
   appraisalId: number;
   notes?: string;
-  actor: ApprovalActionActor;
+  actor?: ApprovalActionActor;
 }
 
 export interface ValidateByHeadDeptParams {
   appraisalId: number;
   action: "FORWARD" | "REVISE";
   notes?: string;
-  actor: ApprovalActionActor;
+  actor?: ApprovalActionActor;
 }
 
 export interface ValidateByManagerParams {
   appraisalId: number;
   action: "FORWARD" | "REVISE";
   notes?: string;
-  actor: ApprovalActionActor;
+  actor?: ApprovalActionActor;
 }
 
 export interface ApproveByHrParams {
   appraisalId: number;
   action: "APPROVE" | "REVISE";
   notes?: string;
-  actor: ApprovalActionActor;
+  actor?: ApprovalActionActor;
 }
 
 export interface RequestParameterRevisionParams {
   appraisalId: number;
   appraisalItemIds: number[];
   revisionNotes: string;
-  actor: ApprovalActionActor;
+  actor?: ApprovalActionActor;
 }
 
 function safeRevalidate() {
@@ -80,8 +81,8 @@ function safeRevalidate() {
 export async function submitAppraisalForReviewAction({
   appraisalId,
   notes,
-  actor,
 }: SubmitToHeadDeptParams) {
+  const actor = await getSessionActor();
   const [appr] = await db.select().from(appraisals).where(eq(appraisals.id, appraisalId)).limit(1);
   if (!appr) {
     return { success: false, error: "Data penilaian tidak ditemukan." };
@@ -102,7 +103,7 @@ export async function submitAppraisalForReviewAction({
     };
   }
 
-  const validActorId = await resolveValidActorId(actor.id);
+  const validActorId = actor.id;
   const now = new Date();
   await recalculateAppraisal(appraisalId);
 
@@ -155,8 +156,8 @@ export async function requestParameterRevisionAction({
   appraisalId,
   appraisalItemIds,
   revisionNotes,
-  actor,
 }: RequestParameterRevisionParams) {
+  const actor = await getSessionActor();
   const [appr] = await db.select().from(appraisals).where(eq(appraisals.id, appraisalId)).limit(1);
   if (!appr) {
     return { success: false, error: "Data penilaian tidak ditemukan." };
@@ -166,7 +167,22 @@ export async function requestParameterRevisionAction({
     return { success: false, error: "Pilih minimal 1 parameter yang memerlukan revisi." };
   }
 
-  const validActorId = await resolveValidActorId(actor.id);
+  // Validasi wewenang reviewer
+  const approvalLine = await getEmployeeApprovalLine(appr.employeeId);
+  const isAuthorizedReviewer =
+    actor.role === "ADMIN" ||
+    actor.role === "HR" ||
+    actor.id === approvalLine?.headDept?.id ||
+    actor.id === approvalLine?.manager?.id;
+
+  if (!isAuthorizedReviewer) {
+    return {
+      success: false,
+      error: "Akses ditolak: Anda tidak memiliki wewenang meminta revisi untuk penilaian karyawan ini.",
+    };
+  }
+
+  const validActorId = actor.id;
   const now = new Date();
 
   // 1. Reset semua items di appraisal ini
@@ -226,14 +242,14 @@ export async function requestParameterRevisionAction({
 export async function resubmitAppraisalRevisionAction({
   appraisalId,
   notes,
-  actor,
 }: SubmitToHeadDeptParams) {
+  const actor = await getSessionActor();
   const [appr] = await db.select().from(appraisals).where(eq(appraisals.id, appraisalId)).limit(1);
   if (!appr) {
     return { success: false, error: "Data penilaian tidak ditemukan." };
   }
 
-  const validActorId = await resolveValidActorId(actor.id);
+  const validActorId = actor.id;
   const now = new Date();
   await recalculateAppraisal(appraisalId);
 
@@ -281,14 +297,28 @@ export async function validateAppraisalByHeadDeptAction({
   appraisalId,
   action,
   notes,
-  actor,
 }: ValidateByHeadDeptParams) {
+  const actor = await getSessionActor();
   const [appr] = await db.select().from(appraisals).where(eq(appraisals.id, appraisalId)).limit(1);
   if (!appr) {
     return { success: false, error: "Data penilaian tidak ditemukan." };
   }
 
-  const validActorId = await resolveValidActorId(actor.id);
+  // Validasi hak Head Dept
+  const approvalLine = await getEmployeeApprovalLine(appr.employeeId);
+  const isAuthorized =
+    actor.role === "ADMIN" ||
+    actor.role === "HR" ||
+    actor.id === approvalLine?.headDept?.id;
+
+  if (!isAuthorized) {
+    return {
+      success: false,
+      error: "Akses ditolak: Anda bukan Head Dept yang berwenang untuk penilaian ini.",
+    };
+  }
+
+  const validActorId = actor.id;
   const now = new Date();
 
   if (action === "FORWARD") {
@@ -355,14 +385,28 @@ export async function validateAppraisalByManagerAction({
   appraisalId,
   action,
   notes,
-  actor,
 }: ValidateByManagerParams) {
+  const actor = await getSessionActor();
   const [appr] = await db.select().from(appraisals).where(eq(appraisals.id, appraisalId)).limit(1);
   if (!appr) {
     return { success: false, error: "Data penilaian tidak ditemukan." };
   }
 
-  const validActorId = await resolveValidActorId(actor.id);
+  // Validasi hak Manager
+  const approvalLine = await getEmployeeApprovalLine(appr.employeeId);
+  const isAuthorized =
+    actor.role === "ADMIN" ||
+    actor.role === "HR" ||
+    actor.id === approvalLine?.manager?.id;
+
+  if (!isAuthorized) {
+    return {
+      success: false,
+      error: "Akses ditolak: Anda bukan Manager yang berwenang untuk penilaian ini.",
+    };
+  }
+
+  const validActorId = actor.id;
   const now = new Date();
 
   if (action === "FORWARD") {
@@ -430,14 +474,21 @@ export async function approveAppraisalByHrAction({
   appraisalId,
   action,
   notes,
-  actor,
 }: ApproveByHrParams) {
+  const actor = await getSessionActor();
+  if (actor.role !== "HR" && actor.role !== "ADMIN") {
+    return {
+      success: false,
+      error: "Akses ditolak: Hanya HR atau Admin yang berwenang menyetujui atau menolak tahap HR.",
+    };
+  }
+
   const [appr] = await db.select().from(appraisals).where(eq(appraisals.id, appraisalId)).limit(1);
   if (!appr) {
     return { success: false, error: "Data penilaian tidak ditemukan." };
   }
 
-  const validActorId = await resolveValidActorId(actor.id);
+  const validActorId = actor.id;
   const now = new Date();
 
   if (action === "APPROVE") {
@@ -503,13 +554,13 @@ export async function approveAppraisalByHrAction({
  */
 export async function batchApproveAppraisalsAction({
   appraisalIds,
-  actor,
   notes,
 }: {
   appraisalIds: number[];
-  actor: ApprovalActionActor;
+  actor?: ApprovalActionActor;
   notes?: string;
 }) {
+  const actor = await getSessionActor();
   if (!appraisalIds || appraisalIds.length === 0) {
     return { success: false, count: 0, error: "Tidak ada penilaian yang dipilih." };
   }
@@ -543,6 +594,7 @@ export async function batchApproveAppraisalsAction({
  * Mengambil histori log approval berjenjang
  */
 export async function getAppraisalApprovalHistory(appraisalId: number) {
+  await requireAuth();
   const logs = await db
     .select()
     .from(appraisalApprovalLogs)
@@ -557,6 +609,7 @@ export async function getAppraisalApprovalHistory(appraisalId: number) {
  */
 export async function getAppraisalReviewDetailAction(appraisalId: number) {
   try {
+    const user = await requireAuth();
     const [appr] = await db
       .select({
         id: appraisals.id,
@@ -587,6 +640,7 @@ export async function getAppraisalReviewDetailAction(appraisalId: number) {
       year,
       month: 1,
       employeeId: appr.employeeId,
+      currentUser: user,
     });
 
     return { success: true, data: detail, error: null };

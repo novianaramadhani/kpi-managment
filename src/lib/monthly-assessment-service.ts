@@ -1231,7 +1231,10 @@ export async function saveMonthlyAssessmentValues(params: {
 
   // 2. Validasi multi-layer kewenangan asesor sebelum menyimpan nilai
   const currentUser = await getCurrentUser();
-  if (currentUser && currentUser.role !== "ADMIN") {
+  if (!currentUser) {
+    throw new Error("Akses ditolak: Sesi login diperlukan untuk menyimpan nilai penilaian.");
+  }
+  if (currentUser.role !== "ADMIN") {
     const [targetEmp] = await db
       .select({ departmentId: employees.departmentId })
       .from(employees)
@@ -1582,7 +1585,12 @@ export async function submitMonthlyAssessment(params: {
   month: number;
   actor?: string;
 }) {
-  const { appraisalId, month, actor = "penilai" } = params;
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    throw new Error("Akses ditolak: Sesi login diperlukan untuk submit penilaian bulanan.");
+  }
+  const actor = `${currentUser.name} (${currentUser.nik})`;
+  const { appraisalId, month } = params;
   if (month < 1 || month > 12) throw new Error("Bulan tidak valid");
 
   const items = await db
@@ -1892,7 +1900,12 @@ export async function reopenMonthlyAssessment(params: {
   month: number;
   actor?: string;
 }) {
-  const { appraisalId, month, actor = "admin" } = params;
+  const currentUser = await getCurrentUser();
+  if (!currentUser || (currentUser.role !== "ADMIN" && currentUser.role !== "HR")) {
+    throw new Error("Akses ditolak: Hanya Administrator atau HR yang berwenang membuka kembali penilaian.");
+  }
+  const actor = `${currentUser.name} (${currentUser.nik})`;
+  const { appraisalId, month } = params;
   if (month < 1 || month > 12) throw new Error("Bulan tidak valid");
 
   const items = await db

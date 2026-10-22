@@ -2,11 +2,20 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { sites } from "@/db/schema";
 import { asc, eq } from "drizzle-orm";
+import { getCurrentUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) {
+      return NextResponse.json({ error: "Unauthorized: Sesi login diperlukan." }, { status: 401 });
+    }
+    if (currentUser.role !== "ADMIN" && currentUser.role !== "HR") {
+      return NextResponse.json({ error: "Forbidden: Akses khusus Admin atau HR." }, { status: 403 });
+    }
+
     const { searchParams } = new URL(request.url);
     const activeOnly = searchParams.get("active") !== "false";
 

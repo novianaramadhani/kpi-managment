@@ -40,8 +40,17 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) {
+      return NextResponse.json(
+        { error: "Unauthorized: Sesi login diperlukan untuk melakukan aksi penilaian." },
+        { status: 401 }
+      );
+    }
+
     const body = await req.json();
-    const { action, appraisalId, month, values, actor = "penilai" } = body;
+    const { action, appraisalId, month, values } = body;
+    const actor = `${currentUser.name} (${currentUser.nik})`;
 
     if (!appraisalId || !month) {
       return NextResponse.json({ error: "appraisalId dan month wajib disertakan." }, { status: 400 });

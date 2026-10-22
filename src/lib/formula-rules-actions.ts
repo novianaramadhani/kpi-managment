@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { kpiCalculationRules, kpiParameters, auditLogs } from "@/db/schema";
 import { eq, sql, asc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { requireAdmin } from "@/lib/auth-guard";
 
 export interface FormulaRuleItem {
   id: number;
@@ -80,6 +81,7 @@ export async function updateCalculationRuleStatusAction(
   newStatus: "ACTIVE" | "DEPRECATED",
   notes?: string
 ) {
+  const currentUser = await requireAdmin();
   const [existing] = await db
     .select()
     .from(kpiCalculationRules)
@@ -103,7 +105,7 @@ export async function updateCalculationRuleStatusAction(
     entity: "kpi_calculation_rules",
     entityId: ruleId,
     action: "UPDATE_STATUS",
-    actor: "admin",
+    actor: currentUser.name,
     changes: { from: existing.status, to: newStatus, notes },
   });
 

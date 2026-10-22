@@ -12,14 +12,20 @@ import {
   departmentMappings,
 } from "@/db/schema";
 import { eq, asc, desc, or, and } from "drizzle-orm";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { upsertEmployee } from "@/lib/actions";
-import { resetEmployeePasswordAction } from "@/lib/auth";
+import { resetEmployeePasswordAction, getCurrentUser } from "@/lib/auth";
 import { EmployeeDetailClient, UnifiedLogItem } from "./employee-detail-client";
 
 export const dynamic = "force-dynamic";
 
 export default async function EmployeeDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const currentUser = await getCurrentUser();
+  if (!currentUser) redirect("/login");
+  if (currentUser.role !== "ADMIN" && currentUser.role !== "HR") {
+    redirect("/dashboard");
+  }
+
   const { id } = await params;
   const empId = parseInt(id, 10);
 
@@ -27,7 +33,7 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
     notFound();
   }
 
-  const [emp, deps, lvls, positions, pitList, mappingsList] = await Promise.all([
+  const [rawEmp, deps, lvls, positions, pitList, mappingsList] = await Promise.all([
     db.select().from(employees).where(eq(employees.id, empId)).limit(1).then((res) => res[0]),
     db.select().from(departments).orderBy(asc(departments.code)),
     db.select().from(jobLevels).orderBy(asc(jobLevels.rank)),
@@ -36,9 +42,11 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
     db.select().from(departmentMappings),
   ]);
 
-  if (!emp) {
+  if (!rawEmp) {
     notFound();
   }
+
+  const emp = { ...rawEmp, password: null };
 
   const [permission, rawAuditLogs, rawApprovalLogs] = await Promise.all([
     db

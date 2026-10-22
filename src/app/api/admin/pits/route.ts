@@ -10,7 +10,10 @@ export async function GET(req: NextRequest) {
   try {
     const currentUser = await getCurrentUser();
     if (!currentUser) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized: Sesi login diperlukan." }, { status: 401 });
+    }
+    if (currentUser.role !== "ADMIN" && currentUser.role !== "HR") {
+      return NextResponse.json({ error: "Forbidden: Akses khusus Admin atau HR." }, { status: 403 });
     }
 
     const { searchParams } = new URL(req.url);

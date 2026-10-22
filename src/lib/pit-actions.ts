@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { pits, sites, departments, departmentMappings, kpiTemplates, auditLogs, type Pit } from "@/db/schema";
 import { eq, asc, desc, sql, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { requireAdminOrHr } from "@/lib/auth-guard";
 
 const s = (fd: FormData, k: string) => (fd.get(k)?.toString().trim() ?? "");
 const b = (fd: FormData, k: string) => fd.get(k) === "true" || fd.get(k) === "on";
@@ -150,6 +151,7 @@ export async function getPitsAction(): Promise<PitWithStats[]> {
  * Tambah data Master PIT baru
  */
 export async function createPitAction(fd: FormData): Promise<{ success: boolean; id: number }> {
+  await requireAdminOrHr();
   let code = s(fd, "code").toUpperCase().replace(/\s+/g, "-");
   const name = s(fd, "name");
   const siteInput = s(fd, "site");
@@ -287,6 +289,7 @@ export async function createPitAction(fd: FormData): Promise<{ success: boolean;
  * Perbarui data Master PIT
  */
 export async function updatePitAction(fd: FormData): Promise<{ success: boolean }> {
+  await requireAdminOrHr();
   const id = Number(fd.get("id")) || 0;
   if (!id) throw new Error("ID PIT tidak valid.");
 
@@ -416,6 +419,7 @@ export async function updatePitAction(fd: FormData): Promise<{ success: boolean 
  * Hapus data Master PIT
  */
 export async function deletePitAction(fd: FormData): Promise<{ success: boolean }> {
+  await requireAdminOrHr();
   const id = Number(fd.get("id")) || 0;
   if (!id) throw new Error("ID PIT tidak valid.");
 
@@ -453,6 +457,7 @@ export async function deletePitAction(fd: FormData): Promise<{ success: boolean 
 export async function batchDeletePitsAction(
   ids: number[]
 ): Promise<{ count: number; skippedCount: number; errors: string[] }> {
+  await requireAdminOrHr();
   if (!ids || ids.length === 0) return { count: 0, skippedCount: 0, errors: [] };
 
   let count = 0;
@@ -503,6 +508,7 @@ export async function batchDeletePitsAction(
  * Toggle status aktif PIT
  */
 export async function togglePitStatusAction(id: number): Promise<{ success: boolean; newStatus: boolean }> {
+  await requireAdminOrHr();
   const [target] = await db.select().from(pits).where(eq(pits.id, id)).limit(1);
   if (!target) throw new Error("PIT tidak ditemukan.");
 
@@ -527,6 +533,7 @@ export async function importPitsBatch(
     department?: string;
   }[]
 ): Promise<{ createdCount: number; updatedCount: number; errors: string[] }> {
+  await requireAdminOrHr();
   let createdCount = 0;
   let updatedCount = 0;
   const errors: string[] = [];

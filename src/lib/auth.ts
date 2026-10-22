@@ -1,6 +1,7 @@
 "use server";
 
 import { cookies } from "next/headers";
+import bcrypt from "bcryptjs";
 import { db } from "@/db";
 import { employees, departments, jobLevels, users, auditLogs } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -14,6 +15,8 @@ import {
   syncOdooEmployeeToDb,
 } from "@/lib/odoo";
 import { getEmployeeApprovalLine } from "@/lib/employee-hierarchy";
+
+import { checkRateLimit, resetRateLimit } from "@/lib/rate-limiter";
 
 export type RoleType = "ADMIN" | "HR" | "MANAGER" | "HEAD_DEPT" | "PENILAI" | "KARYAWAN";
 
@@ -37,14 +40,39 @@ export async function getCurrentUser(): Promise<UserSession | null> {
     const sessionCookie = cookieStore.get(COOKIE_NAME);
     if (!sessionCookie?.value) return null;
 
-    // Verifikasi JWT terlebih dahulu
     const jwtPayload = verifyJwt<UserSession>(sessionCookie.value);
-    if (jwtPayload && jwtPayload.nik) {
-      return jwtPayload;
+    if (!jwtPayload || !jwtPayload.nik) {
+      return null;
     }
 
-    // Hanya izinkan session cookie bertanda tangan kriptografis JWT yang valid
-    return null;
+    const [emp] = await db
+      .select({
+        id: employees.id,
+        nik: employees.nik,
+        name: employees.name,
+        role: employees.role,
+        departmentId: employees.departmentId,
+        jobPosition: employees.jobPosition,
+        operatingUnit: employees.operatingUnit,
+        isActive: employees.isActive,
+      })
+      .from(employees)
+      .where(eq(employees.nik, jwtPayload.nik))
+      .limit(1);
+
+    if (!emp || !emp.isActive) {
+      return null;
+    }
+
+    return {
+      ...jwtPayload,
+      id: emp.id,
+      name: emp.name,
+      role: emp.role as RoleType,
+      departmentId: emp.departmentId,
+      jobPosition: emp.jobPosition || jwtPayload.jobPosition,
+      operatingUnit: emp.operatingUnit || jwtPayload.operatingUnit,
+    };
   } catch {
     return null;
   }
@@ -139,6 +167,15 @@ export async function loginWithNik(nikInput: string, passwordInput?: string) {
     return { success: false, error: "Kata sandi atau PIN wajib diisi!" };
   }
 
+  const rateLimitKey = `login_nik:${nik}`;
+  const limit = checkRateLimit(rateLimitKey, 5, 60_000);
+  if (!limit.allowed) {
+    return {
+      success: false,
+      error: `Terlalu banyak percobaan login gagal. Silakan coba lagi dalam ${limit.retryAfterSeconds} detik.`,
+    };
+  }
+
   let session: UserSession | null = null;
 
   // 1. Cari di database lokal terlebih dahulu
@@ -171,17 +208,6 @@ export async function loginWithNik(nikInput: string, passwordInput?: string) {
         }
       }
     }
-
-    // Fallback jika NIK superadmin dan Odoo belum merespons
-    if (!localRecord && nik === ODOO_CONFIG.devSuperadminNik) {
-      if (
-        password === ODOO_CONFIG.servicePassword ||
-        password === ODOO_CONFIG.adminPassword ||
-        password === nik
-      ) {
-        session = await ensureSuperadminExists(nik);
-      }
-    }
   }
 
   // 3. Jika record ditemukan di lokal
@@ -202,34 +228,59 @@ export async function loginWithNik(nikInput: string, passwordInput?: string) {
       console.error("Gagal membaca tabel users:", err);
     }
 
-    // Validasi Password (Strict)
-    // Password lokal valid: jika sesuai userRec.password, atau employees.password, atau default NIK
-    const isMatchLocal =
-      (userRec?.password && password === userRec.password) ||
-      (localRecord.emp.password && password === localRecord.emp.password) ||
-      (!localRecord.emp.password && password === localRecord.emp.nik);
+    // Validasi Password Menggunakan bcryptjs (dengan migrasi otomatis untuk password lama)
+    let isMatchLocal = false;
+    const rawStoredPassword = userRec?.password || localRecord.emp.password;
+
+    if (rawStoredPassword) {
+      if (rawStoredPassword.startsWith("$2a$") || rawStoredPassword.startsWith("$2b$")) {
+        isMatchLocal = await bcrypt.compare(password, rawStoredPassword);
+      } else {
+        // Verifikasi plaintext lama dan langsung upgrade ke hash bcrypt
+        if (password === rawStoredPassword) {
+          isMatchLocal = true;
+          const hashed = await bcrypt.hash(password, 10);
+          await db
+            .update(employees)
+            .set({ password: hashed })
+            .where(eq(employees.id, localRecord.emp.id));
+          if (userRec) {
+            await db
+              .update(users)
+              .set({ password: hashed })
+              .where(eq(users.id, userRec.id));
+          }
+        }
+      }
+    }
 
     if (!isMatchLocal) {
-      // Coba verifikasi langsung ke Odoo employee-login (Strict: hanya berhasil jika credentials benar)
-      const odooEmp = await authenticateOdooEmployee(nik, password);
-      if (!odooEmp) {
+      // Coba verifikasi langsung ke Odoo employee-login jika kredensial lokal belum cocok
+      let odooAuthSuccess = false;
+      if (ODOO_CONFIG.authMode === "odoo") {
+        const odooEmp = await authenticateOdooEmployee(nik, password);
+        if (odooEmp) {
+          odooAuthSuccess = true;
+          const hashed = await bcrypt.hash(password, 10);
+          await db
+            .update(employees)
+            .set({ password: hashed })
+            .where(eq(employees.id, localRecord.emp.id));
+
+          if (userRec) {
+            await db
+              .update(users)
+              .set({ password: hashed })
+              .where(eq(users.id, userRec.id));
+          }
+        }
+      }
+
+      if (!odooAuthSuccess) {
         return {
           success: false,
           error: "Nomor Induk Karyawan (NIK) atau kata sandi tidak sesuai.",
         };
-      } else {
-        // Update password lokal sesuai password Odoo yang valid
-        await db
-          .update(employees)
-          .set({ password })
-          .where(eq(employees.id, localRecord.emp.id));
-
-        if (userRec) {
-          await db
-            .update(users)
-            .set({ password })
-            .where(eq(users.id, userRec.id));
-        }
       }
     }
 
@@ -250,18 +301,18 @@ export async function loginWithNik(nikInput: string, passwordInput?: string) {
         mustChangePassword = userRec.mustChangePassword;
         await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, userRec.id));
       } else {
-        const isDefault = !localRecord.emp.password || localRecord.emp.password === nik;
+        const hashedPassword = localRecord.emp.password || (await bcrypt.hash(password, 10));
         const [newUser] = await db
           .insert(users)
           .values({
             employeeId: localRecord.emp.id,
             nik: localRecord.emp.nik,
-            password: localRecord.emp.password || nik,
-            mustChangePassword: isDefault,
+            password: hashedPassword,
+            mustChangePassword: false,
             lastLoginAt: new Date(),
           })
           .returning();
-        mustChangePassword = newUser?.mustChangePassword ?? isDefault;
+        mustChangePassword = newUser?.mustChangePassword ?? false;
       }
     } catch (err) {
       console.error("Gagal sinkronisasi tabel users:", err);
@@ -326,6 +377,8 @@ export async function loginWithNik(nikInput: string, passwordInput?: string) {
   } catch {
     // ignore
   }
+
+  resetRateLimit(rateLimitKey);
   return { success: true, session };
 }
 
@@ -362,15 +415,8 @@ export async function logoutUser() {
   return { success: true };
 }
 
-export async function switchDemoRole(role: RoleType, customNik?: string) {
-  let nik = customNik || ODOO_CONFIG.devSuperadminNik; // Default Admin NIK: 1.1025.273
-  if (!customNik) {
-    if (role === "HEAD_DEPT") nik = "10010"; // Gunawan Prasetya (Manager Logistik GAM)
-    if (role === "PENILAI") nik = "20101"; // Noviana Ramadhani (SPV Logistik GAM)
-    if (role === "KARYAWAN") nik = "80002"; // Zendaya (Staff Logistik GAM)
-  }
-
-  return await loginWithNik(nik);
+export async function switchDemoRole(_role: RoleType, _customNik?: string) {
+  return { success: false, error: "Fitur demo role telah dinonaktifkan." };
 }
 
 /**
@@ -383,18 +429,20 @@ export async function changeUserPasswordAction(newPassword: string) {
   }
 
   const cleanPass = (newPassword || "").trim();
-  if (!cleanPass || cleanPass.length < 4) {
-    return { success: false, error: "Kata sandi baru minimal harus 4 karakter." };
+  if (!cleanPass || cleanPass.length < 8) {
+    return { success: false, error: "Kata sandi baru minimal harus 8 karakter." };
   }
 
   try {
+    const hashed = await bcrypt.hash(cleanPass, 10);
+
     // 1. Update tabel users
     const [userRec] = await db.select().from(users).where(eq(users.nik, currentUser.nik));
     if (userRec) {
       await db
         .update(users)
         .set({
-          password: cleanPass,
+          password: hashed,
           mustChangePassword: false,
           updatedAt: new Date(),
         })
@@ -403,7 +451,7 @@ export async function changeUserPasswordAction(newPassword: string) {
       await db.insert(users).values({
         employeeId: currentUser.id,
         nik: currentUser.nik,
-        password: cleanPass,
+        password: hashed,
         mustChangePassword: false,
       });
     }
@@ -411,7 +459,7 @@ export async function changeUserPasswordAction(newPassword: string) {
     // 2. Update tabel employees
     await db
       .update(employees)
-      .set({ password: cleanPass })
+      .set({ password: hashed })
       .where(eq(employees.id, currentUser.id));
 
     // 3. Update cookie session dengan mustChangePassword = false
@@ -455,10 +503,12 @@ export async function resetEmployeePasswordAction(employeeId: number) {
   const defaultPassword = emp.nik;
 
   try {
+    const hashedDefault = await bcrypt.hash(defaultPassword, 10);
+
     // 1. Update tabel employees
     await db
       .update(employees)
-      .set({ password: defaultPassword })
+      .set({ password: hashedDefault })
       .where(eq(employees.id, emp.id));
 
     // 2. Update atau insert tabel users dengan mustChangePassword = true
@@ -467,7 +517,7 @@ export async function resetEmployeePasswordAction(employeeId: number) {
       await db
         .update(users)
         .set({
-          password: defaultPassword,
+          password: hashedDefault,
           mustChangePassword: true,
           updatedAt: new Date(),
         })
@@ -476,7 +526,7 @@ export async function resetEmployeePasswordAction(employeeId: number) {
       await db.insert(users).values({
         employeeId: emp.id,
         nik: emp.nik,
-        password: defaultPassword,
+        password: hashedDefault,
         mustChangePassword: true,
       });
     }
