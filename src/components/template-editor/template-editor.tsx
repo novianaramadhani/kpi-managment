@@ -21,6 +21,14 @@ import { importTemplateStructure, syncTemplateToEmployeeAppraisalsAction, type I
 
 export interface TemplateEditorProps {
   template: KpiTemplate;
+  employee?: {
+    id?: number;
+    nik?: string | null;
+    name?: string | null;
+    jobPosition?: string | null;
+    departmentId?: number | null;
+    departmentName?: string | null;
+  } | null;
   departments: Department[];
   jobLevels: JobLevel[];
   categories: KpiCategory[];
@@ -56,6 +64,7 @@ export interface TemplateEditorProps {
 
 export function TemplateEditor({
   template,
+  employee,
   departments,
   jobLevels,
   categories,
@@ -248,6 +257,8 @@ export function TemplateEditor({
       template,
       departmentName: currentDept?.name,
       jobLevelName: currentLevel?.name,
+      periodYear,
+      employee,
       categories,
       parameters,
       bands,
@@ -263,6 +274,7 @@ export function TemplateEditor({
           templateName={templateName}
           department={currentDept}
           jobLevel={currentLevel}
+          employee={employee}
           periodYear={periodYear}
           isActive={isActiveStatus}
           isValidToPublish={isValidToPublish}
@@ -423,6 +435,7 @@ export function TemplateEditor({
         template={template}
         department={currentDept}
         jobLevel={currentLevel}
+        employee={employee}
         categories={categories}
         parameters={parameters}
         bands={bands}

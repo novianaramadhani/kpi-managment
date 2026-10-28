@@ -1,0 +1,42 @@
+# Dependencies
+node_modules
+npm-debug.log
+
+# Build outputs
+.next
+.next_fresh
+dist
+build
+out
+*.tsbuildinfo
+
+# Version control & IDE
+.git
+.gitignore
+.agents
+.gemini
+.claude
+.cursor
+.codex
+.vscode
+.idea
+
+# Local environment & secrets
+.env*
+!.env.example
+!.env.docker.example
+
+# Backups & SQL dumps
+backups
+*.sql
+*.sql.gz
+*.bak
+*.tmp
+
+# Cloudflare Tunnel
+cloudflared
+*.pem
+
+# Documentation & local scratch
+scratch
+README.md

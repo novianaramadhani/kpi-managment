@@ -18,6 +18,8 @@ interface MasterParameterPickerModalProps {
   departmentName?: string;
   masterParameters: MasterParamItem[];
   onSelect: (param: MasterParamItem) => void;
+  canApplyAll?: boolean;
+  onApplyAllDept?: () => void;
 }
 
 export function MasterParameterPickerModal({
@@ -27,6 +29,8 @@ export function MasterParameterPickerModal({
   departmentName,
   masterParameters,
   onSelect,
+  canApplyAll,
+  onApplyAllDept,
 }: MasterParameterPickerModalProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedFilter, setSelectedFilter] = useState<"ALL" | "DEPT" | "GENERAL">("ALL");
@@ -125,9 +129,9 @@ export function MasterParameterPickerModal({
             <button
               type="button"
               onClick={() => setSelectedFilter("ALL")}
-              className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
                 selectedFilter === "ALL"
-                  ? "bg-indigo-600 text-white shadow-2xs"
+                  ? "bg-slate-900 text-white shadow-2xs"
                   : "bg-slate-100 text-slate-600 hover:bg-slate-200"
               }`}
             >
@@ -137,25 +141,27 @@ export function MasterParameterPickerModal({
               <button
                 type="button"
                 onClick={() => setSelectedFilter("DEPT")}
-                className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
                   selectedFilter === "DEPT"
                     ? "bg-blue-600 text-white shadow-2xs"
-                    : "bg-blue-50 text-blue-700 hover:bg-blue-100"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
-                🏢 Departemen
+                <Building2 className="w-3.5 h-3.5" />
+                <span>{departmentName || "Departemen"}</span>
               </button>
             )}
             <button
               type="button"
               onClick={() => setSelectedFilter("GENERAL")}
-              className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+              className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
                 selectedFilter === "GENERAL"
-                  ? "bg-purple-600 text-white shadow-2xs"
-                  : "bg-purple-50 text-purple-700 hover:bg-purple-100"
+                  ? "bg-slate-900 text-white shadow-2xs"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
               }`}
             >
-              🌐 General
+              <Globe2 className="w-3.5 h-3.5" />
+              <span>Umum / Corporate</span>
             </button>
           </div>
         </div>
@@ -232,15 +238,29 @@ export function MasterParameterPickerModal({
         </div>
 
         {/* Modal Footer */}
-        <div className="border-t border-slate-200 bg-slate-50/50 px-6 py-3 flex items-center justify-between text-[11px] text-slate-500">
-          <span>Menampilkan {relevantParams.length} indikator yang relevan untuk template ini.</span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg px-3 py-1 text-slate-600 hover:bg-slate-200 font-medium transition cursor-pointer"
-          >
-            Tutup
-          </button>
+        <div className="border-t border-slate-200 bg-slate-50/50 px-6 py-3 flex items-center justify-between text-xs text-slate-500">
+          <span>{relevantParams.length} indikator relevan</span>
+          <div className="flex items-center gap-2">
+            {canApplyAll && onApplyAllDept && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onApplyAllDept();
+                }}
+                className="rounded-lg px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs transition cursor-pointer shadow-2xs"
+              >
+                Terapkan Seluruh Kamus {departmentName}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg px-3 py-1.5 text-slate-600 hover:bg-slate-200 font-medium transition cursor-pointer"
+            >
+              Tutup
+            </button>
+          </div>
         </div>
       </div>
     </div>

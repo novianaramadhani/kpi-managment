@@ -12,6 +12,13 @@ interface TemplateDetailActionsProps {
   template: KpiTemplate;
   departmentName: string;
   jobLevelName: string;
+  employee?: {
+    id?: number;
+    nik?: string | null;
+    name?: string | null;
+    jobPosition?: string | null;
+    departmentName?: string | null;
+  } | null;
   categories: KpiCategory[];
   parameters: KpiParameter[];
   bands: KpiBand[];
@@ -33,6 +40,7 @@ export function TemplateDetailActions({
   template,
   departmentName,
   jobLevelName,
+  employee,
   categories,
   parameters,
   bands,
@@ -43,8 +51,9 @@ export function TemplateDetailActions({
   const handleExport = () => {
     exportKpiTemplateToExcel({
       template,
-      departmentName,
+      departmentName: employee?.departmentName || departmentName,
       jobLevelName,
+      employee,
       categories,
       parameters,
       bands,

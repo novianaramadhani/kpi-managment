@@ -13,8 +13,10 @@ import {
   AlertTriangle,
   CheckCircle2,
   Sparkles,
+  BookOpen,
 } from "lucide-react";
 import type {
+  Department,
   KpiParameter,
   KpiBand,
   KpiCalculationRule,
@@ -22,6 +24,7 @@ import type {
   KpiDirection,
   KpiScoringMethod,
 } from "@/db/schema";
+import type { MasterParamItem } from "@/lib/excel-template-kpi";
 import Swal from "sweetalert2";
 import { formatNaturalCriteria } from "@/lib/kpi-display";
 import {
@@ -39,6 +42,8 @@ export interface IndicatorModalProps {
   existingBands?: KpiBand[];
   calculationRules?: KpiCalculationRule[];
   initialTab?: "info" | "scoring";
+  masterParams?: MasterParamItem[];
+  department?: Department;
   onSave: (data: {
     name: string;
     description: string;
@@ -93,10 +98,29 @@ export function IndicatorModal({
   existingBands = [],
   calculationRules = [],
   initialTab = "info",
+  masterParams = [],
+  department,
   onSave,
 }: IndicatorModalProps) {
   const [activeTab, setActiveTab] = useState<"info" | "scoring">(initialTab);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Kamus Master Parameters per Department
+  const currentDeptId = department?.id ?? null;
+  const deptMasterParams = React.useMemo(() => {
+    if (!currentDeptId) return [];
+    return masterParams.filter((p) => p.departmentId === currentDeptId);
+  }, [masterParams, currentDeptId]);
+
+  const generalMasterParams = React.useMemo(() => {
+    return masterParams.filter((p) => !p.departmentId);
+  }, [masterParams]);
+
+  const allRelevantMasterParams = React.useMemo(() => {
+    return masterParams.filter(
+      (p) => !p.departmentId || (currentDeptId && p.departmentId === currentDeptId)
+    );
+  }, [masterParams, currentDeptId]);
 
   // Master KPI Configuration from API
   const [configMeasurementTypes, setConfigMeasurementTypes] = useState<KpiMeasurementType[]>([]);
@@ -190,6 +214,33 @@ export function IndicatorModal({
     { operator: "LT", minValue: "", maxValue: "95", score: "5" },
   ]);
   const [isAutoFillEnabled, setIsAutoFillEnabled] = useState(true);
+
+  // Handler auto-fill from Kamus Master Parameter
+  const handleSelectMasterParam = (paramId: string) => {
+    if (!paramId) return;
+    const p = masterParams.find((x) => String(x.id) === String(paramId));
+    if (!p) return;
+
+    setName(p.name);
+    if (p.unit) setUnit(p.unit);
+    if (p.description) setDescription(p.description);
+    setTarget("100");
+
+    if (p.inputType === "PERCENTAGE") setMeasurementType("PERCENTAGE");
+    else if (p.inputType === "NUMERIC") setMeasurementType("NUMERIC");
+
+    if (p.defaultBands && Array.isArray(p.defaultBands) && p.defaultBands.length > 0) {
+      const loadedCriteria: CriteriaRow[] = p.defaultBands.map((b: any, idx: number) => ({
+        id: `mb-${idx}`,
+        operator: b.operator || "GTE",
+        minValue: b.minValue !== null && b.minValue !== undefined ? String(b.minValue) : "",
+        maxValue: b.maxValue !== null && b.maxValue !== undefined ? String(b.maxValue) : "",
+        score: b.score !== null && b.score !== undefined ? String(b.score) : "25",
+        label: b.label || `Kriteria ${idx + 1}`,
+      }));
+      setCriteria(loadedCriteria);
+    }
+  };
 
   // Real-time structured criteria validation (Gap, Overlap, Incomplete)
   // Helper flags
@@ -783,6 +834,41 @@ export function IndicatorModal({
                   >
                     Coba Lagi
                   </button>
+                </div>
+              )}
+
+              {/* Selector Kamus Master Parameter */}
+              {allRelevantMasterParams.length > 0 && (
+                <div className="space-y-1">
+                  <label className="text-[11px] font-semibold text-slate-700 flex items-center gap-1.5">
+                    <BookOpen className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Pilih dari Kamus Parameter (Opsional)</span>
+                  </label>
+                  <select
+                    onChange={(e) => handleSelectMasterParam(e.target.value)}
+                    defaultValue=""
+                    className="w-full px-2.5 py-1.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:border-blue-500 cursor-pointer"
+                  >
+                    <option value="">-- Ketik manual atau pilih dari Kamus --</option>
+                    {deptMasterParams.length > 0 && (
+                      <optgroup label={`Kamus ${department?.name || "Departemen"} (${deptMasterParams.length})`}>
+                        {deptMasterParams.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.code ? `[${p.code}] ` : ""}{p.name} ({p.unit || "%"})
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {generalMasterParams.length > 0 && (
+                      <optgroup label={`Kamus Umum / Corporate (${generalMasterParams.length})`}>
+                        {generalMasterParams.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.code ? `[${p.code}] ` : ""}{p.name} ({p.unit || "%"})
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
                 </div>
               )}
 

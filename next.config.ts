@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   distDir: ".next_fresh",
   devIndicators: false,
   allowedDevOrigins: ["kpi.noviana.app", "localhost:3000", "127.0.0.1:3000"],

@@ -4,6 +4,12 @@ import JSZip from "jszip";
 import type { KpiBand, KpiCategory, KpiParameter, KpiTemplate } from "@/db/schema";
 import { saveWorkbook } from "./excel-template";
 import {
+  convertTemplateToMatrixData,
+  exportCorporateKpiMatrixExcel,
+  exportBatchCorporateKpiMatrixExcel,
+} from "./excel-kpi-matrix";
+import { cleanTemplateEmployeeName } from "./master-employee-matcher";
+import {
   validateStructuredCriteria,
   parseRangeValues,
   autoHarmonizeCriteriaBands,
@@ -139,10 +145,18 @@ export function formatCriteriaExcel(
   }
 
   if (label && cond) {
-    if (/^[><=≥≤]/.test(label.trim()) || /^\d/.test(label.trim())) {
-      return cond || label;
+    const cleanL = label.trim();
+    const cleanC = cond.trim();
+    if (cleanL.toLowerCase() === cleanC.toLowerCase()) {
+      return cleanL;
     }
-    return `${label} (${cond})`;
+    if (/^[><=≥≤]/.test(cleanL) || /^\d/.test(cleanL)) {
+      if (/[a-zA-Z]/.test(cleanL) && !cleanC.toLowerCase().includes(cleanL.toLowerCase())) {
+        return cleanL;
+      }
+      return cleanC || cleanL;
+    }
+    return `${cleanL} (${cleanC})`;
   }
   return cond || label || "-";
 }
@@ -396,30 +410,115 @@ export function parseConditionString(raw: string): ParsedConditionResult {
 // =============================================================================
 export function buildKpiTemplateSheetRows({
   template,
+  departmentName,
+  jobLevelName,
+  periodYear = "2026",
+  employee,
   categories,
   parameters,
   bands,
 }: {
   template: KpiTemplate;
+  departmentName?: string;
+  jobLevelName?: string;
+  periodYear?: string;
+  employee?: {
+    id?: number;
+    nik?: string | null;
+    name?: string | null;
+    jobPosition?: string | null;
+    departmentName?: string | null;
+  } | null;
   categories: KpiCategory[];
   parameters: KpiParameter[];
   bands: KpiBand[];
 }) {
+  let empName = employee?.name || "";
+  let empNik = employee?.nik || "";
+  let empJobPosition = employee?.jobPosition || "";
+  const empDept = employee?.departmentName || departmentName || "Semua Departemen";
+
+  // Fallback nama & jabatan jika template personal tapi employee record belum ter-link langsung
+  if (!empName && template.name.includes("[Personal]")) {
+    const raw = template.name.replace("[Personal]", "").trim();
+    const parts = raw.split("-").map((s) => s.trim());
+    if (parts.length >= 2) {
+      empName = parts[0];
+      if (!empJobPosition) empJobPosition = parts.slice(1).join(" - ");
+    } else if (parts.length === 1) {
+      empName = parts[0];
+    }
+  }
+  if (!empName || empName.startsWith("Template KPI") || empName.startsWith("[Personal]")) {
+    empName = cleanTemplateEmployeeName(empName || template.name) || template.name;
+  }
+  if (!empJobPosition || empJobPosition === "-") {
+    empJobPosition = jobLevelName || "-";
+  }
+
+  const rows: (string | number | null | { f?: string; v?: any })[][] = [];
+
+  // Baris 1-6: Metadata Header Karyawan & Template KPI
+  rows.push(["FORMULIR TARGET & PENILAIAN KPI (TEMPLATE BULANAN)"]);
+  rows.push([]);
+  rows.push([
+    "Nama Karyawan:",
+    empName,
+    "",
+    "",
+    "Departemen:",
+    empDept,
+  ]);
+  rows.push([
+    "NIK:",
+    empNik || "-",
+    "",
+    "",
+    "Job Position:",
+    empJobPosition || "-",
+  ]);
+  rows.push([
+    "Tahun Periode:",
+    periodYear || "2026",
+    "",
+    "",
+    "Job Level:",
+    jobLevelName || "-",
+  ]);
+  rows.push([]);
+
+  const MONTH_NAMES = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "Mei",
+    "Jun",
+    "Jul",
+    "Ags",
+    "Sep",
+    "Okt",
+    "Nov",
+    "Des",
+  ];
+
+  // Baris 7: Header Kolom Tabel (24 Kolom Standar Korporat)
   const headers = [
     "No",
     "Parameter",
     "Bobot Parameter (%)",
     "Indikator",
-    "Target",
+    "Bobot Indikator (%)",
+    "Target Tahunan",
     "Satuan",
+    "Type",
+    ...MONTH_NAMES,
+    "Realisasi",
     "Kriteria Penilaian",
     "Skor",
-    "Bobot Indikator (%)",
-    "Tipe Input",
     "Deskripsi",
   ];
-
-  const rows: (string | number | null)[][] = [headers];
+  rows.push(headers);
 
   const mappingHeaders = [
     "row_index",
@@ -431,6 +530,7 @@ export function buildKpiTemplateSheetRows({
     "criteria_id",
     "criteria_label",
     "criteria_score",
+    "row_type",
   ];
   const mappingRows: (string | number | null)[][] = [mappingHeaders];
 
@@ -453,13 +553,15 @@ export function buildKpiTemplateSheetRows({
         String(catIdx + 1),
         cat.name,
         catWeightPct,
-        "",
-        "",
-        "",
         "-",
-        "",
-        "",
-        "",
+        100,
+        "-",
+        "-",
+        "Target",
+        ...MONTH_NAMES.map(() => "-"),
+        "-",
+        "-",
+        25,
         "",
       ]);
       mappingRows.push([
@@ -472,6 +574,7 @@ export function buildKpiTemplateSheetRows({
         null,
         "",
         null,
+        "Target",
       ]);
       continue;
     }
@@ -485,57 +588,123 @@ export function buildKpiTemplateSheetRows({
       const noLabel = isTargetKerja
         ? `${catIdx + 1}.${pIdx + 1}`
         : String(catIdx + 1);
-      const paramDisplayName = isTargetKerja ? p.name : "";
-      const displayIndWeight = isTargetKerja ? pWeightPct : "";
+      const paramDisplayName = isTargetKerja ? p.name : cat.name;
+      const displayIndWeight = isTargetKerja ? pWeightPct : 100;
 
       const pBands = bands
         .filter((b) => b.parameterId === p.id)
-        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || Number(b.score ?? 0) - Number(a.score ?? 0));
+        .sort(
+          (a, b) =>
+            (a.sortOrder ?? 0) - (b.sortOrder ?? 0) ||
+            Number(b.score ?? 0) - Number(a.score ?? 0)
+        );
 
-      if (pBands.length === 0) {
+      const targetVal = p.target || "100";
+      const unitVal = p.unit || "%";
+      const b1 = pBands[0];
+      const b2 = pBands[1];
+
+      // Baris 1: Target
+      globalRowCounter++;
+      const monthlyTargetCols = MONTH_NAMES.map(() => {
+        const num = Number(targetVal);
+        return isNaN(num) ? targetVal : num;
+      });
+
+      rows.push([
+        noLabel,
+        cat.name,
+        catWeightPct,
+        paramDisplayName,
+        displayIndWeight,
+        isNaN(Number(targetVal)) ? targetVal : Number(targetVal),
+        unitVal,
+        "Target",
+        ...monthlyTargetCols,
+        isNaN(Number(targetVal)) ? targetVal : Number(targetVal),
+        b1
+          ? formatCriteriaExcel(b1.label, b1.operator, b1.minValue, b1.maxValue, unitVal)
+          : "-",
+        b1 ? Number(b1.score) : 25,
+        p.description || "",
+      ]);
+      mappingRows.push([
+        globalRowCounter,
+        template.id,
+        cat.id,
+        cat.name,
+        p.id,
+        p.name,
+        b1?.id || null,
+        b1?.label || "",
+        b1 ? Number(b1.score) : null,
+        "Target",
+      ]);
+
+      // Baris 2: Actual (Kolom input actual bulanan untuk user!)
+      globalRowCounter++;
+      const actualExcelRowNum = rows.length + 1; // 1-indexed row number di Excel
+      const monthlyActualCols = MONTH_NAMES.map(() => null);
+
+      const isSum = String(p.aggregation || "").toUpperCase() === "SUM";
+      const realizationFormula = isSum
+        ? `SUM(I${actualExcelRowNum}:T${actualExcelRowNum})`
+        : `IFERROR(AVERAGE(I${actualExcelRowNum}:T${actualExcelRowNum}), "")`;
+
+      rows.push([
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "Actual",
+        ...monthlyActualCols,
+        { f: realizationFormula },
+        b2
+          ? formatCriteriaExcel(b2.label, b2.operator, b2.minValue, b2.maxValue, unitVal)
+          : "",
+        b2 ? Number(b2.score) : "",
+        "",
+      ]);
+      mappingRows.push([
+        globalRowCounter,
+        template.id,
+        cat.id,
+        cat.name,
+        p.id,
+        p.name,
+        b2?.id || null,
+        b2?.label || "",
+        b2 ? Number(b2.score) : null,
+        "Actual",
+      ]);
+
+      // Baris 3..n: Kriteria penilaian tambahan (jika ada lebih dari 2 kriteria)
+      for (let bIdx = 2; bIdx < pBands.length; bIdx++) {
+        const bExtra = pBands[bIdx];
         globalRowCounter++;
         rows.push([
-          noLabel,
-          cat.name,
-          catWeightPct,
-          paramDisplayName,
-          p.target || "100",
-          p.unit || "%",
-          "-",
-          25,
-          displayIndWeight,
-          p.inputType || "MONTHLY_ACTUAL",
-          p.description || "",
-        ]);
-        mappingRows.push([
-          globalRowCounter,
-          template.id,
-          cat.id,
-          cat.name,
-          p.id,
-          p.name,
-          null,
           "",
-          null,
-        ]);
-        continue;
-      }
-
-      for (let bIdx = 0; bIdx < pBands.length; bIdx++) {
-        const b = pBands[bIdx];
-        globalRowCounter++;
-        rows.push([
-          bIdx === 0 ? noLabel : "",
-          bIdx === 0 ? cat.name : "",
-          bIdx === 0 ? catWeightPct : "",
-          bIdx === 0 ? paramDisplayName : "",
-          bIdx === 0 ? (p.target || "100") : "",
-          bIdx === 0 ? (p.unit || "%") : "",
-          formatCriteriaExcel(b.label, b.operator, b.minValue, b.maxValue, p.unit),
-          Number(b.score),
-          bIdx === 0 ? displayIndWeight : "",
-          bIdx === 0 ? (p.inputType || "MONTHLY_ACTUAL") : "",
-          bIdx === 0 ? (p.description || "") : "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ...Array(12).fill(""),
+          "",
+          formatCriteriaExcel(
+            bExtra.label,
+            bExtra.operator,
+            bExtra.minValue,
+            bExtra.maxValue,
+            unitVal
+          ),
+          Number(bExtra.score),
+          "",
         ]);
         mappingRows.push([
           globalRowCounter,
@@ -544,24 +713,48 @@ export function buildKpiTemplateSheetRows({
           cat.name,
           p.id,
           p.name,
-          b.id,
-          b.label,
-          Number(b.score),
+          bExtra.id,
+          bExtra.label,
+          Number(bExtra.score),
+          "Criteria",
         ]);
       }
     }
   }
 
+  // Baris Total Ringkasan Bobot di bagian bawah tabel
+  const totalWeightPct = categories.reduce(
+    (sum, c) => sum + Math.round(Number(c.weight) * 100),
+    0
+  );
+  rows.push([
+    "",
+    "TOTAL BOBOT",
+    totalWeightPct,
+    "",
+    "",
+    "",
+    "",
+    "",
+    ...Array(12).fill(""),
+    "",
+    "",
+    "",
+    "",
+  ]);
+
   return { rows, mappingRows };
 }
 
 // =============================================================================
-// Export Single Template KPI to Excel (Struktur Master KPI + Hidden Mapping + Guide)
+// Export Single Template KPI to Excel (Format Gambar 1: Matrix Dua Sisi + Styled)
 // =============================================================================
 export function exportKpiTemplateToExcel({
   template,
   departmentName,
   jobLevelName,
+  periodYear = "2026",
+  employee,
   categories,
   parameters,
   bands,
@@ -569,77 +762,34 @@ export function exportKpiTemplateToExcel({
   template: KpiTemplate;
   departmentName?: string;
   jobLevelName?: string;
+  periodYear?: string;
+  employee?: {
+    id?: number;
+    nik?: string | null;
+    name?: string | null;
+    jobPosition?: string | null;
+    departmentName?: string | null;
+  } | null;
   categories: KpiCategory[];
   parameters: KpiParameter[];
   bands: KpiBand[];
 }) {
-  const wb = XLSX.utils.book_new();
-  const { rows, mappingRows } = buildKpiTemplateSheetRows({
+  const matrixData = convertTemplateToMatrixData({
     template,
+    departmentName,
+    jobLevelName,
+    periodYear,
+    employee,
     categories,
     parameters,
     bands,
   });
 
-  const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws["!cols"] = [
-    { wch: 8 },  // No
-    { wch: 28 }, // Parameter
-    { wch: 22 }, // Bobot Parameter (%)
-    { wch: 34 }, // Indikator
-    { wch: 14 }, // Target
-    { wch: 12 }, // Satuan
-    { wch: 28 }, // Kriteria Penilaian
-    { wch: 10 }, // Skor
-    { wch: 22 }, // Bobot Indikator (%)
-    { wch: 20 }, // Tipe Input
-    { wch: 40 }, // Deskripsi
-  ];
-  XLSX.utils.book_append_sheet(wb, ws, "Struktur Master KPI");
-
-  // Sheet 2: Hidden System Mapping
-  const wsMapping = XLSX.utils.aoa_to_sheet(mappingRows);
-  wsMapping["!cols"] = [
-    { wch: 12 }, // row_index
-    { wch: 14 }, // template_id
-    { wch: 14 }, // parameter_id
-    { wch: 28 }, // parameter_name
-    { wch: 14 }, // indicator_id
-    { wch: 32 }, // indicator_name
-    { wch: 14 }, // criteria_id
-    { wch: 28 }, // criteria_label
-    { wch: 14 }, // criteria_score
-  ];
-  XLSX.utils.book_append_sheet(wb, wsMapping, "_SYSTEM_MAPPING");
-
-  // Hide _SYSTEM_MAPPING in workbook
-  if (!wb.Workbook) wb.Workbook = {};
-  if (!wb.Workbook.Sheets) wb.Workbook.Sheets = [];
-  const mapSheetIdx = wb.SheetNames.indexOf("_SYSTEM_MAPPING");
-  if (mapSheetIdx >= 0) {
-    wb.Workbook.Sheets[mapSheetIdx] = {
-      Hidden: 1,
-    };
-  }
-
-  // Sheet 3: Panduan & Ketentuan Lengkap
-  const wsGuide = XLSX.utils.aoa_to_sheet(
-    createGuideRows({
-      name: template.name,
-      departmentName: departmentName || "Semua Departemen",
-      jobLevelName: jobLevelName || "-",
-      totalWeightPct: Math.round(Number(template.totalWeight) * 100),
-    })
-  );
-  wsGuide["!cols"] = [{ wch: 32 }, { wch: 80 }];
-  XLSX.utils.book_append_sheet(wb, wsGuide, "Panduan & Ketentuan");
-
-  const safeTitle = template.name.replace(/[^a-zA-Z0-9_-]/g, "_");
-  saveWorkbook(wb, `Template_KPI_${safeTitle}.xlsx`);
+  exportCorporateKpiMatrixExcel(matrixData);
 }
 
 // =============================================================================
-// Export Batch Beberapa Template KPI ke 1 File Excel Multi-Sheet
+// Export Batch Beberapa Template KPI ke 1 File Excel Multi-Sheet (Format Gambar 1)
 // =============================================================================
 export function exportBatchKpiTemplatesToCombinedExcel(
   items: {
@@ -649,87 +799,29 @@ export function exportBatchKpiTemplatesToCombinedExcel(
     categories: KpiCategory[];
     parameters: KpiParameter[];
     bands: KpiBand[];
+    employee?: {
+      id?: number;
+      nik?: string | null;
+      name?: string | null;
+      jobPosition?: string | null;
+      departmentName?: string | null;
+    } | null;
   }[]
 ) {
   if (items.length === 0) return;
-  const wb = XLSX.utils.book_new();
-
-  // Sheet 1: Ringkasan Daftar Template
-  const summaryHeaders = [
-    "No",
-    "Nama Template",
-    "Departemen",
-    "Job Level",
-    "Target Bobot",
-    "Status",
-    "Versi",
-    "Jumlah Parameter",
-    "Jumlah Indikator",
-  ];
-  const summaryRows = [
-    summaryHeaders,
-    ...items.map((item, idx) => [
-      idx + 1,
-      item.template.name,
-      item.departmentName || "Semua Departemen",
-      item.jobLevelName || "Semua Level",
-      `${Math.round(Number(item.template.totalWeight) * 100)}%`,
-      item.template.isActive ? "Published" : "Draft",
-      `v${item.template.version || 1}.0`,
-      item.categories.length,
-      item.parameters.length,
-    ]),
-  ];
-  const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
-  wsSummary["!cols"] = [
-    { wch: 6 },
-    { wch: 32 },
-    { wch: 22 },
-    { wch: 18 },
-    { wch: 14 },
-    { wch: 12 },
-    { wch: 10 },
-    { wch: 18 },
-    { wch: 18 },
-  ];
-  XLSX.utils.book_append_sheet(wb, wsSummary, "Ringkasan Template");
-
-  // Subsequent sheets: 1 sheet per template (nama dibatasi 28 char agar valid Excel)
-  const usedSheetNames = new Set<string>(["Ringkasan Template"]);
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    let sheetName = item.template.name.replace(/[:\\/?*\[\]]/g, "_").slice(0, 26);
-    if (!sheetName.trim()) sheetName = `Template_${i + 1}`;
-    if (usedSheetNames.has(sheetName)) {
-      sheetName = `${sheetName.slice(0, 24)}_${i + 1}`;
-    }
-    usedSheetNames.add(sheetName);
-
-    const { rows } = buildKpiTemplateSheetRows({
+  const matrixItems = items.map((item) =>
+    convertTemplateToMatrixData({
       template: item.template,
+      departmentName: item.departmentName,
+      jobLevelName: item.jobLevelName,
+      employee: item.employee,
       categories: item.categories,
       parameters: item.parameters,
       bands: item.bands,
-    });
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"] = [
-      { wch: 8 },
-      { wch: 28 },
-      { wch: 22 },
-      { wch: 34 },
-      { wch: 14 },
-      { wch: 12 },
-      { wch: 28 },
-      { wch: 10 },
-      { wch: 22 },
-      { wch: 20 },
-      { wch: 40 },
-    ];
-    XLSX.utils.book_append_sheet(wb, ws, sheetName);
-  }
+    })
+  );
 
-  const dateStr = new Date().toISOString().split("T")[0];
-  saveWorkbook(wb, `Batch_Template_KPI_${items.length}_Template_${dateStr}.xlsx`);
+  exportBatchCorporateKpiMatrixExcel(matrixItems);
 }
 
 // =============================================================================
@@ -2930,7 +3022,7 @@ export async function validateAndParseWizardExcel(
     const paramCodeCol = getCol(row, "kodeparameter", "kode", "kodesubparameter");
     const paramNameCol = getCol(row, "subparameter", "indikator", "namaindikator", "subpoin");
     const unitCol = getCol(row, "satuan", "unit");
-    const targetCol = getCol(row, "target", "sasaran", "nilaitarget");
+    const targetCol = getCol(row, "target", "targettahunan", "sasaran", "nilaitarget");
     const criteriaCol = getCol(row, "kriteriapenilaian", "kriteria", "kondisi", "skalapenilaian");
     const scoreCol = getCol(row, "skor", "score", "poin");
     const paramWeightRaw = getCol(row, "bobotsubparameter", "bobotindikator", "bobot");

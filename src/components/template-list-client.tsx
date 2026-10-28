@@ -25,11 +25,14 @@ import {
   Upload,
   FileSpreadsheet,
   X,
+  Sparkles,
+  User,
 } from "lucide-react";
 import {
   exportKpiTemplateToExcel,
   exportBatchKpiTemplatesToCombinedExcel,
 } from "@/lib/excel-template-kpi";
+import { findMasterEmployeeForTemplate } from "@/lib/master-employee-matcher";
 import type {
   Appraisal,
   Department,
@@ -45,11 +48,11 @@ import type {
   DepartmentMapping,
 } from "@/db/schema";
 import type { TemplateAssignmentStatus } from "@/lib/template-assignment-service";
-import { TemplateModal } from "./template-modal";
 import { TemplateViewModal } from "./template-view-modal";
 import { TemplateAssignmentDrawer, prefetchTemplateAssignment } from "./template-assignment-drawer";
 import { TemplateImportExcelModal } from "./template-import-excel-modal";
 import { TemplateUploadModal } from "./template-upload-modal";
+import { PersonalTemplateModal } from "./personal-template-modal";
 
 interface TemplateListClientProps {
   templates: KpiTemplate[];
@@ -88,6 +91,7 @@ export function TemplateListClient({
   employees = [],
   activePeriod,
   periods = [],
+  existingAppraisals = [],
   templateUsageMap = {},
   assignmentOverview = {},
   createAction,
@@ -132,7 +136,7 @@ export function TemplateListClient({
   const headerCheckboxRef = useRef<HTMLInputElement>(null);
 
   // Modals & Drawer state
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isPersonalModalOpen, setIsPersonalModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isActionsOpen, setIsActionsOpen] = useState(false);
@@ -140,6 +144,12 @@ export function TemplateListClient({
   const [viewingTemplate, setViewingTemplate] = useState<KpiTemplate | null>(null);
   const [assigningTemplate, setAssigningTemplate] = useState<KpiTemplate | null>(null);
   const [assigningInitialTab, setAssigningInitialTab] = useState<"PENILAI" | "KARYAWAN">("PENILAI");
+
+  // Scope Tab: STANDARD (Department/Job Position standard) vs PERSONAL (Specific employee)
+  const [templateScope, setTemplateScope] = useState<"STANDARD" | "PERSONAL">("STANDARD");
+
+  const standardCount = useMemo(() => templates.filter((t) => !t.isCustom).length, [templates]);
+  const personalCount = useMemo(() => templates.filter((t) => t.isCustom).length, [templates]);
 
   // Click outside listener for Actions dropdown
   useEffect(() => {
@@ -178,6 +188,12 @@ export function TemplateListClient({
     return map;
   }, [pits]);
 
+  const employeeMap = useMemo(() => {
+    const map = new Map<number, Employee>();
+    employees.forEach((e) => map.set(e.id, e));
+    return map;
+  }, [employees]);
+
   const filteredPitsForFilter = useMemo(() => {
     if (!selectedSite || selectedSite === "ALL") return pits;
     return pits.filter((p) => p.site === selectedSite);
@@ -187,11 +203,22 @@ export function TemplateListClient({
   const filteredTemplates = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
     return templates.filter((t) => {
+      // 0. Scope Tab Filter (Standard vs Personal)
+      if (templateScope === "PERSONAL") {
+        if (!t.isCustom) return false;
+      } else {
+        if (t.isCustom) return false;
+      }
+
       const dep = deptMap.get(t.departmentId);
       const lvl = levelMap.get(t.jobLevelId);
+      const emp = t.employeeId ? employeeMap.get(t.employeeId) : null;
 
       if (q) {
         const matchName = t.name.toLowerCase().includes(q);
+        const matchEmp = emp
+          ? emp.name.toLowerCase().includes(q) || emp.nik.toLowerCase().includes(q)
+          : false;
         const matchDept = dep
           ? dep.name.toLowerCase().includes(q) || dep.code.toLowerCase().includes(q)
           : false;
@@ -201,7 +228,7 @@ export function TemplateListClient({
         const matchSite = t.site ? t.site.toLowerCase().includes(q) : false;
         const pitObj = t.pitId ? pitMap.get(t.pitId) : null;
         const matchPit = pitObj ? pitObj.name.toLowerCase().includes(q) || (pitObj.code && pitObj.code.toLowerCase().includes(q)) : false;
-        if (!matchName && !matchDept && !matchLevel && !matchSite && !matchPit) return false;
+        if (!matchName && !matchEmp && !matchDept && !matchLevel && !matchSite && !matchPit) return false;
       }
 
       if (
@@ -239,7 +266,7 @@ export function TemplateListClient({
 
       return true;
     });
-  }, [templates, searchQuery, selectedDept, selectedSite, selectedPit, selectedJobLevel, selectedStatus, deptMap, levelMap, pitMap]);
+  }, [templates, templateScope, searchQuery, selectedDept, selectedSite, selectedPit, selectedJobLevel, selectedStatus, deptMap, levelMap, pitMap, employeeMap]);
 
   // Pagination calculations
   const totalItems = filteredTemplates.length;
@@ -484,10 +511,18 @@ export function TemplateListClient({
     const paramIds = new Set(tplParams.map((p) => p.id));
     const tplBands = (bands || []).filter((b) => paramIds.has(b.parameterId));
 
+    const emp = findMasterEmployeeForTemplate({
+      template: t,
+      employees,
+      existingAppraisals,
+      departments,
+    });
+
     exportKpiTemplateToExcel({
       template: t,
-      departmentName: dep?.name,
+      departmentName: emp?.departmentName || dep?.name,
       jobLevelName: lvl?.name,
+      employee: emp,
       categories: tplCats,
       parameters: tplParams,
       bands: tplBands,
@@ -548,10 +583,18 @@ export function TemplateListClient({
       const tplParams = (parameters || []).filter((p) => catIds.has(p.categoryId));
       const paramIds = new Set(tplParams.map((p) => p.id));
       const tplBands = (bands || []).filter((b) => paramIds.has(b.parameterId));
+      const emp = findMasterEmployeeForTemplate({
+        template: t,
+        employees,
+        existingAppraisals,
+        departments,
+      });
+
       return {
         template: t,
-        departmentName: dep?.name,
+        departmentName: emp?.departmentName || dep?.name,
         jobLevelName: lvl?.name,
+        employee: emp,
         categories: tplCats,
         parameters: tplParams,
         bands: tplBands,
@@ -614,7 +657,60 @@ export function TemplateListClient({
   return (
     <div className="space-y-4">
       {/* 1. FILTER & ACTION TOOLBAR */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4">
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4 space-y-3.5">
+        {/* Sub-Tab Scope Selector */}
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3 flex-wrap gap-2">
+          <div className="flex items-center gap-1.5 p-1 bg-slate-100/80 rounded-xl border border-slate-200/70">
+            <button
+              type="button"
+              onClick={() => {
+                setTemplateScope("STANDARD");
+                setCurrentPage(1);
+                setSelectedIds(new Set());
+              }}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-2 cursor-pointer ${
+                templateScope === "STANDARD"
+                  ? "bg-white text-blue-700 shadow-xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <Building2 className="w-3.5 h-3.5 text-blue-600" />
+              <span>Template Standar Jabatan ({standardCount})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setTemplateScope("PERSONAL");
+                setCurrentPage(1);
+                setSelectedIds(new Set());
+              }}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-2 cursor-pointer ${
+                templateScope === "PERSONAL"
+                  ? "bg-white text-blue-700 shadow-xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+              <span>Template Personal Karyawan ({personalCount})</span>
+            </button>
+          </div>
+
+          {/* Quick Context Pill */}
+          <div className="text-[11px] font-medium">
+            {templateScope === "PERSONAL" ? (
+              <span className="flex items-center gap-1 text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
+                <Sparkles className="w-3 h-3 text-amber-600" />
+                Template individual unik khusus karyawan tertentu
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-slate-600 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200">
+                <Building2 className="w-3 h-3 text-slate-400" />
+                Template acuan departemen dan jenjang jabatan umum
+              </span>
+            )}
+          </div>
+        </div>
+
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           {/* Left: Search & Dropdown Filters (Dept, Level, Status) */}
           <div className="flex items-center gap-2 flex-wrap flex-1">
@@ -883,15 +979,15 @@ export function TemplateListClient({
               <span>Import Excel</span>
             </Link>
 
-            {/* Primary Action Button: Tambah Template */}
+            {/* Tambah Template Personal Button */}
             <button
               type="button"
-              onClick={() => setIsCreateModalOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 shadow-xs transition active:scale-95 cursor-pointer"
-              title="Membuat template secara manual"
+              onClick={() => setIsPersonalModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 active:bg-amber-700 px-3.5 py-2 text-xs font-semibold text-white shadow-xs transition active:scale-95 cursor-pointer"
+              title="Buat template personal khusus seorang karyawan"
             >
               <Plus className="w-4 h-4" />
-              <span>Tambah Template</span>
+              <span>Tambah Template Personal</span>
             </button>
           </div>
         </div>
@@ -975,25 +1071,42 @@ export function TemplateListClient({
                   />
                 </th>
                 <th className="py-3 px-2 w-10 text-center">No</th>
-                <th className="py-3 px-4 min-w-[200px]">Nama Template</th>
+                <th className="py-3 px-4 min-w-[200px]">
+                  {templateScope === "PERSONAL" ? "Karyawan & Template" : "Nama Template"}
+                </th>
                 <th className="py-3 px-4 w-40">Departemen</th>
-                <th className="py-3 px-4 w-32">Job Level</th>
+                <th className="py-3 px-4 w-36">
+                  {templateScope === "PERSONAL" ? "Jabatan (Job Position)" : "Job Level"}
+                </th>
+                {templateScope === "PERSONAL" && (
+                  <th className="py-3 px-4 w-40">Template Acuan</th>
+                )}
                 <th className="py-3 px-4 w-28">Status</th>
                 <th className="py-3 px-4 w-24">Total Bobot</th>
-                <th className="py-3 px-4 w-52">Penugasan</th>
+                {templateScope === "STANDARD" && (
+                  <th className="py-3 px-4 w-52">Penugasan</th>
+                )}
                 <th className="py-3 px-4 w-36 text-right">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {paginatedTemplates.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-slate-400">
+                  <td colSpan={templateScope === "PERSONAL" ? 8 : 9} className="py-12 text-center text-slate-400">
                     <Building2 className="w-8 h-8 text-slate-300 mx-auto mb-2" />
                     <p className="text-xs font-semibold text-slate-600">
-                      {hasActiveFilters ? "Tidak ada template yang cocok" : "Belum ada master template"}
+                      {hasActiveFilters
+                        ? "Tidak ada template yang cocok"
+                        : templateScope === "PERSONAL"
+                        ? "Belum ada template personal karyawan"
+                        : "Belum ada master template"}
                     </p>
                     <p className="text-[11px] text-slate-400 mt-0.5">
-                      {hasActiveFilters ? "Silakan sesuaikan filter pencarian Anda." : "Klik Tambah Template untuk membuat baru."}
+                      {hasActiveFilters
+                        ? "Silakan sesuaikan filter pencarian Anda."
+                        : templateScope === "PERSONAL"
+                        ? "Klik Tambah Template Personal untuk membuat template khusus karyawan."
+                        : "Klik Tambah Template Personal untuk membuat baru."}
                     </p>
                   </td>
                 </tr>
@@ -1001,6 +1114,8 @@ export function TemplateListClient({
                 paginatedTemplates.map((t, idx) => {
                   const dep = deptMap.get(t.departmentId);
                   const lvl = levelMap.get(t.jobLevelId);
+                  const emp = t.employeeId ? employeeMap.get(t.employeeId) : null;
+                  const baseTpl = t.baseTemplateId ? templates.find((b) => b.id === t.baseTemplateId) : null;
                   const rowNumber = (currentPage - 1) * pageSize + idx + 1;
                   const assignInfo = assignmentOverview[t.id];
                   const isSelected = selectedIds.has(t.id);
@@ -1028,7 +1143,7 @@ export function TemplateListClient({
                         {rowNumber}
                       </td>
 
-                      {/* Nama Template */}
+                      {/* Nama Template & Karyawan */}
                       <td className="py-3 px-4">
                         <Link
                           href={`/setup/templates/${t.id}`}
@@ -1037,10 +1152,28 @@ export function TemplateListClient({
                         >
                           {t.name}
                         </Link>
+
+                        {/* Detail Karyawan khusus template personal */}
+                        {t.isCustom && emp && (
+                          <div className="flex items-center gap-1.5 mt-1 text-[11px] text-slate-600">
+                            <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-800 font-bold flex items-center justify-center text-[10px] shrink-0">
+                              {emp.name.charAt(0).toUpperCase()}
+                            </span>
+                            <span className="font-semibold text-slate-800">{emp.name}</span>
+                            <span className="text-slate-400 font-mono text-[10px]">({emp.nik})</span>
+                          </div>
+                        )}
+
                         <div className="flex items-center gap-1.5 flex-wrap mt-1">
                           <span className="text-[10px] font-mono text-slate-400">
                             v{t.version || 1}.0
                           </span>
+                          {t.isCustom && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                              <Sparkles className="w-3 h-3 text-amber-600" />
+                              Personal
+                            </span>
+                          )}
                           {t.site && (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-50 text-purple-700 border border-purple-200">
                               Site: {t.site}
@@ -1063,10 +1196,25 @@ export function TemplateListClient({
                         {dep?.name ?? "Semua Departemen"}
                       </td>
 
-                      {/* Job Level */}
+                      {/* Job Level / Job Position */}
                       <td className="py-3 px-4 text-slate-700 font-medium">
-                        {lvl?.name ?? "Semua Level"}
+                        {templateScope === "PERSONAL"
+                          ? emp?.jobPosition || lvl?.name || "-"
+                          : lvl?.name ?? "Semua Level"}
                       </td>
+
+                      {/* Template Acuan (Hanya tampil di tab PERSONAL) */}
+                      {templateScope === "PERSONAL" && (
+                        <td className="py-3 px-4 text-slate-600 text-xs">
+                          {baseTpl ? (
+                            <span className="inline-flex items-center gap-1 text-slate-700">
+                              <span className="truncate max-w-[150px]">{baseTpl.name}</span>
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">-</span>
+                          )}
+                        </td>
+                      )}
 
                       {/* Status */}
                       <td className="py-3 px-4">
@@ -1288,24 +1436,7 @@ export function TemplateListClient({
         />
       )}
 
-      {/* MODAL BUAT TEMPLATE */}
-      <TemplateModal
-        isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
-        departments={departments}
-        jobLevels={jobLevels}
-        positions={jobPositions}
-        periods={periods.length > 0 ? periods : activePeriod ? [activePeriod] : []}
-        pits={pits}
-        departmentMappings={departmentMappings}
-        existingTemplates={templates.map((t) => ({
-          id: t.id,
-          departmentId: t.departmentId,
-          jobLevelId: t.jobLevelId,
-          name: t.name,
-        }))}
-        action={createAction}
-      />
+
 
       {/* MODAL PREVIEW */}
       {viewingTemplate && (
@@ -1315,6 +1446,12 @@ export function TemplateListClient({
           template={viewingTemplate}
           department={deptMap.get(viewingTemplate.departmentId)}
           jobLevel={levelMap.get(viewingTemplate.jobLevelId)}
+          employee={findMasterEmployeeForTemplate({
+            template: viewingTemplate,
+            employees,
+            existingAppraisals,
+            departments,
+          })}
           categories={categories.filter((c) => c.templateId === viewingTemplate.id)}
           parameters={parameters}
           bands={bands}
@@ -1346,6 +1483,22 @@ export function TemplateListClient({
         employees={employees}
         periods={periods}
         activePeriod={activePeriod}
+        onSuccess={() => {
+          router.refresh();
+        }}
+      />
+
+      {/* MODAL BUAT TEMPLATE PERSONAL KARYAWAN */}
+      <PersonalTemplateModal
+        isOpen={isPersonalModalOpen}
+        onClose={() => setIsPersonalModalOpen(false)}
+        employees={employees}
+        templates={templates}
+        departments={departments}
+        jobLevels={jobLevels}
+        jobPositions={jobPositions}
+        categories={categories}
+        parameters={parameters}
         onSuccess={() => {
           router.refresh();
         }}

@@ -130,20 +130,61 @@ export async function getMonthlyAssessmentDetail(params: {
   let resolvedTemplateName = apprRow.template?.name ?? null;
   let resolvedTemplateId = apprRow.appraisal.templateId ?? apprRow.template?.id ?? null;
 
-  if (!resolvedTemplateName && apprRow.employee.departmentId && apprRow.employee.jobLevelId) {
-    const [matchingTemplate] = await db
+  if (!resolvedTemplateName && apprRow.employee.id) {
+    // 1. Prioritas Utama: Template Personal Karyawan
+    const [personalTpl] = await db
       .select({ id: kpiTemplates.id, name: kpiTemplates.name })
       .from(kpiTemplates)
       .where(
         and(
-          eq(kpiTemplates.departmentId, apprRow.employee.departmentId),
-          eq(kpiTemplates.jobLevelId, apprRow.employee.jobLevelId)
+          eq(kpiTemplates.employeeId, apprRow.employee.id),
+          eq(kpiTemplates.isCustom, true),
+          eq(kpiTemplates.isActive, true)
         )
       )
       .limit(1);
-    if (matchingTemplate) {
-      resolvedTemplateName = matchingTemplate.name;
-      resolvedTemplateId = matchingTemplate.id;
+
+    if (personalTpl) {
+      resolvedTemplateName = personalTpl.name;
+      resolvedTemplateId = personalTpl.id;
+    } else if (apprRow.employee.jobPositionId) {
+      // 2. Prioritas Kedua: Template Standar Job Position
+      const [posTpl] = await db
+        .select({ id: kpiTemplates.id, name: kpiTemplates.name })
+        .from(kpiTemplates)
+        .where(
+          and(
+            eq(kpiTemplates.jobPositionId, apprRow.employee.jobPositionId),
+            eq(kpiTemplates.isCustom, false),
+            eq(kpiTemplates.isActive, true)
+          )
+        )
+        .limit(1);
+
+      if (posTpl) {
+        resolvedTemplateName = posTpl.name;
+        resolvedTemplateId = posTpl.id;
+      }
+    }
+
+    // 3. Prioritas Ketiga: Template Standar Departemen & Job Level
+    if (!resolvedTemplateName && apprRow.employee.departmentId && apprRow.employee.jobLevelId) {
+      const [matchingTemplate] = await db
+        .select({ id: kpiTemplates.id, name: kpiTemplates.name })
+        .from(kpiTemplates)
+        .where(
+          and(
+            eq(kpiTemplates.departmentId, apprRow.employee.departmentId),
+            eq(kpiTemplates.jobLevelId, apprRow.employee.jobLevelId),
+            eq(kpiTemplates.isCustom, false),
+            eq(kpiTemplates.isActive, true)
+          )
+        )
+        .limit(1);
+      if (matchingTemplate) {
+        resolvedTemplateName = matchingTemplate.name;
+        resolvedTemplateId = matchingTemplate.id;
+      }
     }
   }
 

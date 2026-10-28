@@ -5600,19 +5600,38 @@ export async function generateAppraisalsBatchAction(fd: FormData) {
   for (const emp of allEmployees) {
     if (existingEmployeeIds.has(emp.id)) continue; // Skip if already has appraisal
 
-    // Find matching template based on department and job level
+    // Smart Priority Template Matching:
+    // 1. Prioritas Utama: Template Personal Karyawan (isCustom = true & employeeId cocok)
     let matchingTemplate = allTemplates.find(
-      (t) => t.departmentId === emp.departmentId && t.jobLevelId === emp.jobLevelId
+      (t) => t.isCustom && t.employeeId === emp.id
     );
 
-    // Fallback to department only template if no exact match
-    if (!matchingTemplate) {
-      matchingTemplate = allTemplates.find((t) => t.departmentId === emp.departmentId && t.jobLevelId === null);
+    // 2. Prioritas Kedua: Template Standar khusus Job Position karyawan
+    if (!matchingTemplate && emp.jobPositionId) {
+      matchingTemplate = allTemplates.find(
+        (t) => !t.isCustom && t.jobPositionId === emp.jobPositionId
+      );
     }
 
-    // Fallback to global template
+    // 3. Prioritas Ketiga: Template Standar Departemen & Job Level
     if (!matchingTemplate) {
-      matchingTemplate = allTemplates.find((t) => t.departmentId === null && t.jobLevelId === null);
+      matchingTemplate = allTemplates.find(
+        (t) => !t.isCustom && t.departmentId === emp.departmentId && t.jobLevelId === emp.jobLevelId
+      );
+    }
+
+    // Fallback: Template Departemen saja
+    if (!matchingTemplate) {
+      matchingTemplate = allTemplates.find(
+        (t) => !t.isCustom && t.departmentId === emp.departmentId && t.jobLevelId === null
+      );
+    }
+
+    // Fallback: Template Global
+    if (!matchingTemplate) {
+      matchingTemplate = allTemplates.find(
+        (t) => !t.isCustom && t.departmentId === null && t.jobLevelId === null
+      );
     }
 
     if (!matchingTemplate) continue; // Skip if no template found

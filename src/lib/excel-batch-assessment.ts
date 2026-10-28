@@ -228,14 +228,20 @@ export function parseKpiExcelMatrix(rawMatrix: unknown[][]): ExcelParsedBlock[] 
   for (let r = 0; r < rawMatrix.length; r++) {
     const row = (rawMatrix[r] as unknown[]) || [];
 
-    // Cari kolom yang memuat teks "Type" (prioritas Kolom H = index 7)
+    // Cari kolom yang memuat teks "Type" atau baris "Target" (prioritas Kolom H = index 7)
     let colTypeIdx = -1;
+    let isDirectTargetRow = false;
+
     if (row[7] !== undefined && String(row[7]).trim().toLowerCase() === "type") {
       colTypeIdx = 7;
+    } else if (row[7] !== undefined && String(row[7]).trim().toLowerCase() === "target") {
+      colTypeIdx = 7;
+      isDirectTargetRow = true;
     } else {
       // Fallback auto-detection jika ada geseran kolom
       for (let c = 0; c < row.length; c++) {
-        if (String(row[c] || "").trim().toLowerCase() === "type") {
+        const cellVal = String(row[c] || "").trim().toLowerCase();
+        if (cellVal === "type") {
           colTypeIdx = c;
           break;
         }
@@ -243,61 +249,74 @@ export function parseKpiExcelMatrix(rawMatrix: unknown[][]): ExcelParsedBlock[] 
     }
 
     if (colTypeIdx >= 0) {
-      // Baris r adalah baris 'Type'.
-      // 1. Ekstraksi Judul Parameter dari baris sebelumnya (r - 1) di kolom yang sama
       let rawTitle = "";
-      for (let lookback = 1; lookback <= 3; lookback++) {
-        const prevRow = rawMatrix[r - lookback] as unknown[] | undefined;
-        if (prevRow) {
-          const cand = String(prevRow[colTypeIdx] || "").trim();
-          if (cand && cand.toLowerCase() !== "parameter" && cand.toLowerCase() !== "type") {
-            rawTitle = cand;
-            break;
+      let targetRow: unknown[] | null = null;
+      let actualRow: unknown[] | null = null;
+
+      if (isDirectTargetRow) {
+        // Ekstraksi langsung dari baris matriks: Kolom D (Indikator) atau Kolom B (Parameter)
+        rawTitle = String(row[3] || row[1] || "").trim();
+        targetRow = row;
+        const nextR = (rawMatrix[r + 1] as unknown[]) || [];
+        if (String(nextR[colTypeIdx] || "").trim().toLowerCase().includes("actual")) {
+          actualRow = nextR;
+        }
+      } else {
+        // Baris r adalah baris header 'Type'.
+        // 1. Ekstraksi Judul Parameter dari baris sebelumnya (r - 1) di kolom yang sama
+        for (let lookback = 1; lookback <= 3; lookback++) {
+          const prevRow = rawMatrix[r - lookback] as unknown[] | undefined;
+          if (prevRow) {
+            const cand = String(prevRow[colTypeIdx] || "").trim();
+            if (cand && cand.toLowerCase() !== "parameter" && cand.toLowerCase() !== "type") {
+              rawTitle = cand;
+              break;
+            }
+            // Jika di kolom colTypeIdx bertuliskan "Parameter", cek kolom sebelahnya (colTypeIdx + 1)
+            const candNext = String(prevRow[colTypeIdx + 1] || "").trim();
+            if (candNext) {
+              rawTitle = candNext;
+              break;
+            }
           }
-          // Jika di kolom colTypeIdx bertuliskan "Parameter", cek kolom sebelahnya (colTypeIdx + 1)
-          const candNext = String(prevRow[colTypeIdx + 1] || "").trim();
-          if (candNext) {
-            rawTitle = candNext;
-            break;
+        }
+
+        // 2. Baris Target (biasanya r + 1) dan Baris Actual (biasanya r + 2)
+        for (let offset = 1; offset <= 4; offset++) {
+          const nextRow = rawMatrix[r + offset] as unknown[] | undefined;
+          if (!nextRow) continue;
+          const labelPrimary = String(nextRow[colTypeIdx] || "").trim().toLowerCase();
+          const labelPrev = colTypeIdx > 0 ? String(nextRow[colTypeIdx - 1] || "").trim().toLowerCase() : "";
+          const labelNext = String(nextRow[colTypeIdx + 1] || "").trim().toLowerCase();
+          const combined = `${labelPrimary} ${labelPrev} ${labelNext}`;
+
+          if (
+            combined.includes("target") ||
+            combined.includes("tgt") ||
+            combined.includes("harus")
+          ) {
+            targetRow = nextRow;
+          } else if (
+            combined.includes("actual") ||
+            combined.includes("aktual") ||
+            combined.includes("realisasi")
+          ) {
+            actualRow = nextRow;
           }
+        }
+
+        // Jika baris target atau actual tidak memiliki label eksplisit, ambil berurutan r+1 dan r+2
+        if (!targetRow && rawMatrix[r + 1]) targetRow = rawMatrix[r + 1] as unknown[];
+        if (!actualRow && rawMatrix[r + 2]) actualRow = rawMatrix[r + 2] as unknown[];
+
+        if (!rawTitle && targetRow && targetRow[3]) {
+          rawTitle = String(targetRow[3]).trim();
         }
       }
 
       if (!rawTitle) {
-        // Fallback jika judul ada di baris yang sama atau di sel sekitar
         continue;
       }
-
-      // 2. Baris Target (biasanya r + 1) dan Baris Actual (biasanya r + 2)
-      let targetRow: unknown[] | null = null;
-      let actualRow: unknown[] | null = null;
-
-      for (let offset = 1; offset <= 4; offset++) {
-        const nextRow = rawMatrix[r + offset] as unknown[] | undefined;
-        if (!nextRow) continue;
-        const labelPrimary = String(nextRow[colTypeIdx] || "").trim().toLowerCase();
-        const labelPrev = colTypeIdx > 0 ? String(nextRow[colTypeIdx - 1] || "").trim().toLowerCase() : "";
-        const labelNext = String(nextRow[colTypeIdx + 1] || "").trim().toLowerCase();
-        const combined = `${labelPrimary} ${labelPrev} ${labelNext}`;
-
-        if (
-          combined.includes("target") ||
-          combined.includes("tgt") ||
-          combined.includes("harus")
-        ) {
-          targetRow = nextRow;
-        } else if (
-          combined.includes("actual") ||
-          combined.includes("aktual") ||
-          combined.includes("realisasi")
-        ) {
-          actualRow = nextRow;
-        }
-      }
-
-      // Jika baris target atau actual tidak memiliki label eksplisit, ambil berurutan r+1 dan r+2
-      if (!targetRow && rawMatrix[r + 1]) targetRow = rawMatrix[r + 1] as unknown[];
-      if (!actualRow && rawMatrix[r + 2]) actualRow = rawMatrix[r + 2] as unknown[];
 
       const monthlyTargets: (number | null)[] = [];
       const monthlyActuals: (number | null)[] = [];
@@ -342,7 +361,7 @@ export function parseKpiExcelMatrix(rawMatrix: unknown[][]): ExcelParsedBlock[] 
       });
 
       // Lewati baris target & actual yang sudah diproses
-      r += 2;
+      r += isDirectTargetRow ? 1 : 2;
     }
   }
 

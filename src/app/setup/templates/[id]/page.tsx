@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { db } from "@/db";
-import { departments, jobLevels, kpiBands, kpiCategories, kpiParameters, kpiTemplates, kpiCalculationRules } from "@/db/schema";
+import { departments, jobLevels, kpiBands, kpiCategories, kpiParameters, kpiTemplates, kpiCalculationRules, employees } from "@/db/schema";
 import { asc, eq, inArray } from "drizzle-orm";
 import {
   addBand, addCategory, addParameter, deleteBand, deleteCategory, deleteParameter,
@@ -8,6 +8,7 @@ import {
   getConfig, importTemplateStructure, getMasterParameters, normalizeTemplateSortOrders,
 } from "@/lib/actions";
 import { TemplateWizardEditor } from "@/components/template-wizard-editor";
+import { resolveTemplateMasterEmployee } from "@/lib/master-employee-resolver";
 
 export const dynamic = "force-dynamic";
 
@@ -25,12 +26,13 @@ export default async function TemplateDetailPage({ params }: { params: Promise<{
   // Normalize any duplicate or uninitialized sort orders for consistent 1..n sequencing
   await normalizeTemplateSortOrders(tplId);
 
-  const [deps, lvls, cats, masterParams, calcRules] = await Promise.all([
+  const [deps, lvls, cats, masterParams, calcRules, employeeRecord] = await Promise.all([
     db.select().from(departments),
     db.select().from(jobLevels).orderBy(asc(jobLevels.rank)),
     db.select().from(kpiCategories).where(eq(kpiCategories.templateId, tplId)).orderBy(asc(kpiCategories.sortOrder), asc(kpiCategories.id)),
-    getMasterParameters(tpl.departmentId),
+    getMasterParameters(undefined, false),
     db.select().from(kpiCalculationRules).where(eq(kpiCalculationRules.status, "ACTIVE")).orderBy(asc(kpiCalculationRules.id)),
+    resolveTemplateMasterEmployee(tplId, db),
   ]);
 
   const catIds = cats.map((c) => c.id);
@@ -49,6 +51,7 @@ export default async function TemplateDetailPage({ params }: { params: Promise<{
     <div className="w-full min-w-0">
       <TemplateWizardEditor
         template={tpl}
+        employee={employeeRecord}
         departments={deps}
         jobLevels={lvls}
         categories={cats}

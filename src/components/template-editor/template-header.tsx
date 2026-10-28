@@ -11,6 +11,7 @@ import {
   SlidersHorizontal,
   ChevronDown,
   Settings,
+  Download,
 } from "lucide-react";
 import type { Department, JobLevel, KpiTemplate } from "@/db/schema";
 
@@ -19,6 +20,13 @@ interface TemplateHeaderProps {
   templateName: string;
   department?: Department;
   jobLevel?: JobLevel;
+  employee?: {
+    id?: number;
+    nik?: string | null;
+    name?: string | null;
+    jobPosition?: string | null;
+    departmentName?: string | null;
+  } | null;
   periodYear: string;
   isActive: boolean;
   isValidToPublish: boolean;
@@ -41,6 +49,7 @@ export function TemplateHeader({
   templateName,
   department,
   jobLevel,
+  employee,
   periodYear,
   isActive,
   isValidToPublish,
@@ -53,6 +62,8 @@ export function TemplateHeader({
   onEditInfo,
   onSyncToEmployees,
   isSyncingToEmployees = false,
+  onExportExcel,
+  onImportExcel,
 }: TemplateHeaderProps) {
   const deptLabel = department?.name ?? "Semua Departemen";
   const levelLabel = jobLevel?.name ?? "Semua Level";
@@ -144,8 +155,20 @@ export function TemplateHeader({
           </div>
         </div>
 
-        {/* Sisi Kanan: Single Dropdown Menu Actions */}
+        {/* Sisi Kanan: Single Dropdown Menu Actions + Direct Download Button */}
         <div className="flex items-center gap-2 shrink-0 justify-end">
+          {onExportExcel && (
+            <button
+              type="button"
+              onClick={onExportExcel}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50/80 hover:bg-emerald-100 text-emerald-800 px-3 py-1.5 text-xs font-semibold shadow-2xs transition active:scale-98 cursor-pointer"
+              title="Download Template KPI ke Excel (beserta kolom input actual bulanan)"
+            >
+              <Download className="h-3.5 w-3.5 text-emerald-700" />
+              <span>Download Excel</span>
+            </button>
+          )}
+
           <div className="relative" ref={actionsRef}>
             <button
               type="button"
@@ -264,6 +287,31 @@ export function TemplateHeader({
                   </div>
                 </button>
 
+                {/* Download Excel Template */}
+                {onExportExcel && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setIsActionsOpen(false);
+                      onExportExcel();
+                    }}
+                    className="flex items-center gap-2.5 w-full rounded-lg px-3 py-2 text-xs font-medium text-slate-700 hover:bg-emerald-50/80 hover:text-emerald-950 transition text-left cursor-pointer group mt-0.5"
+                  >
+                    <div className="h-7 w-7 rounded-md bg-emerald-50 border border-emerald-200 flex items-center justify-center shrink-0 text-emerald-700 group-hover:bg-emerald-100/70 transition-colors">
+                      <Download className="h-3.5 w-3.5" />
+                    </div>
+                    <div className="flex flex-col min-w-0">
+                      <span className="font-semibold text-slate-800 group-hover:text-emerald-950">
+                        Download Excel
+                      </span>
+                      <span className="text-[10.5px] text-slate-500 leading-tight">
+                        Unduh format template &amp; input actual bulanan
+                      </span>
+                    </div>
+                  </button>
+                )}
+
                 {/* Divider */}
                 <div className="my-1 border-t border-slate-100" />
 
@@ -351,6 +399,7 @@ export function TemplateHeader({
       <div className="flex items-center gap-2 text-xs text-slate-500 pl-10.5 flex-wrap">
         <span className="font-medium text-slate-600 truncate">
           {deptLabel} &bull; {levelLabel} &bull; {periodYear}
+          {employee?.nik ? ` \u2022 NIK: ${employee.nik}` : ""}
         </span>
         {template.site && (
           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-50 text-purple-700 border border-purple-200">

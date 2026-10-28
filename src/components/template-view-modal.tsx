@@ -23,6 +23,13 @@ interface TemplateViewModalProps {
   template: KpiTemplate | null;
   department?: Department;
   jobLevel?: JobLevel;
+  employee?: {
+    id?: number;
+    nik?: string | null;
+    name?: string | null;
+    jobPosition?: string | null;
+    departmentName?: string | null;
+  } | null;
   categories: KpiCategory[];
   parameters: KpiParameter[];
   bands?: KpiBand[];
@@ -35,6 +42,7 @@ export function TemplateViewModal({
   template,
   department,
   jobLevel,
+  employee,
   categories,
   parameters,
   bands = [],
@@ -252,8 +260,9 @@ export function TemplateViewModal({
               onClick={() => {
                 exportKpiTemplateToExcel({
                   template,
-                  departmentName: department?.name,
+                  departmentName: employee?.departmentName || department?.name,
                   jobLevelName: jobLevel?.name,
+                  employee,
                   categories: tplCategories,
                   parameters: tplParameters,
                   bands,

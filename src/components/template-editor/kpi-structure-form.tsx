@@ -16,6 +16,10 @@ import {
   Trash2,
   Copy,
   Loader2,
+  BookOpen,
+  Sparkles,
+  Search,
+  Check,
 } from "lucide-react";
 import type {
   KpiCategory,
@@ -33,6 +37,7 @@ import { KpiModernSpreadsheet } from "./kpi-modern-spreadsheet";
 import { KpiExcelTable, renderBandCriteriaText, checkBandIntegrity } from "../kpi-excel-table";
 import type { MasterParamItem } from "@/lib/excel-template-kpi";
 import { validateStructuredCriteria, type CriteriaItem } from "@/lib/kpi-criteria-helper";
+import { MasterParameterPickerModal } from "./master-parameter-picker-modal";
 
 export type IssueSeverity = "INFO" | "WARNING" | "ERROR";
 
@@ -82,6 +87,7 @@ export function KpiStructureForm({
   bands,
   department,
   templateTargetPct = 115,
+  masterParams = [],
   calculationRules = [],
   isEditTemplateMode: externalEditTemplateMode,
   onToggleEditTemplateMode: externalToggleEditTemplateMode,
@@ -113,6 +119,170 @@ export function KpiStructureForm({
   const [catNameInput, setCatNameInput] = useState("");
   const [catWeightInput, setCatWeightInput] = useState("20");
   const [catModeInput, setCatModeInput] = useState<"DIRECT" | "SUB_ITEMS">("SUB_ITEMS");
+
+  // Kamus Master Parameter Picker State
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
+
+  // Filter Kamus per Departemen & General
+  const currentDeptId = department?.id ?? null;
+  const deptMasterParams = useMemo(() => {
+    if (!currentDeptId) return [];
+    return masterParams.filter((p) => p.departmentId === currentDeptId);
+  }, [masterParams, currentDeptId]);
+
+  const generalMasterParams = useMemo(() => {
+    return masterParams.filter((p) => !p.departmentId);
+  }, [masterParams]);
+
+  const allRelevantMasterParams = useMemo(() => {
+    return masterParams.filter(
+      (p) => !p.departmentId || (currentDeptId && p.departmentId === currentDeptId)
+    );
+  }, [masterParams, currentDeptId]);
+
+  const handleSelectFromKamus = (paramId: string | number) => {
+    if (!paramId) return;
+    const p = masterParams.find((x) => String(x.id) === String(paramId));
+    if (!p) return;
+
+    setCatNameInput(p.name);
+
+    if (catModeInput === "DIRECT") {
+      if (p.unit) setCatUnit(p.unit);
+      setCatTarget("100");
+      if (p.inputType === "PERCENTAGE") setCatMeasurementType("PERCENTAGE");
+      else if (p.inputType === "NUMERIC") setCatMeasurementType("NUMERIC");
+
+      if (p.defaultBands && Array.isArray(p.defaultBands) && p.defaultBands.length > 0) {
+        const loadedBands: FormCatBand[] = p.defaultBands.map((b: any, idx: number) => ({
+          id: `cb-${idx}`,
+          operator: b.operator || "GTE",
+          minValue: b.minValue !== null && b.minValue !== undefined ? String(b.minValue) : "",
+          maxValue: b.maxValue !== null && b.maxValue !== undefined ? String(b.maxValue) : "",
+          score: b.score !== null && b.score !== undefined ? String(b.score) : "25",
+        }));
+        setCatBands(loadedBands);
+      }
+    }
+  };
+
+  const handleAddSingleParamFromKamus = async (p: MasterParamItem) => {
+    let targetCat = categories.find(
+      (c) =>
+        c.name.toLowerCase().includes("target") ||
+        (p.categoryName && c.name.toLowerCase().includes(p.categoryName.toLowerCase())) ||
+        c.categoryType === "SUB_ITEMS"
+    );
+
+    if (targetCat) {
+      const fd = new FormData();
+      fd.append("categoryId", String(targetCat.id));
+      fd.append("templateId", String(templateId));
+      fd.append("name", p.name);
+      fd.append("masterParameterId", String(p.id));
+      fd.append("description", p.description || "");
+      fd.append("unit", p.unit || "%");
+      fd.append("target", "100");
+      fd.append("weight", "20");
+      fd.append("picRole", p.picRole || "HEAD_DEPT");
+      fd.append("measurementType", p.inputType === "PERCENTAGE" ? "PERCENTAGE" : "NUMERIC");
+      fd.append("direction", "HIGHER_IS_BETTER");
+      fd.append("scoringMethod", "CRITERIA_BASED");
+
+      if (p.defaultBands && Array.isArray(p.defaultBands) && p.defaultBands.length > 0) {
+        fd.append("bands", JSON.stringify(p.defaultBands));
+      }
+
+      await addParameterAction(fd);
+      void Swal.fire({
+        icon: "success",
+        title: "Indikator Ditambahkan",
+        text: `Indikator "${p.name}" berhasil ditambahkan ke kategori "${targetCat.name}".`,
+        timer: 1500,
+        showConfirmButton: false,
+      });
+    } else {
+      const nextSortOrder = categories.reduce((max, c) => Math.max(max, c.sortOrder ?? 0), 0) + 1;
+      const catName = p.categoryName || "Target Kerja";
+      const fdCat = new FormData();
+      fdCat.append("templateId", String(templateId));
+      fdCat.append("name", catName);
+      fdCat.append("weight", categories.length === 0 ? "65" : "20");
+      fdCat.append("categoryType", "SUB_ITEMS");
+      fdCat.append("sortOrder", String(nextSortOrder));
+      await addCategoryAction(fdCat);
+
+      void Swal.fire({
+        icon: "success",
+        title: "Kategori Dibuat",
+        text: `Kategori "${catName}" berhasil dibuat. Klik "Tambah ke Template" lagi untuk memasukkan indikator "${p.name}".`,
+        timer: 2000,
+        showConfirmButton: false,
+      });
+    }
+  };
+
+  const handleApplyAllDeptParams = async () => {
+    if (deptMasterParams.length === 0) return;
+
+    const confirm = await Swal.fire({
+      icon: "question",
+      title: `Terapkan Kamus ${department?.name || "Departemen"}?`,
+      text: `Sistem akan membuat kategori "Target Kerja" berisi ${deptMasterParams.length} indikator kamus, serta kategori standar corporate pendukung (Kehadiran, Safety, SP, Inovasi).`,
+      showCancelButton: true,
+      confirmButtonText: "Ya, Terapkan",
+      cancelButtonText: "Batal",
+      confirmButtonColor: "#2563eb",
+    });
+
+    if (!confirm.isConfirmed) return;
+
+    const fdCat1 = new FormData();
+    fdCat1.append("templateId", String(templateId));
+    fdCat1.append("name", "Target Kerja");
+    fdCat1.append("weight", "65");
+    fdCat1.append("categoryType", "SUB_ITEMS");
+    fdCat1.append("sortOrder", "1");
+    await addCategoryAction(fdCat1);
+
+    const standardGeneralParams = [
+      { name: "Kehadiran & Disiplin", weight: 10, sortOrder: 2 },
+      { name: "Keselamatan Kerja", weight: 10, sortOrder: 3 },
+      { name: "Kepatuhan dan SP", weight: 10, sortOrder: 4 },
+      { name: "Inovasi dan Improvement", weight: 10, sortOrder: 5 },
+    ];
+
+    for (const gp of standardGeneralParams) {
+      const fdGp = new FormData();
+      fdGp.append("templateId", String(templateId));
+      fdGp.append("name", gp.name);
+      fdGp.append("weight", String(gp.weight));
+      fdGp.append("categoryType", "DIRECT");
+      fdGp.append("sortOrder", String(gp.sortOrder));
+      fdGp.append("measurementType", "PERCENTAGE");
+      fdGp.append("unit", "%");
+      fdGp.append("direction", "HIGHER_IS_BETTER");
+      fdGp.append("target", "100");
+      fdGp.append("scoringMethod", "CRITERIA_BASED");
+      fdGp.append(
+        "bands",
+        JSON.stringify([
+          { operator: "GTE", minValue: "100", maxValue: null, score: "25", label: ">= 100%" },
+          { operator: "BETWEEN", minValue: "95", maxValue: "99", score: "15", label: "95% - 99%" },
+          { operator: "LT", minValue: null, maxValue: "95", score: "5", label: "< 95%" },
+        ])
+      );
+      await addCategoryAction(fdGp);
+    }
+
+    void Swal.fire({
+      icon: "success",
+      title: "Struktur Berhasil Diterapkan",
+      text: `Kategori Target Kerja dan indikator kamus telah berhasil dibuat. Silakan tambahkan indikator dari kamus di bawah.`,
+      timer: 2000,
+      showConfirmButton: false,
+    });
+  };
 
   // KPI Configuration Integration from API
   const [configMeasurementTypes, setConfigMeasurementTypes] = useState<KpiMeasurementType[]>([]);
@@ -1270,6 +1440,22 @@ export function KpiStructureForm({
                 )}
               </div>
 
+              {/* Tombol Buka Kamus */}
+              <button
+                type="button"
+                onClick={() => setIsPickerOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs transition cursor-pointer"
+                title="Cari & pilih indikator dari Kamus Master Parameter"
+              >
+                <BookOpen className="w-3.5 h-3.5 text-slate-500" />
+                <span>Kamus Parameter</span>
+                {deptMasterParams.length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                    {deptMasterParams.length}
+                  </span>
+                )}
+              </button>
+
               {/* Tombol Tambah Kategori */}
               <button
                 type="button"
@@ -1391,9 +1577,11 @@ export function KpiStructureForm({
           {/* Baris 1: Nama Kategori (flex-1) + Bobot (%) (w-32) dalam satu baris flex, gap 16px, items-end */}
           <div className="flex flex-row items-end gap-4 w-full min-w-0">
             <div className="flex-1 min-w-0">
-              <label className="block text-[11px] font-bold text-slate-700 mb-1 whitespace-nowrap">
-                Nama Parameter
-              </label>
+              <div className="mb-1">
+                <label className="block text-[11px] font-bold text-slate-700">
+                  Nama Parameter
+                </label>
+              </div>
               <input
                 ref={nameInputRef}
                 type="text"
@@ -1403,6 +1591,40 @@ export function KpiStructureForm({
                 placeholder="Contoh: Target Kerja, Kehadiran & Disiplin, Keselamatan Kerja"
                 className="w-full h-9 px-3 text-xs bg-slate-50 hover:bg-white focus:bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 transition"
               />
+              {/* Opsi Cepat: Pilih dari Kamus Departemen / Umum */}
+              {allRelevantMasterParams.length > 0 && (
+                <div className="mt-1.5">
+                  <select
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        handleSelectFromKamus(e.target.value);
+                      }
+                    }}
+                    defaultValue=""
+                    className="w-full text-xs py-1.5 px-2.5 bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:border-blue-500 cursor-pointer"
+                  >
+                    <option value="">-- Atau pilih dari Kamus Parameter (Opsional) --</option>
+                    {deptMasterParams.length > 0 && (
+                      <optgroup label={`Kamus ${department?.name || "Departemen"} (${deptMasterParams.length})`}>
+                        {deptMasterParams.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.code ? `[${p.code}] ` : ""}{p.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {generalMasterParams.length > 0 && (
+                      <optgroup label={`Kamus Umum / Corporate (${generalMasterParams.length})`}>
+                        {generalMasterParams.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.code ? `[${p.code}] ` : ""}{p.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                </div>
+              )}
             </div>
 
             <div className="w-32 shrink-0">
@@ -1865,7 +2087,7 @@ export function KpiStructureForm({
       />
 
       {/* ========================================================= */}
-      {/* 3. MODAL INDIKATOR & SKALA NILAI (Scoring Table inside Modal) */}
+      {/* 4. MODAL INDIKATOR & SKALA NILAI (Scoring Table inside Modal) */}
       {/* ========================================================= */}
       <IndicatorModal
         isOpen={indicatorModalState.isOpen}
@@ -1877,7 +2099,29 @@ export function KpiStructureForm({
         existingBands={bands}
         calculationRules={calculationRules}
         initialTab={indicatorModalState.initialTab || "info"}
+        masterParams={masterParams}
+        department={department}
         onSave={handleSaveIndicatorFromModal}
+      />
+
+      {/* ========================================================= */}
+      {/* 5. MODAL PEMILIH MASTER PARAMETER (KAMUS) */}
+      {/* ========================================================= */}
+      <MasterParameterPickerModal
+        isOpen={isPickerOpen}
+        onClose={() => setIsPickerOpen(false)}
+        departmentId={department?.id}
+        departmentName={department?.name}
+        masterParameters={masterParams}
+        canApplyAll={deptMasterParams.length > 0 && categories.length === 0}
+        onApplyAllDept={handleApplyAllDeptParams}
+        onSelect={(p) => {
+          if (isAddingCategory) {
+            handleSelectFromKamus(p.id);
+          } else {
+            void handleAddSingleParamFromKamus(p);
+          }
+        }}
       />
     </div>
   );

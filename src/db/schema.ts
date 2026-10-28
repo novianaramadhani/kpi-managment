@@ -462,6 +462,9 @@ export const kpiTemplates = pgTable(
     departmentMappingId: integer("department_mapping_id").references(() => departmentMappings.id, { onDelete: "set null" }),
     totalWeight: numeric("total_weight", { precision: 6, scale: 4 }).notNull().default("1.15"),
     version: integer("version").notNull().default(1),
+    employeeId: integer("employee_id").references(() => employees.id, {
+      onDelete: "set null",
+    }),
     baseTemplateId: integer("base_template_id").references((): AnyPgColumn => kpiTemplates.id, { onDelete: "set null" }),
     isCustom: boolean("is_custom").notNull().default(false),
     isActive: boolean("is_active").notNull().default(true),
@@ -473,6 +476,8 @@ export const kpiTemplates = pgTable(
     index("idx_kpi_tpl_pit_id").on(t.pitId),
     index("idx_kpi_tpl_site_id").on(t.siteId),
     index("idx_kpi_tpl_site").on(t.site),
+    index("idx_kpi_tpl_employee_id").on(t.employeeId),
+    index("idx_kpi_tpl_is_custom").on(t.isCustom),
   ]
 );
 
