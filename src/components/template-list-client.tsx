@@ -48,6 +48,7 @@ import type {
   DepartmentMapping,
 } from "@/db/schema";
 import type { TemplateAssignmentStatus } from "@/lib/template-assignment-service";
+import { TemplateModal } from "./template-modal";
 import { TemplateViewModal } from "./template-view-modal";
 import { TemplateAssignmentDrawer, prefetchTemplateAssignment } from "./template-assignment-drawer";
 import { TemplateImportExcelModal } from "./template-import-excel-modal";
@@ -122,10 +123,7 @@ export function TemplateListClient({
     setInternalDept(dept);
     onDeptChange?.(dept);
   };
-  const [selectedJobLevel, setSelectedJobLevel] = useState("");
-  const [selectedStatus, setSelectedStatus] = useState("");
-  const [selectedSite, setSelectedSite] = useState("");
-  const [selectedPit, setSelectedPit] = useState("");
+
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -136,22 +134,21 @@ export function TemplateListClient({
   const headerCheckboxRef = useRef<HTMLInputElement>(null);
 
   // Modals & Drawer state
+  const [isStandardModalOpen, setIsStandardModalOpen] = useState(false);
   const [isPersonalModalOpen, setIsPersonalModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isActionsOpen, setIsActionsOpen] = useState(false);
+  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const actionsDropdownRef = useRef<HTMLDivElement>(null);
+  const addMenuRef = useRef<HTMLDivElement>(null);
   const [viewingTemplate, setViewingTemplate] = useState<KpiTemplate | null>(null);
   const [assigningTemplate, setAssigningTemplate] = useState<KpiTemplate | null>(null);
   const [assigningInitialTab, setAssigningInitialTab] = useState<"PENILAI" | "KARYAWAN">("PENILAI");
 
-  // Scope Tab: STANDARD (Department/Job Position standard) vs PERSONAL (Specific employee)
-  const [templateScope, setTemplateScope] = useState<"STANDARD" | "PERSONAL">("STANDARD");
 
-  const standardCount = useMemo(() => templates.filter((t) => !t.isCustom).length, [templates]);
-  const personalCount = useMemo(() => templates.filter((t) => t.isCustom).length, [templates]);
 
-  // Click outside listener for Actions dropdown
+  // Click outside listener for Actions & Add Menu dropdowns
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (
@@ -160,14 +157,20 @@ export function TemplateListClient({
       ) {
         setIsActionsOpen(false);
       }
+      if (
+        addMenuRef.current &&
+        !addMenuRef.current.contains(event.target as Node)
+      ) {
+        setIsAddMenuOpen(false);
+      }
     }
-    if (isActionsOpen) {
+    if (isActionsOpen || isAddMenuOpen) {
       document.addEventListener("mousedown", handleClickOutside);
     }
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [isActionsOpen]);
+  }, [isActionsOpen, isAddMenuOpen]);
 
   // Lookup dictionaries
   const deptMap = useMemo(() => {
@@ -194,22 +197,10 @@ export function TemplateListClient({
     return map;
   }, [employees]);
 
-  const filteredPitsForFilter = useMemo(() => {
-    if (!selectedSite || selectedSite === "ALL") return pits;
-    return pits.filter((p) => p.site === selectedSite);
-  }, [pits, selectedSite]);
-
   // Filter templates
   const filteredTemplates = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
     return templates.filter((t) => {
-      // 0. Scope Tab Filter (Standard vs Personal)
-      if (templateScope === "PERSONAL") {
-        if (!t.isCustom) return false;
-      } else {
-        if (t.isCustom) return false;
-      }
-
       const dep = deptMap.get(t.departmentId);
       const lvl = levelMap.get(t.jobLevelId);
       const emp = t.employeeId ? employeeMap.get(t.employeeId) : null;
@@ -225,10 +216,7 @@ export function TemplateListClient({
         const matchLevel = lvl
           ? lvl.name.toLowerCase().includes(q) || (lvl.code && lvl.code.toLowerCase().includes(q))
           : false;
-        const matchSite = t.site ? t.site.toLowerCase().includes(q) : false;
-        const pitObj = t.pitId ? pitMap.get(t.pitId) : null;
-        const matchPit = pitObj ? pitObj.name.toLowerCase().includes(q) || (pitObj.code && pitObj.code.toLowerCase().includes(q)) : false;
-        if (!matchName && !matchEmp && !matchDept && !matchLevel && !matchSite && !matchPit) return false;
+        if (!matchName && !matchEmp && !matchDept && !matchLevel) return false;
       }
 
       if (
@@ -240,33 +228,9 @@ export function TemplateListClient({
         return false;
       }
 
-      if (selectedSite && selectedSite !== "ALL") {
-        if (t.site !== selectedSite) return false;
-      }
-
-      if (selectedPit && selectedPit !== "ALL") {
-        if (selectedPit === "NON_PIT") {
-          if (t.pitId) return false;
-        } else if (String(t.pitId) !== selectedPit) {
-          return false;
-        }
-      }
-
-      if (selectedJobLevel && t.jobLevelId !== Number(selectedJobLevel)) {
-        return false;
-      }
-
-      if (selectedStatus === "ACTIVE" && !t.isActive) {
-        return false;
-      }
-
-      if (selectedStatus === "DRAFT" && t.isActive) {
-        return false;
-      }
-
       return true;
     });
-  }, [templates, templateScope, searchQuery, selectedDept, selectedSite, selectedPit, selectedJobLevel, selectedStatus, deptMap, levelMap, pitMap, employeeMap]);
+  }, [templates, searchQuery, selectedDept, deptMap, levelMap, employeeMap]);
 
   // Pagination calculations
   const totalItems = filteredTemplates.length;
@@ -278,20 +242,12 @@ export function TemplateListClient({
 
   const hasActiveFilters = Boolean(
     searchQuery.trim() ||
-    (selectedDept && selectedDept !== "ALL" && selectedDept !== "GENERAL") ||
-    (selectedSite && selectedSite !== "ALL") ||
-    (selectedPit && selectedPit !== "ALL") ||
-    selectedJobLevel ||
-    selectedStatus
+    (selectedDept && selectedDept !== "ALL" && selectedDept !== "GENERAL")
   );
 
   const resetFilters = () => {
     setSearchQuery("");
     setSelectedDept("");
-    setSelectedSite("");
-    setSelectedPit("");
-    setSelectedJobLevel("");
-    setSelectedStatus("");
     setCurrentPage(1);
     setSelectedIds(new Set());
   };
@@ -388,26 +344,15 @@ export function TemplateListClient({
 
   const handleDeleteSingle = async (t: KpiTemplate) => {
     if (!deleteAction) return;
-    const usage = assignmentOverview[t.id]?.assignedCount ?? (templateUsageMap[t.id] || 0);
-
-    if (usage > 0) {
-      Swal.fire({
-        icon: "warning",
-        title: "Template Sedang Digunakan",
-        text: `Template "${t.name}" terhubung ke ${usage} penilaian karyawan aktif dan tidak dapat dihapus.`,
-        confirmButtonColor: "#2563eb",
-      });
-      return;
-    }
 
     const confirm = await Swal.fire({
       title: `Hapus Template "${t.name}"?`,
-      text: "Template ini akan dihapus permanen.",
+      text: "Template ini akan dihapus langsung secara permanen dari database.",
       icon: "warning",
       showCancelButton: true,
       confirmButtonColor: "#e11d48",
       cancelButtonColor: "#64748b",
-      confirmButtonText: "Ya, Hapus",
+      confirmButtonText: "Ya, Hapus Permanen",
       cancelButtonText: "Batal",
     });
 
@@ -609,23 +554,9 @@ export function TemplateListClient({
     if (!deleteBulkAction || selectedTemplates.length === 0) return;
     const count = selectedTemplates.length;
 
-    const inUseCount = selectedTemplates.filter(
-      (t) => (assignmentOverview[t.id]?.assignedCount ?? (templateUsageMap[t.id] || 0)) > 0
-    ).length;
-
-    if (inUseCount > 0) {
-      await Swal.fire({
-        icon: "warning",
-        title: "Sebagian Template Sedang Digunakan",
-        text: `${inUseCount} dari ${count} template terpilih sedang ditugaskan ke penilaian karyawan dan tidak dapat dihapus.`,
-        confirmButtonColor: "#2563eb",
-      });
-      return;
-    }
-
     const confirm = await Swal.fire({
       title: `Hapus ${count} Template Terpilih?`,
-      text: "Seluruh struktur parameter dan kriteria template ini akan dihapus permanen.",
+      text: `Seluruh data dari ${count} template terpilih akan dihapus langsung secara permanen dari database.`,
       icon: "warning",
       showCancelButton: true,
       confirmButtonColor: "#e11d48",
@@ -657,62 +588,9 @@ export function TemplateListClient({
   return (
     <div className="space-y-4">
       {/* 1. FILTER & ACTION TOOLBAR */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4 space-y-3.5">
-        {/* Sub-Tab Scope Selector */}
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3 flex-wrap gap-2">
-          <div className="flex items-center gap-1.5 p-1 bg-slate-100/80 rounded-xl border border-slate-200/70">
-            <button
-              type="button"
-              onClick={() => {
-                setTemplateScope("STANDARD");
-                setCurrentPage(1);
-                setSelectedIds(new Set());
-              }}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-2 cursor-pointer ${
-                templateScope === "STANDARD"
-                  ? "bg-white text-blue-700 shadow-xs"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              <Building2 className="w-3.5 h-3.5 text-blue-600" />
-              <span>Template Standar Jabatan ({standardCount})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setTemplateScope("PERSONAL");
-                setCurrentPage(1);
-                setSelectedIds(new Set());
-              }}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-2 cursor-pointer ${
-                templateScope === "PERSONAL"
-                  ? "bg-white text-blue-700 shadow-xs"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-              <span>Template Personal Karyawan ({personalCount})</span>
-            </button>
-          </div>
-
-          {/* Quick Context Pill */}
-          <div className="text-[11px] font-medium">
-            {templateScope === "PERSONAL" ? (
-              <span className="flex items-center gap-1 text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
-                <Sparkles className="w-3 h-3 text-amber-600" />
-                Template individual unik khusus karyawan tertentu
-              </span>
-            ) : (
-              <span className="flex items-center gap-1 text-slate-600 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200">
-                <Building2 className="w-3 h-3 text-slate-400" />
-                Template acuan departemen dan jenjang jabatan umum
-              </span>
-            )}
-          </div>
-        </div>
-
+      <div className="bg-white rounded-xl border border-slate-200/90 shadow-2xs p-3.5 space-y-3">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-          {/* Left: Search & Dropdown Filters (Dept, Level, Status) */}
+          {/* Left: Search & Dropdown Filters */}
           <div className="flex items-center gap-2 flex-wrap flex-1">
             {/* Search Input */}
             <div className="relative min-w-[200px] flex-1 max-w-xs">
@@ -726,8 +604,8 @@ export function TemplateListClient({
                   setSearchQuery(e.target.value);
                   setCurrentPage(1);
                 }}
-                placeholder="Cari template..."
-                className="w-full rounded-xl border border-slate-200 bg-slate-50/50 pl-9 pr-8 py-2 text-xs text-slate-800 placeholder-slate-400 focus:border-blue-600 focus:bg-white focus:outline-none transition"
+                placeholder="Cari template, karyawan, NIK..."
+                className="w-full rounded-lg border border-slate-200 bg-slate-50/60 pl-9 pr-8 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:border-blue-600 focus:bg-white focus:outline-none transition"
               />
               {searchQuery && (
                 <button
@@ -735,7 +613,7 @@ export function TemplateListClient({
                   onClick={() => setSearchQuery("")}
                   className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-slate-400 hover:text-slate-600 text-xs cursor-pointer"
                 >
-                  ✕
+                  <X className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
@@ -747,7 +625,7 @@ export function TemplateListClient({
                 setSelectedDept(e.target.value || "ALL");
                 setCurrentPage(1);
               }}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 font-medium focus:border-blue-600 focus:outline-none transition cursor-pointer shrink-0"
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 font-medium focus:border-blue-600 focus:outline-none transition cursor-pointer shrink-0 max-w-[240px]"
             >
               <option value="">Semua Departemen ({departments.length})</option>
               {departments.map((d) => (
@@ -757,76 +635,12 @@ export function TemplateListClient({
               ))}
             </select>
 
-            {/* Site Filter */}
-            <select
-              value={selectedSite}
-              onChange={(e) => {
-                setSelectedSite(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 font-medium focus:border-blue-600 focus:outline-none transition cursor-pointer shrink-0"
-            >
-              <option value="">Semua Site</option>
-              <option value="GAM">Site GAM</option>
-              <option value="AKP">Site AKP</option>
-              <option value="HO">Site HO</option>
-            </select>
-
-            {/* PIT Filter */}
-            <select
-              value={selectedPit}
-              onChange={(e) => {
-                setSelectedPit(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 font-medium focus:border-blue-600 focus:outline-none transition cursor-pointer shrink-0"
-            >
-              <option value="">Semua PIT ({filteredPitsForFilter.length})</option>
-              <option value="NON_PIT">Tanpa PIT (Non-PIT)</option>
-              {filteredPitsForFilter.map((p) => (
-                <option key={p.id} value={p.id}>
-                  [{p.site}] {p.name}
-                </option>
-              ))}
-            </select>
-
-            {/* Job Level Filter */}
-            <select
-              value={selectedJobLevel}
-              onChange={(e) => {
-                setSelectedJobLevel(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 font-medium focus:border-blue-600 focus:outline-none transition cursor-pointer shrink-0"
-            >
-              <option value="">Semua Job Level ({jobLevels.length})</option>
-              {jobLevels.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name} ({l.code})
-                </option>
-              ))}
-            </select>
-
-            {/* Status Filter */}
-            <select
-              value={selectedStatus}
-              onChange={(e) => {
-                setSelectedStatus(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 font-medium focus:border-blue-600 focus:outline-none transition cursor-pointer shrink-0"
-            >
-              <option value="">Semua Status</option>
-              <option value="ACTIVE">Published</option>
-              <option value="DRAFT">Draft</option>
-            </select>
-
             {hasActiveFilters && (
               <button
                 type="button"
                 onClick={resetFilters}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition cursor-pointer text-xs"
-                title="Reset Semua Filter"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition cursor-pointer text-xs shrink-0"
+                title="Reset Filter"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>Reset</span>
@@ -834,14 +648,14 @@ export function TemplateListClient({
             )}
           </div>
 
-          {/* Right: Actions Dropdown & Primary Tambah Template */}
+          {/* Right: Actions, Import Excel, Tambah Template */}
           <div className="flex items-center gap-2 shrink-0">
             {/* Actions Dropdown */}
             <div className="relative" ref={actionsDropdownRef}>
               <button
                 type="button"
                 onClick={() => setIsActionsOpen((prev) => !prev)}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 shadow-2xs transition cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 shadow-2xs transition cursor-pointer"
                 aria-expanded={isActionsOpen}
                 aria-haspopup="true"
               >
@@ -855,7 +669,7 @@ export function TemplateListClient({
 
               {isActionsOpen && (
                 <div className="absolute right-0 mt-2 w-72 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl z-30 animate-in fade-in zoom-in-95 duration-100">
-                  {/* 1. Import Excel Wizard (Rute Khusus) */}
+                  {/* 1. Import Excel Wizard */}
                   <Link
                     href="/setup/templates/import"
                     onClick={() => setIsActionsOpen(false)}
@@ -969,35 +783,88 @@ export function TemplateListClient({
               )}
             </div>
 
-            {/* Import Excel Template Button */}
+            {/* Import Excel Button */}
             <Link
               href="/setup/templates/import"
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-blue-700 shadow-2xs transition cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-blue-700 shadow-2xs transition cursor-pointer"
               title="Import Master Template KPI dari berkas Excel"
             >
-              <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
               <span>Import Excel</span>
             </Link>
 
-            {/* Tambah Template Personal Button */}
-            <button
-              type="button"
-              onClick={() => setIsPersonalModalOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 active:bg-amber-700 px-3.5 py-2 text-xs font-semibold text-white shadow-xs transition active:scale-95 cursor-pointer"
-              title="Buat template personal khusus seorang karyawan"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Tambah Template Personal</span>
-            </button>
+            {/* Tambah Template Menu Dropdown */}
+            <div className="relative" ref={addMenuRef}>
+              <button
+                type="button"
+                onClick={() => setIsAddMenuOpen((prev) => !prev)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 active:bg-blue-800 px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xs transition active:scale-95 cursor-pointer"
+                title="Pilih jenis template yang ingin dibuat"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Tambah Template</span>
+                <ChevronDown
+                  className={`w-3 h-3 text-white/80 transition-transform ${
+                    isAddMenuOpen ? "rotate-180" : ""
+                  }`}
+                />
+              </button>
+
+              {isAddMenuOpen && (
+                <div className="absolute right-0 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl z-30 animate-in fade-in zoom-in-95 duration-100">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddMenuOpen(false);
+                      setIsStandardModalOpen(true);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-blue-50/70 flex items-start gap-2.5 transition group cursor-pointer"
+                  >
+                    <div className="w-7 h-7 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-blue-200 transition">
+                      <Building2 className="w-3.5 h-3.5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-slate-800 group-hover:text-blue-700">
+                        Template Standar Jabatan
+                      </div>
+                      <div className="text-[11px] text-slate-500 leading-tight">
+                        Acuan departemen &amp; jenjang jabatan
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddMenuOpen(false);
+                      setIsPersonalModalOpen(true);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-amber-50/70 flex items-start gap-2.5 transition group cursor-pointer"
+                  >
+                    <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-amber-200 transition">
+                      <User className="w-3.5 h-3.5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-slate-800 group-hover:text-amber-700">
+                        Template Personal Karyawan
+                      </div>
+                      <div className="text-[11px] text-slate-500 leading-tight">
+                        Template khusus individu seorang karyawan
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
       {/* 2. FLAT ENTERPRISE TABLE VIEW */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+      <div className="bg-white rounded-xl border border-slate-200/90 shadow-2xs overflow-hidden">
         {/* Selection Banner if any items are selected */}
         {selectedIds.size > 0 && (
-          <div className="bg-blue-50/90 border-b border-blue-200 px-4 py-2.5 flex items-center justify-between gap-3 text-xs flex-wrap animate-in fade-in duration-150">
+          <div className="bg-blue-50/90 border-b border-blue-200 px-4 py-2 flex items-center justify-between gap-3 text-xs flex-wrap animate-in fade-in duration-150">
             <div className="flex items-center gap-2">
               <span className="font-bold text-blue-900">
                 {selectedIds.size} template dipilih
@@ -1017,7 +884,7 @@ export function TemplateListClient({
               <button
                 type="button"
                 onClick={handleExportBatchPerTemplate}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-2xs transition active:scale-95 cursor-pointer text-xs"
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-2xs transition active:scale-95 cursor-pointer text-xs"
                 title="Download setiap template terpilih sebagai file Excel terpisah"
               >
                 <Download className="w-3.5 h-3.5" />
@@ -1027,7 +894,7 @@ export function TemplateListClient({
               <button
                 type="button"
                 onClick={handleExportBatchCombined}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium transition cursor-pointer text-xs"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium transition cursor-pointer text-xs"
                 title="Download 1 file Excel multi-sheet berisi seluruh template terpilih"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
@@ -1038,7 +905,7 @@ export function TemplateListClient({
                 <button
                   type="button"
                   onClick={handleDeleteBatchSelected}
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition cursor-pointer text-xs font-medium"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition cursor-pointer text-xs font-medium"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>Hapus</span>
@@ -1058,8 +925,8 @@ export function TemplateListClient({
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
-            <thead className="bg-slate-50/70 border-b border-slate-200/80">
-              <tr className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+            <thead className="bg-slate-50/80 border-b border-slate-200/80">
+              <tr className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
                 <th className="py-3 px-3 w-10 text-center">
                   <input
                     ref={headerCheckboxRef}
@@ -1070,43 +937,30 @@ export function TemplateListClient({
                     title={isAllPageSelected ? "Batalkan pilihan semua" : "Pilih semua di halaman ini"}
                   />
                 </th>
-                <th className="py-3 px-2 w-10 text-center">No</th>
-                <th className="py-3 px-4 min-w-[200px]">
-                  {templateScope === "PERSONAL" ? "Karyawan & Template" : "Nama Template"}
-                </th>
-                <th className="py-3 px-4 w-40">Departemen</th>
-                <th className="py-3 px-4 w-36">
-                  {templateScope === "PERSONAL" ? "Jabatan (Job Position)" : "Job Level"}
-                </th>
-                {templateScope === "PERSONAL" && (
-                  <th className="py-3 px-4 w-40">Template Acuan</th>
-                )}
-                <th className="py-3 px-4 w-28">Status</th>
-                <th className="py-3 px-4 w-24">Total Bobot</th>
-                {templateScope === "STANDARD" && (
-                  <th className="py-3 px-4 w-52">Penugasan</th>
-                )}
+                <th className="py-3 px-2 w-10 text-center font-mono text-slate-400">No</th>
+                <th className="py-3 px-4 min-w-[240px]">Nama Template</th>
+                <th className="py-3 px-4 w-44">Departemen</th>
+                <th className="py-3 px-4 w-36">Job Level</th>
+                <th className="py-3 px-3 w-28">Status</th>
+                <th className="py-3 px-3 w-24 text-center">Total Bobot</th>
+                <th className="py-3 px-4 w-52">Penugasan</th>
                 <th className="py-3 px-4 w-36 text-right">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {paginatedTemplates.length === 0 ? (
                 <tr>
-                  <td colSpan={templateScope === "PERSONAL" ? 8 : 9} className="py-12 text-center text-slate-400">
+                  <td colSpan={9} className="py-12 text-center text-slate-400">
                     <Building2 className="w-8 h-8 text-slate-300 mx-auto mb-2" />
                     <p className="text-xs font-semibold text-slate-600">
                       {hasActiveFilters
                         ? "Tidak ada template yang cocok"
-                        : templateScope === "PERSONAL"
-                        ? "Belum ada template personal karyawan"
-                        : "Belum ada master template"}
+                        : "Belum ada template KPI"}
                     </p>
                     <p className="text-[11px] text-slate-400 mt-0.5">
                       {hasActiveFilters
                         ? "Silakan sesuaikan filter pencarian Anda."
-                        : templateScope === "PERSONAL"
-                        ? "Klik Tambah Template Personal untuk membuat template khusus karyawan."
-                        : "Klik Tambah Template Personal untuk membuat baru."}
+                        : "Klik Tambah Template untuk membuat template baru."}
                     </p>
                   </td>
                 </tr>
@@ -1143,48 +997,33 @@ export function TemplateListClient({
                         {rowNumber}
                       </td>
 
-                      {/* Nama Template & Karyawan */}
+                      {/* Nama Template & Metadata */}
                       <td className="py-3 px-4">
                         <Link
                           href={`/setup/templates/${t.id}`}
                           onClick={(e) => handleEditProtected(e, t)}
-                          className="font-bold text-xs text-slate-900 hover:text-blue-600 transition block"
+                          className="font-bold text-xs text-slate-900 hover:text-blue-600 transition block leading-snug"
                         >
-                          {t.name}
+                          {t.name.replace(/^\[Personal\]\s*/i, "")}
                         </Link>
-
-                        {/* Detail Karyawan khusus template personal */}
-                        {t.isCustom && emp && (
-                          <div className="flex items-center gap-1.5 mt-1 text-[11px] text-slate-600">
-                            <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-800 font-bold flex items-center justify-center text-[10px] shrink-0">
-                              {emp.name.charAt(0).toUpperCase()}
-                            </span>
-                            <span className="font-semibold text-slate-800">{emp.name}</span>
-                            <span className="text-slate-400 font-mono text-[10px]">({emp.nik})</span>
-                          </div>
-                        )}
 
                         <div className="flex items-center gap-1.5 flex-wrap mt-1">
                           <span className="text-[10px] font-mono text-slate-400">
                             v{t.version || 1}.0
                           </span>
-                          {t.isCustom && (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                              <Sparkles className="w-3 h-3 text-amber-600" />
-                              Personal
-                            </span>
-                          )}
+
                           {t.site && (
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-50 text-purple-700 border border-purple-200">
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-50 text-purple-700 border border-purple-200/80">
                               Site: {t.site}
                             </span>
                           )}
+
                           {t.pitId && pitMap.get(t.pitId) ? (
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200/80">
                               PIT: {pitMap.get(t.pitId)?.name}
                             </span>
                           ) : t.site ? (
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-normal text-slate-500 bg-slate-100 border border-slate-200">
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-normal text-slate-500 bg-slate-100 border border-slate-200/80">
                               Non-PIT
                             </span>
                           ) : null}
@@ -1196,28 +1035,15 @@ export function TemplateListClient({
                         {dep?.name ?? "Semua Departemen"}
                       </td>
 
-                      {/* Job Level / Job Position */}
+                      {/* Job Level */}
                       <td className="py-3 px-4 text-slate-700 font-medium">
-                        {templateScope === "PERSONAL"
+                        {t.isCustom
                           ? emp?.jobPosition || lvl?.name || "-"
                           : lvl?.name ?? "Semua Level"}
                       </td>
 
-                      {/* Template Acuan (Hanya tampil di tab PERSONAL) */}
-                      {templateScope === "PERSONAL" && (
-                        <td className="py-3 px-4 text-slate-600 text-xs">
-                          {baseTpl ? (
-                            <span className="inline-flex items-center gap-1 text-slate-700">
-                              <span className="truncate max-w-[150px]">{baseTpl.name}</span>
-                            </span>
-                          ) : (
-                            <span className="text-slate-400">-</span>
-                          )}
-                        </td>
-                      )}
-
                       {/* Status */}
-                      <td className="py-3 px-4">
+                      <td className="py-3 px-3">
                         <span
                           className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold border ${
                             t.isActive
@@ -1235,60 +1061,13 @@ export function TemplateListClient({
                       </td>
 
                       {/* Total Bobot */}
-                      <td className="py-3 px-4 font-mono font-bold text-slate-800">
+                      <td className="py-3 px-3 font-mono font-bold text-slate-800 text-center">
                         115%
                       </td>
 
-                      {/* Penugasan Column - Klik untuk melihat & mengelola daftar karyawan yang ditugaskan */}
+                      {/* Penugasan Column */}
                       <td className="py-3 px-4">
-                        <button
-                          type="button"
-                          onMouseEnter={() => t.isActive && prefetchTemplateAssignment(t.id, activePeriod?.id)}
-                          onClick={() => {
-                            if (t.isActive) {
-                              setAssigningInitialTab("KARYAWAN");
-                              setAssigningTemplate(t);
-                            } else {
-                              void Swal.fire({
-                                icon: "info",
-                                title: "Template Belum Published",
-                                text: "Publish template terlebih dahulu sebelum dapat menugaskannya ke karyawan.",
-                                confirmButtonColor: "#2563eb",
-                              });
-                            }
-                          }}
-                          className={`text-left transition cursor-pointer group/btn select-none active:scale-95 ${
-                            t.isActive ? "hover:opacity-90" : "opacity-80 cursor-not-allowed"
-                          }`}
-                          title={
-                            t.isActive
-                              ? "Klik untuk melihat & mengelola daftar karyawan yang ditugaskan template ini"
-                              : "Publish template terlebih dahulu"
-                          }
-                        >
-                          {!assignInfo || assignInfo.assignedCount === 0 ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200 group-hover/btn:bg-slate-200 group-hover/btn:border-slate-300 transition">
-                              <UserPlus className="w-3 h-3 text-slate-400 group-hover/btn:text-slate-600" />
-                              <span>Belum ada penugasan</span>
-                            </span>
-                          ) : assignInfo.isAssessorComplete ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 group-hover/btn:bg-emerald-100 group-hover/btn:border-emerald-300 transition">
-                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                              <span>{assignInfo.assignedCount} karyawan · Penilai lengkap</span>
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 group-hover/btn:bg-amber-100 group-hover/btn:border-amber-300 transition">
-                              <AlertTriangle className="w-3 h-3 text-amber-500" />
-                              <span>{assignInfo.assignedCount} karyawan · Penilai belum lengkap</span>
-                            </span>
-                          )}
-                        </button>
-                      </td>
-
-                      {/* Aksi */}
-                      <td className="py-3 px-4 text-right">
-                        <div className="inline-flex items-center justify-end gap-1">
-                          {/* Tugaskan Template (UserCheck) */}
+                        {t.isCustom && emp ? (
                           <button
                             type="button"
                             onMouseEnter={() => t.isActive && prefetchTemplateAssignment(t.id, activePeriod?.id)}
@@ -1300,21 +1079,66 @@ export function TemplateListClient({
                                 void Swal.fire({
                                   icon: "info",
                                   title: "Template Belum Published",
+                                  text: "Publish template terlebih dahulu sebelum dapat menugaskannya ke penilai.",
+                                  confirmButtonColor: "#2563eb",
+                                });
+                              }
+                            }}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 transition cursor-pointer select-none active:scale-95 text-left"
+                            title={t.isActive ? "Klik untuk melihat & atur penilai karyawan ini" : "Publish template terlebih dahulu"}
+                          >
+                            <User className="w-3 h-3 text-amber-600" />
+                            <span>1 Karyawan (Personal)</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onMouseEnter={() => t.isActive && prefetchTemplateAssignment(t.id, activePeriod?.id)}
+                            onClick={() => {
+                              if (t.isActive) {
+                                setAssigningInitialTab("KARYAWAN");
+                                setAssigningTemplate(t);
+                              } else {
+                                void Swal.fire({
+                                  icon: "info",
+                                  title: "Template Belum Published",
                                   text: "Publish template terlebih dahulu sebelum dapat menugaskannya ke karyawan.",
                                   confirmButtonColor: "#2563eb",
                                 });
                               }
                             }}
-                            className={`p-1.5 rounded-lg transition cursor-pointer ${
-                              t.isActive
-                                ? "text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                                : "text-slate-300 hover:bg-slate-100 cursor-not-allowed"
+                            className={`text-left transition cursor-pointer group/btn select-none active:scale-95 ${
+                              t.isActive ? "hover:opacity-90" : "opacity-80 cursor-not-allowed"
                             }`}
-                            title={t.isActive ? "Tugaskan Template & Penilai" : "Publish template terlebih dahulu"}
+                            title={
+                              t.isActive
+                                ? "Klik untuk melihat & mengelola daftar karyawan yang ditugaskan template ini"
+                                : "Publish template terlebih dahulu"
+                            }
                           >
-                            <UserCheck className="w-3.5 h-3.5" />
+                            {!assignInfo || assignInfo.assignedCount === 0 ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200 group-hover/btn:bg-slate-200 group-hover/btn:border-slate-300 transition">
+                                <UserPlus className="w-3 h-3 text-slate-400 group-hover/btn:text-slate-600" />
+                                <span>Belum ada penugasan</span>
+                              </span>
+                            ) : assignInfo.isAssessorComplete ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 group-hover/btn:bg-emerald-100 group-hover/btn:border-emerald-300 transition">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                <span>{assignInfo.assignedCount} karyawan · Penilai lengkap</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 group-hover/btn:bg-amber-100 group-hover/btn:border-amber-300 transition">
+                                <AlertTriangle className="w-3 h-3 text-amber-500" />
+                                <span>{assignInfo.assignedCount} karyawan · Penilai belum lengkap</span>
+                              </span>
+                            )}
                           </button>
+                        )}
+                      </td>
 
+                      {/* Aksi */}
+                      <td className="py-3 px-4 text-right">
+                        <div className="inline-flex items-center justify-end gap-1">
                           {/* View */}
                           <button
                             type="button"
@@ -1345,17 +1169,32 @@ export function TemplateListClient({
                             <Edit3 className="w-3.5 h-3.5" />
                           </Link>
 
-                          {/* Duplicate */}
-                          {duplicateAction && (
-                            <button
-                              type="button"
-                              onClick={() => handleDuplicate(t)}
-                              className="p-1.5 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                              title="Duplikat Template"
-                            >
-                              <Copy className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+                          {/* Assign Penilai (UserCheck) */}
+                          <button
+                            type="button"
+                            onMouseEnter={() => t.isActive && prefetchTemplateAssignment(t.id, activePeriod?.id)}
+                            onClick={() => {
+                              if (t.isActive) {
+                                setAssigningInitialTab("PENILAI");
+                                setAssigningTemplate(t);
+                              } else {
+                                void Swal.fire({
+                                  icon: "info",
+                                  title: "Template Belum Published",
+                                  text: "Publish template terlebih dahulu sebelum dapat menugaskannya ke penilai.",
+                                  confirmButtonColor: "#2563eb",
+                                });
+                              }
+                            }}
+                            className={`p-1.5 rounded-lg transition cursor-pointer ${
+                              t.isActive
+                                ? "text-slate-400 hover:text-blue-600 hover:bg-blue-50"
+                                : "text-slate-300 hover:bg-slate-100 cursor-not-allowed"
+                            }`}
+                            title={t.isActive ? "Assign Penilai" : "Publish template terlebih dahulu"}
+                          >
+                            <UserCheck className="w-3.5 h-3.5" />
+                          </button>
 
                           {/* Delete */}
                           {deleteAction && (
@@ -1483,9 +1322,24 @@ export function TemplateListClient({
         employees={employees}
         periods={periods}
         activePeriod={activePeriod}
+        categories={categories}
+        parameters={parameters}
         onSuccess={() => {
           router.refresh();
         }}
+      />
+
+      {/* MODAL BUAT TEMPLATE STANDAR JABATAN */}
+      <TemplateModal
+        isOpen={isStandardModalOpen}
+        onClose={() => setIsStandardModalOpen(false)}
+        departments={departments}
+        jobLevels={jobLevels}
+        positions={jobPositions}
+        periods={periods}
+        pits={pits}
+        departmentMappings={departmentMappings}
+        action={createAction}
       />
 
       {/* MODAL BUAT TEMPLATE PERSONAL KARYAWAN */}

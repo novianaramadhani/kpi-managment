@@ -42,7 +42,10 @@ interface MasterParametersTableClientProps {
   updateAction: (fd: FormData) => Promise<any>;
   deleteAction: (fd: FormData) => Promise<any>;
   deleteBulkAction?: (ids: number[]) => Promise<any>;
-  importBulkAction: (items: any[]) => Promise<{ createdCount: number; updatedCount: number }>;
+  importBulkAction: (
+    items: any[],
+    options?: { duplicateMode?: "UPDATE" | "SKIP" | "RENAME" }
+  ) => Promise<{ createdCount: number; updatedCount: number; skippedCount?: number }>;
   resetAndSyncFromTemplatesAction?: () => Promise<{ success: boolean; count: number }>;
   selectedDeptFilter?: string;
   onDeptFilterChange?: (dept: string) => void;
@@ -228,6 +231,7 @@ export function MasterParametersTableClient({
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [isParsingImport, setIsParsingImport] = useState(false);
   const [batchDeptVal, setBatchDeptVal] = useState<string>("");
+  const [duplicateMode, setDuplicateMode] = useState<"UPDATE" | "SKIP" | "RENAME">("UPDATE");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Grouped by department for dropdown options
@@ -459,7 +463,7 @@ export function MasterParametersTableClient({
     setIsParsingImport(true);
     setBatchDeptVal("");
     try {
-      const res = await parseMasterParametersFromExcel(file, departments);
+      const res = await parseMasterParametersFromExcel(file, departments, parameters);
       setImportParsedItems(res.items);
       setImportErrors(res.errors);
     } catch (err: unknown) {
@@ -528,17 +532,18 @@ export function MasterParametersTableClient({
           compareBasis: it.compareBasis,
           picRole: it.picRole,
         }));
-        const res = await importBulkAction(payload);
+        const res = await importBulkAction(payload, { duplicateMode });
         setIsImportModalOpen(false);
         setImportFile(null);
         setImportParsedItems([]);
         setImportErrors([]);
         setBatchDeptVal("");
 
+        const skippedMsg = res.skippedCount ? `, dan ${res.skippedCount} dilewati` : "";
         void Swal.fire({
           icon: "success",
           title: "Import Kamus Berhasil!",
-          text: `Berhasil menambahkan ${res.createdCount} indikator baru dan memperbarui ${res.updatedCount} indikator di Kamus Master.`,
+          text: `Berhasil memproses indikator: ${res.createdCount} dibuat baru, ${res.updatedCount} diperbarui${skippedMsg} di Kamus Master.`,
           confirmButtonColor: "#0284c7",
         });
       } catch (err: unknown) {
@@ -1134,9 +1139,27 @@ export function MasterParametersTableClient({
                       const unmappedCount = importParsedItems.filter((it) => it.isUnmapped).length;
                       const generalCount = importParsedItems.filter((it) => !it.isUnmapped && it.departmentId === null).length;
                       const mappedDeptCount = importParsedItems.filter((it) => !it.isUnmapped && it.departmentId !== null).length;
+                      const duplicateInFileCount = importParsedItems.filter((it) => it.duplicateInFile).length;
+                      const duplicateInDbCount = importParsedItems.filter((it) => it.duplicateInDb).length;
+                      const newCount = importParsedItems.filter((it) => !it.duplicateInDb && !it.duplicateInFile).length;
 
                       return (
                         <div className="space-y-3">
+                          {/* Alert jika ada kode ganda di dalam file Excel */}
+                          {duplicateInFileCount > 0 && (
+                            <div className="rounded-xl border border-rose-300 bg-rose-50 p-3.5 text-rose-950 flex items-start gap-2.5">
+                              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                              <div className="text-xs">
+                                <p className="font-bold">
+                                  Terdeteksi {duplicateInFileCount} baris dengan kode duplikat di dalam file Excel
+                                </p>
+                                <p className="text-[11px] text-rose-800 mt-0.5">
+                                  Sistem akan secara otomatis menambahkan nomor urut unik pada kode yang sama saat disimpan agar tidak terjadi bentrok data.
+                                </p>
+                              </div>
+                            </div>
+                          )}
+
                           {/* Alert jika ada departemen yang belum dipetakan */}
                           {unmappedCount > 0 && (
                             <div className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-amber-900 flex items-start gap-2.5">
@@ -1152,6 +1175,41 @@ export function MasterParametersTableClient({
                             </div>
                           )}
 
+                          {/* Toolbar Validasi Duplikasi Kode DB */}
+                          {duplicateInDbCount > 0 && (
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl border border-sky-200 bg-sky-50/80 text-slate-900">
+                              <div className="flex items-start sm:items-center gap-2.5">
+                                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-600 text-white text-xs font-bold shrink-0">
+                                  <Sliders className="h-4 w-4" />
+                                </div>
+                                <div>
+                                  <div className="font-bold text-xs text-slate-900 flex items-center gap-2">
+                                    <span>Validasi Duplikasi Kode</span>
+                                    <span className="rounded-full bg-sky-100 text-sky-800 text-[10px] font-extrabold px-2 py-0.5 border border-sky-300">
+                                      {duplicateInDbCount} Kode Sudah di Sistem
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] text-slate-600 mt-0.5">
+                                    Pilih tindakan saat kode indikator dari Excel sudah ada di sistem.
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 shrink-0">
+                                <label className="text-[11px] font-semibold text-slate-700 whitespace-nowrap">Aksi Kode Sama:</label>
+                                <select
+                                  value={duplicateMode}
+                                  onChange={(e) => setDuplicateMode(e.target.value as "UPDATE" | "SKIP" | "RENAME")}
+                                  className="rounded-lg border border-sky-300 bg-white px-3 py-1.5 text-xs font-bold text-sky-950 focus:outline-none focus:ring-1 focus:ring-sky-500 shadow-2xs cursor-pointer"
+                                >
+                                  <option value="UPDATE">Perbarui Data Sistem (Update)</option>
+                                  <option value="SKIP">Lewati Data Terdaftar (Skip)</option>
+                                  <option value="RENAME">Buat Kode Baru Otomatis (Auto-Rename)</option>
+                                </select>
+                              </div>
+                            </div>
+                          )}
+
                           {/* Toolbar Status & Batch Mapping */}
                           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50/70">
                             {/* Summary Pills */}
@@ -1160,10 +1218,20 @@ export function MasterParametersTableClient({
                                 Total: <strong className="ml-1 text-slate-900">{importParsedItems.length}</strong>
                               </span>
                               <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 border border-emerald-200 text-emerald-800">
-                                Spesifik Dept: <strong className="ml-1">{mappedDeptCount}</strong>
+                                Baru: <strong className="ml-1">{newCount}</strong>
                               </span>
+                              {duplicateInDbCount > 0 && (
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold bg-sky-50 border border-sky-200 text-sky-800">
+                                  Kode di DB: <strong className="ml-1">{duplicateInDbCount}</strong>
+                                </span>
+                              )}
+                              {duplicateInFileCount > 0 && (
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-50 border border-rose-200 text-rose-800">
+                                  Duplikat File: <strong className="ml-1">{duplicateInFileCount}</strong>
+                                </span>
+                              )}
                               <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold bg-purple-50 border border-purple-200 text-purple-800">
-                                Umum/Corporate: <strong className="ml-1">{generalCount}</strong>
+                                Umum: <strong className="ml-1">{generalCount}</strong>
                               </span>
                               {unmappedCount > 0 && (
                                 <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-100 border border-amber-300 text-amber-900 animate-pulse">
@@ -1210,7 +1278,7 @@ export function MasterParametersTableClient({
                                 <thead className="sticky top-0 z-10 bg-slate-100 text-[11px] font-bold text-slate-700 border-b border-slate-200">
                                   <tr>
                                     <th className="py-2.5 px-3 w-12 text-center border-r border-slate-200">No</th>
-                                    <th className="py-2.5 px-3 w-24 text-center border-r border-slate-200">Kode</th>
+                                    <th className="py-2.5 px-3 w-28 text-center border-r border-slate-200">Kode</th>
                                     <th className="py-2.5 px-3 min-w-[200px] border-r border-slate-200">Nama Indikator KPI</th>
                                     <th className="py-2.5 px-3 w-20 text-center border-r border-slate-200">Satuan</th>
                                     <th className="py-2.5 px-3 w-36 border-r border-slate-200">Departemen di Excel</th>
@@ -1233,6 +1301,8 @@ export function MasterParametersTableClient({
                                         className={`transition-colors ${
                                           isRowUnmapped
                                             ? "bg-amber-50/50 hover:bg-amber-50"
+                                            : it.duplicateInFile
+                                            ? "bg-rose-50/30 hover:bg-rose-50/50"
                                             : "hover:bg-slate-50/60"
                                         }`}
                                       >
@@ -1241,12 +1311,27 @@ export function MasterParametersTableClient({
                                           {idx + 1}
                                         </td>
 
-                                        {/* Kode */}
+                                        {/* Kode & Validasi Duplikat */}
                                         <td className="py-2 px-3 font-mono text-[11px] text-center font-semibold text-slate-700 border-r border-slate-100 align-top">
                                           {it.code ? (
-                                            <span className="rounded bg-slate-100 px-1.5 py-0.5 border border-slate-200">
-                                              {it.code}
-                                            </span>
+                                            <div className="flex flex-col items-center gap-1">
+                                              <span className="rounded bg-slate-100 px-1.5 py-0.5 border border-slate-200">
+                                                {it.code}
+                                              </span>
+                                              {it.duplicateInFile && (
+                                                <span className="inline-flex items-center gap-0.5 rounded bg-rose-100 border border-rose-200 px-1.5 py-0.2 text-[9px] font-bold text-rose-800 whitespace-nowrap">
+                                                  Duplikat File
+                                                </span>
+                                              )}
+                                              {it.duplicateInDb && (
+                                                <span
+                                                  className="inline-flex items-center gap-0.5 rounded bg-sky-100 border border-sky-200 px-1.5 py-0.2 text-[9px] font-medium text-sky-800 whitespace-nowrap"
+                                                  title={`Sudah ada di sistem: "${it.existingParamName || it.name}"`}
+                                                >
+                                                  Ada di DB
+                                                </span>
+                                              )}
+                                            </div>
                                           ) : (
                                             <span className="text-slate-400 italic text-[10px]">Auto</span>
                                           )}
@@ -1320,16 +1405,29 @@ export function MasterParametersTableClient({
                                           {isRowUnmapped ? (
                                             <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-800">
                                               <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
-                                              <span>Peringatan</span>
+                                              <span>Perlu Dept</span>
                                             </span>
-                                          ) : it.departmentId === null ? (
-                                            <span className="inline-flex items-center gap-1 rounded-md bg-purple-50 border border-purple-200 px-2 py-0.5 text-[10px] font-bold text-purple-700">
-                                              <span>Umum</span>
-                                            </span>
+                                          ) : it.duplicateInDb ? (
+                                            duplicateMode === "UPDATE" ? (
+                                              <span className="inline-flex items-center gap-1 rounded-md bg-sky-50 border border-sky-200 px-2 py-0.5 text-[10px] font-bold text-sky-700">
+                                                <RotateCcw className="w-3 h-3 text-sky-600 shrink-0" />
+                                                <span>Update</span>
+                                              </span>
+                                            ) : duplicateMode === "SKIP" ? (
+                                              <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 border border-slate-300 px-2 py-0.5 text-[10px] font-bold text-slate-600">
+                                                <X className="w-3 h-3 text-slate-500 shrink-0" />
+                                                <span>Lewati</span>
+                                              </span>
+                                            ) : (
+                                              <span className="inline-flex items-center gap-1 rounded-md bg-purple-50 border border-purple-200 px-2 py-0.5 text-[10px] font-bold text-purple-700">
+                                                <Plus className="w-3 h-3 text-purple-600 shrink-0" />
+                                                <span>Kode Baru</span>
+                                              </span>
+                                            )
                                           ) : (
                                             <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
                                               <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
-                                              <span>Terpetakan</span>
+                                              <span>Baru</span>
                                             </span>
                                           )}
                                         </td>
@@ -1354,15 +1452,25 @@ export function MasterParametersTableClient({
                 {importParsedItems.length > 0 && (
                   (() => {
                     const unmappedCount = importParsedItems.filter((it) => it.isUnmapped).length;
-                    return unmappedCount > 0 ? (
-                      <span className="text-amber-700 font-semibold flex items-center gap-1">
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600 inline" />
-                        Harap petakan {unmappedCount} departemen sebelum melanjutkan.
-                      </span>
-                    ) : (
+                    const duplicateInDbCount = importParsedItems.filter((it) => it.duplicateInDb).length;
+                    if (unmappedCount > 0) {
+                      return (
+                        <span className="text-amber-700 font-semibold flex items-center gap-1">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-600 inline" />
+                          Harap petakan {unmappedCount} departemen sebelum melanjutkan.
+                        </span>
+                      );
+                    }
+                    return (
                       <span className="text-emerald-700 font-semibold flex items-center gap-1">
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 inline" />
-                        Seluruh {importParsedItems.length} indikator siap diimpor.
+                        Seluruh {importParsedItems.length} indikator siap diproses (
+                        {duplicateMode === "UPDATE"
+                          ? "mode perbarui kode terdaftar"
+                          : duplicateMode === "SKIP"
+                          ? "mode lewati kode terdaftar"
+                          : "mode buat kode baru"}
+                        ).
                       </span>
                     );
                   })()
@@ -1388,7 +1496,11 @@ export function MasterParametersTableClient({
                   }
                   className="rounded-xl bg-emerald-600 px-5 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 transition cursor-pointer shadow-xs"
                 >
-                  {isPending ? "Mengimpor..." : `Import ${importParsedItems.length} Indikator`}
+                  {isPending
+                    ? "Mengimpor..."
+                    : duplicateMode === "SKIP" && importParsedItems.filter((it) => it.duplicateInDb).length > 0
+                    ? `Import ${importParsedItems.length - importParsedItems.filter((it) => it.duplicateInDb).length} Indikator Baru`
+                    : `Import ${importParsedItems.length} Indikator`}
                 </button>
               </div>
             </div>

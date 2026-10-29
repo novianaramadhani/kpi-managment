@@ -313,6 +313,7 @@ export function TemplateEditor({
         addBandAction={addBandAction}
         updateBandAction={updateBandAction}
         deleteBandAction={deleteBandAction}
+        onImportExcel={() => setIsExcelModalOpen(true)}
       />
 
       {/* MODAL UBAH INFORMASI TEMPLATE */}

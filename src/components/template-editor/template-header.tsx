@@ -12,6 +12,7 @@ import {
   ChevronDown,
   Settings,
   Download,
+  Upload,
 } from "lucide-react";
 import type { Department, JobLevel, KpiTemplate } from "@/db/schema";
 
@@ -67,6 +68,21 @@ export function TemplateHeader({
 }: TemplateHeaderProps) {
   const deptLabel = department?.name ?? "Semua Departemen";
   const levelLabel = jobLevel?.name ?? "Semua Level";
+
+  // Resolusi nama, NIK, jabatan, dan departemen karyawan untuk template
+  const empName = employee?.name || (() => {
+    const match = templateName.match(/Template\s+KPI\s+([^-]+)/i);
+    return match ? match[1].trim() : null;
+  })();
+  const nikLabel = employee?.nik && employee.nik !== "-" ? employee.nik : null;
+  const jobPositionLabel =
+    employee?.jobPosition && employee.jobPosition !== "-"
+      ? employee.jobPosition
+      : levelLabel;
+  const departmentLabel =
+    employee?.departmentName && employee.departmentName !== "-"
+      ? employee.departmentName
+      : deptLabel;
 
   const [isActionsOpen, setIsActionsOpen] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
@@ -155,17 +171,17 @@ export function TemplateHeader({
           </div>
         </div>
 
-        {/* Sisi Kanan: Single Dropdown Menu Actions + Direct Download Button */}
+        {/* Sisi Kanan: Single Direct Action (Import Excel) + Actions Dropdown */}
         <div className="flex items-center gap-2 shrink-0 justify-end">
-          {onExportExcel && (
+          {onImportExcel && (
             <button
               type="button"
-              onClick={onExportExcel}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50/80 hover:bg-emerald-100 text-emerald-800 px-3 py-1.5 text-xs font-semibold shadow-2xs transition active:scale-98 cursor-pointer"
-              title="Download Template KPI ke Excel (beserta kolom input actual bulanan)"
+              onClick={onImportExcel}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50/80 hover:bg-emerald-100 text-emerald-800 px-3.5 py-1.5 text-xs font-semibold shadow-2xs transition active:scale-98 cursor-pointer"
+              title="Import Template Excel untuk mengisi indikator, bobot, dan kriteria skor"
             >
-              <Download className="h-3.5 w-3.5 text-emerald-700" />
-              <span>Download Excel</span>
+              <Upload className="h-3.5 w-3.5 text-emerald-700" />
+              <span>Import Excel</span>
             </button>
           )}
 
@@ -190,7 +206,7 @@ export function TemplateHeader({
             {isActionsOpen && (
               <div
                 role="menu"
-                className="absolute right-0 mt-1.5 w-64 rounded-xl border border-slate-200/90 bg-white p-1.5 shadow-xl z-50 transition-all animate-in fade-in zoom-in-95 duration-150"
+                className="absolute right-0 mt-1.5 w-64 rounded-xl border border-slate-200/90 bg-white p-1.5 shadow-xl z-30 transition-all animate-in fade-in zoom-in-95 duration-150"
               >
                 {/* 1. Update ke Employee */}
                 {onSyncToEmployees && (
@@ -395,16 +411,69 @@ export function TemplateHeader({
         </div>
       </div>
 
-      {/* BARIS 2: Metadata satu baris ringkas */}
-      <div className="flex items-center gap-2 text-xs text-slate-500 pl-10.5 flex-wrap">
-        <span className="font-medium text-slate-600 truncate">
-          {deptLabel} &bull; {levelLabel} &bull; {periodYear}
-          {employee?.nik ? ` \u2022 NIK: ${employee.nik}` : ""}
-        </span>
+      {/* BARIS 2: Metadata Lengkap & Clean (Nama, NIK, Job Position, Departemen) */}
+      <div className="flex items-center gap-2 text-xs text-slate-600 pl-10.5 flex-wrap pt-0.5">
+        {empName ? (
+          <>
+            {/* Nama */}
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs">
+              <span className="text-slate-400 font-medium">Nama:</span>
+              <span className="text-slate-900 font-bold">{empName}</span>
+            </div>
+
+            {/* NIK */}
+            {nikLabel && (
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono">
+                <span className="text-slate-400 font-medium font-sans">NIK:</span>
+                <span className="text-slate-800 font-bold">{nikLabel}</span>
+              </div>
+            )}
+
+            {/* Job Position */}
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs">
+              <span className="text-slate-400 font-medium">Job Position:</span>
+              <span className="text-slate-800 font-semibold">{jobPositionLabel}</span>
+            </div>
+
+            {/* Departemen */}
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs">
+              <span className="text-slate-400 font-medium">Departemen:</span>
+              <span className="text-slate-800 font-semibold">{departmentLabel}</span>
+            </div>
+
+            {/* Periode */}
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs">
+              <span className="text-slate-400 font-medium">Periode:</span>
+              <span className="text-slate-800 font-semibold">{periodYear}</span>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Departemen */}
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs">
+              <span className="text-slate-400 font-medium">Departemen:</span>
+              <span className="text-slate-900 font-bold">{deptLabel}</span>
+            </div>
+
+            {/* Job Level */}
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs">
+              <span className="text-slate-400 font-medium">Job Level:</span>
+              <span className="text-slate-900 font-semibold">{levelLabel}</span>
+            </div>
+
+            {/* Periode */}
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs">
+              <span className="text-slate-400 font-medium">Periode:</span>
+              <span className="text-slate-900 font-semibold">{periodYear}</span>
+            </div>
+          </>
+        )}
+
         {template.site && (
-          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-50 text-purple-700 border border-purple-200">
-            Site: {template.site}
-          </span>
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200">
+            <span>Site:</span>
+            <span className="font-bold">{template.site}</span>
+          </div>
         )}
       </div>
     </div>

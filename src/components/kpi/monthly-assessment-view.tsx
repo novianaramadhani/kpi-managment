@@ -17,6 +17,7 @@ import {
   calculateKpiScore,
   calculateParameterScore,
   calculateOverallKpiScore,
+  resolveKpiDirection,
   type GenericScoringRule,
 } from "@/lib/scoring";
 import {
@@ -31,6 +32,7 @@ import {
   validateAppraisalByHeadDeptAction,
   validateAppraisalByManagerAction,
   approveAppraisalByHrAction,
+  processDynamicStageApprovalAction,
 } from "@/lib/approval-actions";
 import { exportIndividualAppraisal, exportEvaluationResultExcel } from "@/lib/excel-individual";
 import { downloadEvaluationPdf } from "@/lib/pdf-evaluation";
@@ -195,12 +197,16 @@ function formatTargetNumber(target: number | null | undefined, unit: string | nu
 }
 
 // Helper format realisasi (angka aja)
-function formatActualNumber(val: number | null | undefined, unit: string | null | undefined): string {
-  if (val === null || val === undefined || Number.isNaN(Number(val))) return "-";
-  const num = Number(val);
-  const numStr = num.toLocaleString("id-ID", { maximumFractionDigits: 2 });
-  if (unit === "%") return `${numStr}%`;
-  return numStr;
+function formatActualNumber(val: any, unit: string | null | undefined): string {
+  if (val === null || val === undefined || String(val).trim() === "") return "-";
+  const cleanStr = String(val).trim().replace(/,/g, ".");
+  const num = Number(cleanStr);
+  if (!Number.isNaN(num)) {
+    const numStr = num.toLocaleString("id-ID", { maximumFractionDigits: 2 });
+    if (unit === "%") return `${numStr}%`;
+    return numStr;
+  }
+  return String(val);
 }
 
 // Helper format kriteria scoring (angka aja, bersih tanpa kata-kata deskriptif)
@@ -842,12 +848,36 @@ export function MonthlyAssessmentView({
     currentEmp?.templateName ||
     "-";
 
+  const simpleTemplateLabel = useMemo(() => {
+    if (!activeTemplateName || activeTemplateName.trim() === "" || activeTemplateName.trim() === "-") {
+      return null;
+    }
+    let cleaned = activeTemplateName.trim();
+    cleaned = cleaned.replace(/^(?:template\s+)+(?:kpi\s*)?[-:·]?\s*/i, "").trim();
+    const empName = (initialDetail?.employee?.name || currentEmp?.name || "").trim();
+    if (empName) {
+      const escapedEmp = empName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      cleaned = cleaned.replace(new RegExp(`^${escapedEmp}\\s*[-:·]?\\s*`, "i"), "").trim();
+    }
+    if (cleaned.includes(",")) {
+      cleaned = cleaned.split(",")[0].trim();
+    }
+    return cleaned || "KPI";
+  }, [activeTemplateName, initialDetail?.employee?.name, currentEmp?.name]);
+
   // Live calculation of all categories, indicators, and 12-month details
   const liveCategories = useMemo(() => {
     if (!initialDetail) return [];
 
     return initialDetail.categories.map((cat, catIdx) => {
       const liveIndicators = cat.indicators.map((ind, indIdx) => {
+        const resolvedDirection = resolveKpiDirection(
+          ind.scoringRules,
+          ind.direction,
+          ind.indicatorName,
+          ind.measurementType,
+          ind.unit
+        );
         // Compute 12-month data with live edits
         const baseMonthly = ind.monthlyDetails || [];
         const liveMonthly: IndicatorMonthDetail[] = [];
@@ -884,9 +914,10 @@ export function MonthlyAssessmentView({
             maxScore: ind.maxScore,
             compareBasis: ind.compareBasis,
             target,
-            direction: ind.direction,
+            direction: resolvedDirection,
             measurementType: ind.measurementType,
             unit: ind.unit,
+            indicatorName: ind.indicatorName,
           });
 
           if (actual !== null) {
@@ -948,9 +979,10 @@ export function MonthlyAssessmentView({
           maxScore: ind.maxScore,
           compareBasis: ind.compareBasis,
           target: currentTarget,
-          direction: ind.direction,
+          direction: resolvedDirection,
           measurementType: ind.measurementType,
           unit: ind.unit,
+          indicatorName: ind.indicatorName,
         });
 
         const annualStatus: "Completed" | "In Progress" | "Not Started" =
@@ -968,9 +1000,10 @@ export function MonthlyAssessmentView({
           maxScore: ind.maxScore,
           compareBasis: ind.compareBasis,
           target: curMonthTarget,
-          direction: ind.direction,
+          direction: resolvedDirection,
           measurementType: ind.measurementType,
           unit: ind.unit,
+          indicatorName: ind.indicatorName,
         });
 
         const effectiveParamId = ind.parameterId ?? 0;
@@ -978,6 +1011,7 @@ export function MonthlyAssessmentView({
 
         return {
           ...ind,
+          direction: resolvedDirection,
           indicatorCode: ind.indicatorCode || `${catIdx + 1}.${indIdx + 1}`,
           target: currentTarget,
           monthTarget: curMonthTarget,
@@ -1184,12 +1218,13 @@ export function MonthlyAssessmentView({
 
     for (const cat of liveCategories) {
       if (cat.indicators.length === 0) continue;
-      const isParamFilled = cat.indicators.some((ind) => {
+      const isParamFilled = cat.indicators.every((ind) => {
         const hasMonthValue = ind.monthlyDetails?.some(
           (m) => m.actual !== null && m.actual !== undefined
         );
         const hasAnnual = ind.annualActual !== null && ind.annualActual !== undefined;
-        return hasMonthValue || hasAnnual;
+        const hasScore = ind.annualScore !== null && ind.annualScore !== undefined;
+        return hasMonthValue || hasAnnual || hasScore;
       });
       if (isParamFilled) filledParams++;
     }
@@ -2085,8 +2120,11 @@ export function MonthlyAssessmentView({
     normalizedRole === "PENILAI" ||
     Boolean(currentUser?.id && approvalLine?.appraiser?.id === currentUser.id);
 
+  const workflowResolved = initialDetail?.workflowResolved;
+
   const isFormEditable =
     isGlobalAdmin ||
+    Boolean(workflowResolved?.canCurrentUserEditScore) ||
     (currentStage === "PENILAI" &&
       (currentAppraisalStatus === "DRAFT" || currentAppraisalStatus === "REVISED_PENILAI"));
 
@@ -2103,7 +2141,7 @@ export function MonthlyAssessmentView({
         label: "Finalized",
         badgeClass: "bg-emerald-50 text-emerald-800 border-emerald-300",
         dotClass: "bg-emerald-600",
-        description: "Penilaian telah disahkan secara resmi oleh HR dan berstatus final.",
+        description: "Penilaian telah disahkan secara resmi dan masuk ke Report.",
       };
     }
     if (currentAppraisalStatus === "APPROVED") {
@@ -2125,24 +2163,26 @@ export function MonthlyAssessmentView({
         label: "Revision",
         badgeClass: "bg-rose-50 text-rose-800 border-rose-200",
         dotClass: "bg-rose-500 animate-pulse",
-        description: `Penilaian dikembalikan untuk diperbaiki/direvisi (${currentStage}).`,
+        description: `Penilaian dikembalikan untuk diperbaiki/direvisi (${workflowResolved?.activeStageLabel || currentStage}).`,
       };
     }
     if (
-      currentAppraisalStatus === "PENDING_HEAD_DEPT" ||
-      currentAppraisalStatus === "PENDING_MANAGER" ||
-      currentAppraisalStatus === "PENDING_HR" ||
-      currentAppraisalStatus === "REVIEWED" ||
-      currentStage === "HEAD_DEPT" ||
-      currentStage === "MANAGER" ||
-      currentStage === "HR"
+      currentStage !== "PENILAI" &&
+      currentStage !== "FINAL" &&
+      (currentAppraisalStatus.startsWith("PENDING_") ||
+        currentAppraisalStatus === "REVIEWED" ||
+        currentStage === "HEAD_DEPT" ||
+        currentStage === "MANAGER" ||
+        currentStage === "HR" ||
+        Boolean(workflowResolved?.activeStageKey && workflowResolved.activeStageKey !== "PENILAI"))
     ) {
       const stageName =
-        currentStage === "HR" || currentAppraisalStatus === "PENDING_HR" || currentAppraisalStatus === "REVIEWED"
+        workflowResolved?.activeStageLabel ||
+        (currentStage === "HR" || currentAppraisalStatus === "PENDING_HR" || currentAppraisalStatus === "REVIEWED"
           ? "HR"
           : currentStage === "MANAGER" || currentAppraisalStatus === "PENDING_MANAGER"
           ? "Manager"
-          : "Head Dept";
+          : "Head Dept");
       return {
         key: "UNDER_REVIEW" as const,
         label: `Under Review (${stageName})`,
@@ -2175,6 +2215,8 @@ export function MonthlyAssessmentView({
     currentAppraisalStatus,
     currentStage,
     isRevised,
+    workflowResolved?.activeStageKey,
+    workflowResolved?.activeStageLabel,
     initialDetail?.myAssessmentStatus,
     initialDetail?.assessorProgress,
   ]);
@@ -2262,7 +2304,10 @@ export function MonthlyAssessmentView({
                 Seluruh penilai telah menyelesaikan tugas penilaiannya.
               </p>
               <p>
-                Berkas penilaian untuk <strong>${empName}</strong> otomatis diteruskan ke tahap review <strong>Head Dept</strong> untuk proses verifikasi.
+                ${
+                  res.message ||
+                  `Berkas penilaian untuk <strong>${empName}</strong> otomatis diteruskan ke tahap berikutnya.`
+                }
               </p>
             </div>
           `,
@@ -2370,6 +2415,106 @@ export function MonthlyAssessmentView({
           icon: "error",
           title: "Gagal Mengajukan",
           text: res.error || "Terjadi kesalahan sistem.",
+          confirmButtonColor: "#0284c7",
+        });
+      }
+    } catch (err: unknown) {
+      Swal.fire({
+        icon: "error",
+        title: "Kesalahan",
+        text: err instanceof Error ? err.message : "Terjadi kesalahan.",
+        confirmButtonColor: "#0284c7",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Dynamic Stage Approval / Revision Handler (Mengikuti Mode Workflow & Tahap RBAC Aktif)
+  const handleDynamicStageDecision = async (
+    action: "FORWARD" | "REVISE",
+    customRevisionTargetStageKey?: string
+  ) => {
+    if (!initialDetail) return;
+    const isForward = action === "FORWARD";
+    const empName = initialDetail.employee.name || currentEmp?.name || "Karyawan";
+    const activeLabel = workflowResolved?.activeStageLabel || currentStage;
+    const nextStep = workflowResolved?.nextStep;
+    const isFinalTarget = !nextStep || nextStep.stageKey === "FINAL";
+    const nextStepLabel = isFinalTarget ? "Final (Report)" : nextStep.label;
+    const revStepLabel =
+      customRevisionTargetStageKey === "PENILAI"
+        ? "Penilai"
+        : workflowResolved?.prevStepForRevision?.label || "Penilai";
+
+    let notes = "";
+    if (isForward) {
+      const { isConfirmed, value } = await Swal.fire({
+        title: isFinalTarget
+          ? `Setujui & Finalisasi (${activeLabel})?`
+          : `Validasi & Teruskan ke ${nextStepLabel}?`,
+        text: isFinalTarget
+          ? `Penilaian "${empName}" akan disetujui pada tahap ${activeLabel} dan resmi masuk ke Report KPI.`
+          : `Penilaian "${empName}" akan divalidasi pada tahap ${activeLabel} dan diteruskan ke tahap ${nextStepLabel}.`,
+        icon: "question",
+        input: "textarea",
+        inputPlaceholder: `Catatan persetujuan ${activeLabel} (opsional)...`,
+        showCancelButton: true,
+        confirmButtonColor: isFinalTarget ? "#4f46e5" : "#059669",
+        cancelButtonColor: "#64748b",
+        confirmButtonText: isFinalTarget
+          ? "Ya, Setujui & Finalisasi"
+          : `Ya, Teruskan ke ${nextStepLabel}`,
+        cancelButtonText: "Batal",
+      });
+      if (!isConfirmed) return;
+      notes = value || "";
+    } else {
+      const { isConfirmed, value } = await Swal.fire({
+        title: `Kembalikan ke ${revStepLabel} untuk Revisi?`,
+        text: `Penilaian "${empName}" akan dikembalikan ke tahap ${revStepLabel} agar diperbaiki.`,
+        icon: "warning",
+        input: "textarea",
+        inputPlaceholder: "Tuliskan alasan / catatan bagian yang perlu direvisi (wajib)...",
+        inputValidator: (val) =>
+          !val?.trim() ? "Catatan revisi wajib diisi sebagai acuan perbaikan." : null,
+        showCancelButton: true,
+        confirmButtonColor: "#d97706",
+        cancelButtonColor: "#64748b",
+        confirmButtonText: `Ya, Kembalikan ke ${revStepLabel}`,
+        cancelButtonText: "Batal",
+      });
+      if (!isConfirmed) return;
+      notes = value || "";
+    }
+
+    setIsSubmitting(true);
+    try {
+      const res = await processDynamicStageApprovalAction({
+        appraisalId: initialDetail.appraisalId,
+        action,
+        targetRevisionStageKey: customRevisionTargetStageKey,
+        notes,
+      });
+
+      if (res.success) {
+        await Swal.fire({
+          icon: "success",
+          title: isForward
+            ? isFinalTarget
+              ? "Berhasil Difinalisasi!"
+              : "Berhasil Diteruskan!"
+            : "Dikembalikan untuk Revisi",
+          text: res.message,
+          confirmButtonColor: isForward ? "#059669" : "#d97706",
+          timer: 2000,
+        });
+        router.refresh();
+      } else {
+        Swal.fire({
+          icon: "error",
+          title: "Gagal Memproses",
+          text: res.error || "Terjadi kesalahan.",
           confirmButtonColor: "#0284c7",
         });
       }
@@ -2785,6 +2930,7 @@ export function MonthlyAssessmentView({
         <div className="absolute left-0 top-1/2 -translate-y-1/2">
           <Link
             href={`/input-kpi?year=${currentYear}`}
+            prefetch={false}
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-2xs hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 transition-all active:scale-95 group cursor-pointer"
             title="Kembali ke Daftar Karyawan"
             aria-label="Kembali ke Daftar Karyawan"
@@ -2816,15 +2962,15 @@ export function MonthlyAssessmentView({
       {/* ================================================== */}
       {/* 2. EMPLOYEE & ASSESSMENT SUMMARY (HORIZONTAL)      */}
       {/* ================================================== */}
-      <section className="mb-4 rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-x-5 gap-y-3 items-center">
-          {/* 1. Nama Karyawan */}
-          <div className="min-w-0">
+      <section className="mb-4 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-2xs">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-12 gap-x-5 gap-y-3 items-center">
+          {/* 1. Nama Karyawan (Diperluas agar nama panjang tidak terpotong) */}
+          <div className="min-w-0 sm:col-span-2 lg:col-span-3">
             <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               Nama Karyawan
             </span>
             <span
-              className="mt-0.5 block text-xs sm:text-sm font-semibold text-slate-800 truncate"
+              className="mt-0.5 block text-xs sm:text-sm font-semibold text-slate-800 break-words leading-snug"
               title={initialDetail?.employee.name || currentEmp?.name || "-"}
             >
               {initialDetail?.employee.name || currentEmp?.name || "-"}
@@ -2832,12 +2978,12 @@ export function MonthlyAssessmentView({
           </div>
 
           {/* 2. Departemen */}
-          <div className="min-w-0">
+          <div className="min-w-0 lg:col-span-1">
             <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               Departemen
             </span>
             <span
-              className="mt-0.5 block text-xs sm:text-sm font-medium text-slate-700 truncate"
+              className="mt-0.5 block text-xs sm:text-sm font-medium text-slate-700 break-words leading-snug"
               title={initialDetail?.employee.departmentName || currentEmp?.departmentName || "-"}
             >
               {initialDetail?.employee.departmentName || currentEmp?.departmentName || "-"}
@@ -2845,12 +2991,12 @@ export function MonthlyAssessmentView({
           </div>
 
           {/* 3. Jabatan */}
-          <div className="min-w-0">
+          <div className="min-w-0 lg:col-span-2">
             <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               Jabatan
             </span>
             <span
-              className="mt-0.5 block text-xs sm:text-sm font-medium text-slate-700 truncate"
+              className="mt-0.5 block text-xs sm:text-sm font-medium text-slate-700 break-words leading-snug"
               title={initialDetail?.employee.jobPosition || currentEmp?.jobPosition || "-"}
             >
               {initialDetail?.employee.jobPosition || currentEmp?.jobPosition || "-"}
@@ -2858,12 +3004,12 @@ export function MonthlyAssessmentView({
           </div>
 
           {/* 4. Penilai */}
-          <div className="min-w-0">
+          <div className="min-w-0 lg:col-span-2">
             <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               Penilai
             </span>
             <span
-              className="mt-0.5 block text-xs sm:text-sm font-medium text-slate-700 truncate"
+              className="mt-0.5 block text-xs sm:text-sm font-medium text-slate-700 break-words leading-snug"
               title={appraiserName}
             >
               {appraiserName}
@@ -2871,32 +3017,32 @@ export function MonthlyAssessmentView({
           </div>
 
           {/* 5. Total Skor */}
-          <div className="min-w-0">
+          <div className="min-w-0 lg:col-span-1">
             <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               Total Skor
             </span>
             <div className="mt-0.5 flex items-baseline gap-1">
-              <span className="text-xs sm:text-sm font-bold text-emerald-700">
+              <span className="text-xs sm:text-sm font-bold text-blue-600">
                 {liveAnnualOverall.overallScoreDisplay}
               </span>
-              <span className="text-[11px] font-semibold text-emerald-600">
+              <span className="text-[11px] font-semibold text-blue-600">
                 ({liveAnnualOverall.grade})
               </span>
             </div>
           </div>
 
           {/* 6. Progress */}
-          <div className="min-w-0">
+          <div className="min-w-0 lg:col-span-2">
             <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               Progress
             </span>
-            <div className="mt-0.5 text-xs sm:text-sm font-semibold text-slate-800 truncate">
+            <div className="mt-0.5 text-xs sm:text-sm font-semibold text-slate-800 whitespace-nowrap">
               {overallProgressParameters} Parameter
             </div>
           </div>
 
           {/* 7. Status */}
-          <div className="min-w-0">
+          <div className="min-w-0 lg:col-span-1">
             <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               Status
             </span>
@@ -3081,7 +3227,7 @@ export function MonthlyAssessmentView({
             )
           )}
 
-          {/* Contextual Hierarchy Approval Actions */}
+          {/* Contextual Dynamic Staging Approval Actions */}
           {currentStage === "PENILAI" && !canSubmitMyAssessment && (
             <span className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-500">
               <span className="h-2 w-2 rounded-full bg-slate-400" />
@@ -3089,115 +3235,73 @@ export function MonthlyAssessmentView({
             </span>
           )}
 
-          {currentStage === "HEAD_DEPT" && (
-            isHeadDeptUser ? (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={isSaving || isSubmitting}
-                  onClick={() => handleHeadDeptValidate("REVISE")}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 px-3 py-2 text-xs font-bold text-amber-800 shadow-2xs transition active:scale-95 cursor-pointer disabled:opacity-60"
-                  title="Kembalikan dokumen penilaian ke Penilai untuk direvisi"
-                >
-                  <svg className="h-3.5 w-3.5 text-amber-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-                  </svg>
-                  <span>Minta Revisi ke Penilai</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={isSaving || isSubmitting}
-                  onClick={() => handleHeadDeptValidate("FORWARD")}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-2 text-xs font-bold text-white shadow-xs transition active:scale-95 cursor-pointer disabled:opacity-60"
-                  title="Validasi penilaian dan teruskan ke Manager"
-                >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  <span>{isSubmitting ? "Memproses..." : "Validasi & Teruskan ke Manager"}</span>
-                </button>
-              </div>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2 text-xs font-semibold text-amber-700">
-                <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-                Menunggu Review Head Dept
-              </span>
-            )
+          {currentStage !== "PENILAI" && currentStage !== "FINAL" && currentAppraisalStatus !== "FINAL" && (
+            (() => {
+              const canApproveStage =
+                Boolean(workflowResolved?.canCurrentUserApprove) ||
+                (currentStage === "HEAD_DEPT" && isHeadDeptUser) ||
+                (currentStage === "MANAGER" && isManagerUser) ||
+                (currentStage === "HR" && isHrUser);
+
+              const activeStageTitle =
+                workflowResolved?.activeStageLabel ||
+                (currentStage === "HEAD_DEPT"
+                  ? "Head Dept"
+                  : currentStage === "MANAGER"
+                  ? "Manager"
+                  : currentStage === "HR"
+                  ? "HR"
+                  : currentStage);
+
+              const nextStepObj = workflowResolved?.nextStep;
+              const isFinalNext = !nextStepObj || nextStepObj.stageKey === "FINAL";
+              const forwardLabel = isFinalNext
+                ? `Setujui & Finalisasi (${activeStageTitle})`
+                : `Validasi & Teruskan ke ${nextStepObj.label}`;
+
+              const revTargetLabel = workflowResolved?.prevStepForRevision?.label || "Penilai";
+
+              return canApproveStage ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={isSaving || isSubmitting}
+                    onClick={() => handleDynamicStageDecision("REVISE")}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 px-3 py-2 text-xs font-bold text-amber-800 shadow-2xs transition active:scale-95 cursor-pointer disabled:opacity-60"
+                    title={`Kembalikan ke ${revTargetLabel} untuk direvisi`}
+                  >
+                    <svg className="h-3.5 w-3.5 text-amber-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                    </svg>
+                    <span>Kembalikan ke {revTargetLabel}</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSaving || isSubmitting}
+                    onClick={() => handleDynamicStageDecision("FORWARD")}
+                    className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold text-white shadow-xs transition active:scale-95 cursor-pointer disabled:opacity-60 ${
+                      isFinalNext
+                        ? "bg-indigo-600 hover:bg-indigo-700"
+                        : "bg-emerald-600 hover:bg-emerald-700"
+                    }`}
+                    title={forwardLabel}
+                  >
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>{isSubmitting ? "Memproses..." : forwardLabel}</span>
+                  </button>
+                </div>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2 text-xs font-semibold text-amber-700">
+                  <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+                  Menunggu {activeStageTitle}
+                </span>
+              );
+            })()
           )}
 
-          {currentStage === "MANAGER" && (
-            isManagerUser ? (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={isSaving || isSubmitting}
-                  onClick={() => handleManagerValidate("REVISE")}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 px-3 py-2 text-xs font-bold text-amber-800 shadow-2xs transition active:scale-95 cursor-pointer disabled:opacity-60"
-                  title="Kembalikan ke Head Dept (struktur 1 tingkat sebelumnya)"
-                >
-                  <svg className="h-3.5 w-3.5 text-amber-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-                  </svg>
-                  <span>Kembalikan ke Head Dept</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={isSaving || isSubmitting}
-                  onClick={() => handleManagerValidate("FORWARD")}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-2 text-xs font-bold text-white shadow-xs transition active:scale-95 cursor-pointer disabled:opacity-60"
-                  title="Validasi manajerial dan teruskan ke HR"
-                >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  <span>{isSubmitting ? "Memproses..." : "Validasi & Teruskan ke HR"}</span>
-                </button>
-              </div>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2 text-xs font-semibold text-amber-700">
-                <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-                Menunggu Validasi Manager
-              </span>
-            )
-          )}
-
-          {currentStage === "HR" && (
-            isHrUser ? (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={isSaving || isSubmitting}
-                  onClick={() => handleHrApprove("REVISE")}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 px-3 py-2 text-xs font-bold text-amber-800 shadow-2xs transition active:scale-95 cursor-pointer disabled:opacity-60"
-                  title="Kembalikan ke Manager (struktur 1 tingkat sebelumnya)"
-                >
-                  <svg className="h-3.5 w-3.5 text-amber-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-                  </svg>
-                  <span>Kembalikan ke Manager</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={isSaving || isSubmitting}
-                  onClick={() => handleHrApprove("APPROVE")}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 px-4 py-2 text-xs font-bold text-white shadow-xs transition active:scale-95 cursor-pointer disabled:opacity-60"
-                  title="Setujui dan sahkan nilai KPI secara resmi"
-                >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <span>{isSubmitting ? "Memproses..." : "Setujui & Finalisasi (HR)"}</span>
-                </button>
-              </div>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-xs font-semibold text-indigo-700">
-                <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
-                Menunggu Approval HR
-              </span>
-            )
-          )}
-
-          {currentStage === "FINAL" && (
+          {(currentStage === "FINAL" || currentAppraisalStatus === "FINAL") && (
             <span className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-bold text-emerald-700">
               <svg className="h-4 w-4 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -3360,33 +3464,30 @@ export function MonthlyAssessmentView({
           </div>
         </div>
 
-        {/* Unified Modern Spreadsheet Table */}
-        <div className="overflow-x-auto rounded-xl border border-[#dbe2ea] bg-white shadow-2xs">
+        {/* Unified Minimalist Spreadsheet Table (Thin Row & Column Borders) */}
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr
-                className="border-b border-[#dbe2ea] text-xs font-semibold text-slate-700 select-none"
-                style={{ backgroundColor: "#f0f4f8" }}
-              >
-                <th className="py-2.5 px-4 text-left border-r border-[#dbe2ea] min-w-[260px]">
+              <tr className="border-b border-slate-200 bg-slate-100/80 text-[11px] font-semibold text-slate-600 select-none">
+                <th className="py-2.5 px-3.5 text-left border-r border-slate-200 min-w-[220px]">
                   Parameter / Indikator KPI
                 </th>
-                <th className="py-2.5 px-4 text-left border-r border-[#dbe2ea] min-w-[180px]">
+                <th className="py-2.5 px-3 text-left border-r border-slate-200 min-w-[160px]">
                   Kriteria Penilaian
                 </th>
-                <th className="py-2.5 px-2 text-center border-r border-[#dbe2ea] w-16 min-w-[64px]">
+                <th className="py-2.5 px-2 text-center border-r border-slate-200 w-16 min-w-[60px]">
                   Skor
                 </th>
-                <th className="py-2.5 px-3 text-center border-r border-[#dbe2ea] min-w-[160px] w-48">
+                <th className="py-2.5 px-2.5 text-center border-r border-slate-200 w-24 min-w-[88px]">
                   Realisasi
                 </th>
-                <th className="py-2.5 px-2 text-center border-r border-[#dbe2ea] w-20">
+                <th className="py-2.5 px-2 text-center border-r border-slate-200 w-20 min-w-[72px]">
                   Bobot
                 </th>
-                <th className="py-2.5 px-2 text-center border-r border-[#dbe2ea] w-24">
+                <th className="py-2.5 px-2 text-center border-r border-slate-200 w-24 min-w-[84px]">
                   Skor Akhir
                 </th>
-                <th className="py-2.5 px-2 text-center w-24">
+                <th className="py-2.5 px-2.5 text-center w-28 min-w-[108px]">
                   Aksi
                 </th>
               </tr>
@@ -3417,35 +3518,43 @@ export function MonthlyAssessmentView({
 
                   return (
                     <React.Fragment key={cat.categoryId}>
-                      {/* Accordion Header Row (Konsisten & Sama untuk Semua 5 Parameter Utama) */}
+                      {/* Minimalist Category Group Header Row (Bright Light Blue Separator) */}
                       <tr
                         onClick={() => toggleParameter(cat.categoryId)}
-                        className="cursor-pointer select-none border-b border-[#163a7d] transition hover:brightness-105"
-                        style={{ backgroundColor: "#163a7d", color: "#ffffff" }}
+                        className="cursor-pointer select-none border-b border-sky-200/90 bg-sky-100 hover:bg-sky-200/75 transition-colors"
                       >
-                        {/* Kolom 1: Parameter & Status */}
-                        <td className="py-2.5 px-4 align-middle border-r border-[#1e4794] text-white">
+                        {/* Kolom 1: Parameter Name & Status */}
+                        <td className="py-2 px-3.5 align-middle border-r border-sky-200/80">
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 min-w-0">
                               {isExpanded ? (
-                                <ChevronDown className="w-4 h-4 text-white shrink-0" />
+                                <ChevronDown className="w-3.5 h-3.5 text-blue-600 shrink-0 transition-transform" />
                               ) : (
-                                <ChevronRight className="w-4 h-4 text-white shrink-0" />
+                                <ChevronRight className="w-3.5 h-3.5 text-blue-600 shrink-0 transition-transform" />
                               )}
-                              <span className="font-bold text-white text-xs sm:text-[13px] tracking-tight truncate">
-                                {cat.categoryNumber}. {cat.categoryName}
+                              <span className="font-mono text-xs font-bold text-blue-600 shrink-0">
+                                {cat.categoryNumber}.
+                              </span>
+                              <span className="font-bold text-blue-950 text-xs tracking-tight uppercase truncate">
+                                {cat.categoryName}
                               </span>
                             </div>
                             <span
-                              className="inline-flex items-center gap-1.5 rounded-full font-medium shrink-0 select-none text-[10px] px-2 py-0.5 border border-white/20 bg-white/10 text-white"
+                              className={`inline-flex items-center gap-1.5 font-medium shrink-0 select-none text-[11px] ${
+                                catStatus === "Completed"
+                                  ? "text-emerald-700"
+                                  : catStatus === "In Progress"
+                                  ? "text-amber-700"
+                                  : "text-slate-500"
+                              }`}
                             >
                               <span
                                 className={`rounded-full shrink-0 w-1.5 h-1.5 ${
                                   catStatus === "Completed"
-                                    ? "bg-emerald-400"
+                                    ? "bg-emerald-500"
                                     : catStatus === "In Progress"
-                                    ? "bg-amber-400"
-                                    : "bg-slate-300"
+                                    ? "bg-amber-500"
+                                    : "bg-slate-400"
                                 }`}
                               />
                               <span>
@@ -3459,429 +3568,156 @@ export function MonthlyAssessmentView({
                           </div>
                         </td>
 
-                        {/* Kolom 2: Ringkasan Sub-Parameter / Indikator */}
-                        <td className="py-2.5 px-4 align-middle border-r border-[#1e4794] text-white/80 text-xs">
-                          <span>
-                            {isTargetKerja
-                              ? `${cat.indicators.length} Sub-Parameter`
-                              : "1 Indikator (General)"}
-                          </span>
+                        {/* Kolom 2: Ringkasan Indikator */}
+                        <td className="py-2 px-3 align-middle border-r border-sky-200/80 text-slate-700 text-xs font-medium">
+                          {cat.indicators.length} {cat.indicators.length > 1 ? "Indikator" : "Indikator Utama"}
                         </td>
 
                         {/* Kolom 3: Skor */}
-                        <td className="py-2.5 px-2 text-white/40 text-center text-xs align-middle border-r border-[#1e4794] font-mono">
+                        <td className="py-2 px-2 text-slate-400 text-center text-xs align-middle border-r border-sky-200/80 font-mono">
                           -
                         </td>
 
                         {/* Kolom 4: Realisasi */}
-                        <td className="py-2.5 px-2 text-white/40 text-center text-xs align-middle border-r border-[#1e4794] font-mono">
+                        <td className="py-2 px-2 text-slate-400 text-center text-xs align-middle border-r border-sky-200/80 font-mono">
                           -
                         </td>
 
                         {/* Kolom 5: Bobot Utama */}
-                        <td className="py-2.5 px-2 text-white text-center align-middle border-r border-[#1e4794] font-mono text-xs font-semibold">
+                        <td className="py-2 px-2 text-slate-900 text-center align-middle border-r border-sky-200/80 font-mono text-xs font-semibold">
                           {Math.round(cat.categoryWeight * 100)}%
                         </td>
 
-                        {/* Kolom 6: Skor Akhir */}
-                        <td className="py-2.5 px-2 text-amber-300 text-center align-middle border-r border-[#1e4794] font-mono text-xs font-bold">
+                        {/* Kolom 6: Skor Akhir Parameter */}
+                        <td className="py-2 px-2 text-blue-600 text-center align-middle border-r border-sky-200/80 font-mono text-xs font-bold">
                           {(cat.annualScorePercentage ?? cat.scorePercentage ?? 0).toFixed(1)}%
                         </td>
 
                         {/* Kolom 7: Aksi Accordion */}
-                        <td className="py-2.5 px-2 text-center align-middle text-white/80 text-xs">
-                          <span className="text-[11px] text-white/80 hover:text-white font-medium">
-                            {isExpanded ? "Tutup" : "Buka"}
-                          </span>
+                        <td className="py-2 px-2.5 text-center align-middle text-slate-700 text-xs">
+                          <button
+                            type="button"
+                            aria-expanded={isExpanded}
+                            aria-label={`${isExpanded ? "Tutup" : "Buka"} rincian parameter ${cat.categoryName}`}
+                            className="inline-flex items-center justify-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 transition-colors cursor-pointer whitespace-nowrap"
+                          >
+                            <span>{isExpanded ? "Tutup" : "Buka"}</span>
+                            {isExpanded ? (
+                              <ChevronDown className="w-3 h-3 text-blue-600 shrink-0" />
+                            ) : (
+                              <ChevronRight className="w-3 h-3 text-blue-600 shrink-0" />
+                            )}
+                          </button>
                         </td>
                       </tr>
 
                       {/* Sub-Rows Indikator Saat Accordion Dibuka */}
                       {isExpanded && (
-                        isTargetKerja ? (
-                          /* 1. TARGET KERJA: Memiliki sub-parameter dari Departemen beserta Bobot Internal */
-                          cat.indicators.length === 0 ? (
-                            <tr>
-                              <td colSpan={7} className="py-4 text-center text-slate-400 italic bg-white text-xs border-b border-[#dbe2ea]">
-                                Belum ada sub-parameter pada Target Kerja.
-                              </td>
-                            </tr>
-                          ) : (
-                            cat.indicators.map((ind, indIdx) => {
-                              const isIndUnfilled = unfilledPointIds.has(ind.appraisalItemId);
-                              const curMonthDetail = ind.monthlyDetails?.find((m) => m.month === currentMonth);
-                              const isIndSubmitted = curMonthDetail?.status === "SUBMITTED";
-                              const effectiveScore =
-                                ind.annualScore !== null && ind.annualScore !== undefined
-                                  ? ind.annualScore
-                                  : ind.score !== null && ind.score !== undefined
-                                  ? ind.score
-                                  : null;
-                              const hasActual =
-                                (ind.annualActual !== null && ind.annualActual !== undefined) ||
-                                (ind.actualValue !== null && ind.actualValue !== undefined) ||
-                                (ind.annualScore !== null && ind.annualScore !== undefined);
-                              const displayScore = `${effectiveScore} pt`;
-                              const isPopoverOpen =
-                                popoverAnchor?.type === "realization" &&
-                                popoverAnchor.indicator.appraisalItemId === ind.appraisalItemId;
-                              const weightPctVal = Math.round((ind.indicatorWeight || 0) * 100);
-                              const weightPctDisplay = `${weightPctVal}%`;
-                              const isWeightPopoverOpen =
-                                popoverAnchor?.type === "weight" &&
-                                popoverAnchor.indicator.appraisalItemId === ind.appraisalItemId;
-                              const finalScoreStr = ind.annualFinalScoreDisplay || ind.finalScoreDisplay;
-                              const isFinalPopoverOpen =
-                                popoverAnchor?.type === "final_score" &&
-                                popoverAnchor.indicator.appraisalItemId === ind.appraisalItemId;
-
-                              return (
-                                <tr
-                                  id={`indicator-row-${ind.appraisalItemId}`}
-                                  key={ind.appraisalItemId}
-                                  className={`border-b border-[#dbe2ea] transition-colors scroll-mt-24 ${
-                                    isIndUnfilled && validationAttempted
-                                      ? "bg-amber-50/60 hover:bg-amber-50/90"
-                                      : "bg-white hover:bg-slate-50/70"
-                                  }`}
-                                >
-                                  {/* 1. Sub-Parameter KPI */}
-                                  <td className="py-2.5 px-3 pl-8 border-r border-[#dbe2ea] align-middle">
-                                    <div className="flex items-start gap-2.5">
-                                      <div className="flex flex-col items-center gap-0.5 shrink-0 mt-0.5">
-                                        <span
-                                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded border text-center ${
-                                            isIndUnfilled && validationAttempted
-                                              ? "bg-amber-200 text-amber-950 border-amber-300 font-extrabold"
-                                              : "bg-slate-100 text-slate-700 border-slate-200"
-                                          }`}
-                                        >
-                                          1.{indIdx + 1}
-                                        </span>
-                                        {ind.indicatorCode && (
-                                          <span className="text-[9px] font-mono font-medium text-slate-400">
-                                            {ind.indicatorCode}
-                                          </span>
-                                        )}
-                                      </div>
-                                      <div className="min-w-0 flex-1">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                          <div className="font-semibold text-slate-800 text-xs">
-                                            {ind.indicatorName}
-                                          </div>
-                                          {isIndUnfilled && validationAttempted && (
-                                            <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-900 border border-amber-300">
-                                              <AlertTriangle className="h-3 w-3 text-amber-600 shrink-0" />
-                                              <span>Belum Diisi</span>
-                                            </span>
-                                          )}
-                                        </div>
-                                        {ind.target !== null && ind.target !== undefined && (
-                                          <div className="text-[11px] text-slate-500 mt-0.5">
-                                            Target:{" "}
-                                            <span className="font-medium text-slate-700">
-                                              {formatTargetNumber(ind.target, ind.unit)}
-                                            </span>
-                                          </div>
-                                        )}
-                                        {ind.indicatorDescription && (
-                                          <div className="text-[11px] text-slate-500 mt-0.5 line-clamp-2">
-                                            {ind.indicatorDescription}
-                                          </div>
-                                        )}
-                                        {ind.evidenceList && ind.evidenceList.length > 0 && (
-                                          <div className="mt-1.5 flex items-center">
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                setEvidenceViewerState({
-                                                  isOpen: true,
-                                                  indicatorName: ind.indicatorName,
-                                                  categoryName: cat.categoryName,
-                                                  items: ind.evidenceList || [],
-                                                })
-                                              }
-                                              className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded border border-emerald-200 transition active:scale-95 cursor-pointer shadow-2xs"
-                                              title={`Klik untuk melihat dokumen bukti (${ind.evidenceList.length} berkas)`}
-                                            >
-                                              <Eye className="w-3 h-3 text-emerald-600 shrink-0" />
-                                              <span>{ind.evidenceList.length} Bukti Terlampir</span>
-                                            </button>
-                                          </div>
-                                        )}
-                                      </div>
-                                    </div>
-                                  </td>
-
-                                  {/* 2. Kriteria Penilaian */}
-                                  <td className="py-2.5 px-3 border-r border-[#dbe2ea] align-middle">
-                                    <div className="space-y-1">
-                                      {ind.scoringRules && ind.scoringRules.length > 0 ? (
-                                        <>
-                                          {ind.scoringRules.slice(0, 3).map((r, rIdx) => (
-                                            <div
-                                              key={rIdx}
-                                              className="h-6 flex items-center px-2 rounded text-[11px] border border-slate-200 bg-slate-50 font-mono text-slate-700 font-medium truncate"
-                                              title={cleanRuleNumeric(r, ind.unit)}
-                                            >
-                                              {cleanRuleNumeric(r, ind.unit)}
-                                            </div>
-                                          ))}
-                                          {ind.scoringRules.length > 3 && (
-                                            <button
-                                              type="button"
-                                              onClick={() => setCriteriaModalItem(ind)}
-                                              className="text-[10px] text-slate-600 hover:text-blue-600 hover:underline font-medium block pt-0.5"
-                                            >
-                                              +{ind.scoringRules.length - 3} lainnya...
-                                            </button>
-                                          )}
-                                        </>
-                                      ) : (
-                                        <span className="text-slate-300 font-mono text-xs">-</span>
-                                      )}
-                                    </div>
-                                  </td>
-
-                                  {/* 3. Skor */}
-                                  <td className="py-2.5 px-2 border-r border-[#dbe2ea] align-middle text-center">
-                                    <div className="space-y-1">
-                                      {ind.scoringRules && ind.scoringRules.length > 0 ? (
-                                        <>
-                                          {ind.scoringRules.slice(0, 3).map((r, rIdx) => (
-                                            <div
-                                              key={rIdx}
-                                              className="h-6 flex items-center justify-center rounded text-[11px] font-bold text-slate-700 bg-slate-100 border border-slate-200 font-mono"
-                                            >
-                                              {r.score}
-                                            </div>
-                                          ))}
-                                          {ind.scoringRules.length > 3 && (
-                                            <div className="h-[15px] pt-0.5" aria-hidden="true" />
-                                          )}
-                                        </>
-                                      ) : (
-                                        <span className="text-slate-300 font-mono text-xs">-</span>
-                                      )}
-                                    </div>
-                                  </td>
-
-                                  {/* 4. Realisasi */}
-                                  <td className="py-2.5 px-3 border-r border-[#dbe2ea] text-center align-middle font-sans">
-                                    {!hasActual || effectiveScore === null ? (
-                                      <span className="text-slate-400 text-sm font-normal select-none cursor-default">-</span>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        aria-expanded={isPopoverOpen}
-                                        aria-haspopup="dialog"
-                                        aria-label={`Rincian perhitungan realisasi ${ind.indicatorName}, skor ${displayScore}`}
-                                        onClick={(e) => handleTriggerClick(e, "realization", ind, cat.categoryName, cat.categoryWeight)}
-                                        onMouseEnter={(e) => handleTriggerMouseEnter("realization", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
-                                        onMouseLeave={handleTriggerMouseLeave}
-                                        className="group inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 active:scale-95"
-                                      >
-                                        <span className="tabular-nums font-semibold">
-                                          {displayScore}
-                                        </span>
-                                        <Info
-                                          className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
-                                          aria-hidden="true"
-                                        />
-                                      </button>
-                                    )}
-                                  </td>
-
-                                  {/* 5. Bobot: Menampilkan Bobot Internal untuk Sub-Parameter Target Kerja */}
-                                  <td className="py-2.5 px-2 border-r border-[#dbe2ea] text-center align-middle font-sans">
-                                    <button
-                                      type="button"
-                                      aria-expanded={isWeightPopoverOpen}
-                                      aria-haspopup="dialog"
-                                      aria-label={`Rincian bobot internal ${ind.indicatorName}, nilai ${weightPctDisplay}`}
-                                      onClick={(e) => handleTriggerClick(e, "weight", ind, cat.categoryName, cat.categoryWeight)}
-                                      onMouseEnter={(e) => handleTriggerMouseEnter("weight", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
-                                      onMouseLeave={handleTriggerMouseLeave}
-                                      className="group inline-flex items-center justify-center gap-1 px-2 py-1 rounded-md text-xs font-semibold text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 active:scale-95"
-                                    >
-                                      <span className="tabular-nums font-medium">
-                                        {weightPctDisplay}
-                                      </span>
-                                      <Info
-                                        className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
-                                        aria-hidden="true"
-                                      />
-                                    </button>
-                                  </td>
-
-                                  {/* 6. Skor Akhir */}
-                                  <td className="py-2.5 px-2 border-r border-[#dbe2ea] text-center align-middle font-sans">
-                                    {!finalScoreStr || finalScoreStr === "-" ? (
-                                      <span className="text-slate-400 text-xs font-normal select-none cursor-default">-</span>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        aria-expanded={isFinalPopoverOpen}
-                                        aria-haspopup="dialog"
-                                        aria-label={`Rincian perhitungan skor akhir ${ind.indicatorName}, hasil ${finalScoreStr}`}
-                                        onClick={(e) => handleTriggerClick(e, "final_score", ind, cat.categoryName, cat.categoryWeight)}
-                                        onMouseEnter={(e) => handleTriggerMouseEnter("final_score", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
-                                        onMouseLeave={handleTriggerMouseLeave}
-                                        className="group inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 active:scale-95"
-                                      >
-                                        <span className="tabular-nums font-bold">
-                                          {finalScoreStr}
-                                        </span>
-                                        <Info
-                                          className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
-                                          aria-hidden="true"
-                                        />
-                                      </button>
-                                    )}
-                                  </td>
-
-                                  {/* 7. Aksi: Button input murni tanpa bungkus card */}
-                                  <td className="py-2.5 px-2 text-center align-middle">
-                                    <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                                      {ind.isEditable === false ? (
-                                        <div
-                                          className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium border cursor-not-allowed select-none ${
-                                            isIndSubmitted
-                                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                              : "bg-slate-100 text-slate-400 border-slate-200"
-                                          }`}
-                                          title={
-                                            isIndSubmitted
-                                              ? "Terkunci: Penilaian untuk indikator ini telah dikirim (Submitted)"
-                                              : "Terkunci: Penilaian hanya dapat dilakukan oleh asesor yang ditugaskan"
-                                          }
-                                        >
-                                          <Lock className={`h-3 w-3 shrink-0 ${isIndSubmitted ? "text-emerald-600" : "text-slate-400"}`} />
-                                          <span>{isIndSubmitted ? "Terkirim" : "Terkunci"}</span>
-                                        </div>
-                                      ) : (
-                                        <button
-                                          type="button"
-                                          onClick={() => handleOpenAssessmentModal(ind, cat.categoryName)}
-                                          className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition active:scale-95 cursor-pointer shadow-2xs whitespace-nowrap ${
-                                            isIndUnfilled && validationAttempted
-                                              ? "bg-amber-600 hover:bg-amber-700 text-white font-bold ring-2 ring-amber-300"
-                                              : "text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200"
-                                          }`}
-                                          title={`Input rincian penilaian untuk ${ind.indicatorName}`}
-                                        >
-                                          <Pencil className={`h-3 w-3 shrink-0 ${isIndUnfilled && validationAttempted ? "text-white" : "text-slate-600"}`} />
-                                          <span>{isIndUnfilled && validationAttempted ? "Isi Nilai" : hasActual ? "Edit" : "Input"}</span>
-                                        </button>
-                                      )}
-
-                                      {/* Button View Evidence */}
-                                      {ind.evidenceList && ind.evidenceList.length > 0 && (
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setEvidenceViewerState({
-                                              isOpen: true,
-                                              indicatorName: ind.indicatorName,
-                                              categoryName: cat.categoryName,
-                                              items: ind.evidenceList || [],
-                                            })
-                                          }
-                                          className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition active:scale-95 cursor-pointer shadow-2xs whitespace-nowrap"
-                                          title={`Lihat berkas bukti untuk ${ind.indicatorName} (${ind.evidenceList.length} berkas)`}
-                                        >
-                                          <Eye className="h-3 w-3 text-emerald-600 shrink-0" />
-                                          <span>Bukti</span>
-                                          {ind.evidenceList.length > 1 && (
-                                            <span className="rounded-full bg-emerald-200/80 px-1 py-0.2 text-[9px] font-bold text-emerald-800">
-                                              {ind.evidenceList.length}
-                                            </span>
-                                          )}
-                                        </button>
-                                      )}
-                                    </div>
-                                  </td>
-                                </tr>
-                              );
-                            })
-                          )
+                        cat.indicators.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="py-6 text-center text-slate-400 italic bg-white text-xs border-b border-slate-200">
+                              Belum ada indikator pada parameter ini.
+                            </td>
+                          </tr>
                         ) : (
-                          /* 2. PARAMETER GENERAL: Kehadiran & Disiplin, Keselamatan Kerja, Kepatuhan & SP, Inovasi & Improvement */
-                          /* Ditampilkan sebagai single row indikator tanpa duplikasi (tanpa sub-kode 2.1, dsb.) dan langsung menggunakan Bobot Utama */
-                          (() => {
-                            const ind = cat.indicators[0];
-                            if (!ind) {
-                              return (
-                                <tr>
-                                  <td colSpan={7} className="py-4 text-center text-slate-400 italic bg-white text-xs border-b border-[#dbe2ea]">
-                                    Belum ada indikator pada parameter ini.
-                                  </td>
-                                </tr>
-                              );
-                            }
-
+                          cat.indicators.map((ind, indIdx) => {
                             const isIndUnfilled = unfilledPointIds.has(ind.appraisalItemId);
                             const curMonthDetail = ind.monthlyDetails?.find((m) => m.month === currentMonth);
                             const isIndSubmitted = curMonthDetail?.status === "SUBMITTED";
+
                             const effectiveScore =
                               ind.annualScore !== null && ind.annualScore !== undefined
                                 ? ind.annualScore
                                 : ind.score !== null && ind.score !== undefined
                                 ? ind.score
                                 : null;
+
+                            const effectiveActual =
+                              ind.annualActual !== null && ind.annualActual !== undefined
+                                ? ind.annualActual
+                                : ind.actualValue !== null && ind.actualValue !== undefined
+                                ? ind.actualValue
+                                : null;
+
                             const hasActual =
-                              (ind.annualActual !== null && ind.annualActual !== undefined) ||
-                              (ind.actualValue !== null && ind.actualValue !== undefined) ||
-                              (ind.annualScore !== null && ind.annualScore !== undefined);
-                            const displayScore = `${effectiveScore} pt`;
+                              effectiveActual !== null ||
+                              effectiveScore !== null ||
+                              Boolean(ind.annualBandLabel || ind.bandLabel);
+
+                            const displayScore = effectiveScore !== null ? `${effectiveScore} pt` : "-";
+
                             const isPopoverOpen =
                               popoverAnchor?.type === "realization" &&
                               popoverAnchor.indicator.appraisalItemId === ind.appraisalItemId;
-                            const finalScoreStr = ind.annualFinalScoreDisplay || ind.finalScoreDisplay;
+
+                            // Calculate finalScoreStr accurately
+                            let finalScoreStr = ind.annualFinalScoreDisplay || ind.finalScoreDisplay;
+                            if (!finalScoreStr || finalScoreStr === "-" || finalScoreStr === "0.0%") {
+                              if (effectiveScore !== null) {
+                                const maxS = ind.maxScore || 25;
+                                const iW = ind.indicatorWeight || 1;
+                                const cW = cat.categoryWeight || 1;
+                                const calcPct = (effectiveScore / maxS) * iW * cW * 100;
+                                finalScoreStr = `${calcPct.toFixed(1)}%`;
+                              } else {
+                                finalScoreStr = "-";
+                              }
+                            }
+
                             const isFinalPopoverOpen =
                               popoverAnchor?.type === "final_score" &&
+                              popoverAnchor.indicator.appraisalItemId === ind.appraisalItemId;
+
+                            const indCode = isTargetKerja ? `1.${indIdx + 1}` : `${cat.categoryNumber}.1`;
+                            const weightPctVal = Math.round((ind.indicatorWeight || 1) * 100);
+                            const isWeightPopoverOpen =
+                              popoverAnchor?.type === "weight" &&
                               popoverAnchor.indicator.appraisalItemId === ind.appraisalItemId;
 
                             return (
                               <tr
                                 id={`indicator-row-${ind.appraisalItemId}`}
                                 key={ind.appraisalItemId}
-                                className={`border-b border-[#dbe2ea] transition-colors scroll-mt-24 ${
+                                className={`border-b border-slate-200 transition-colors scroll-mt-24 ${
                                   isIndUnfilled && validationAttempted
-                                    ? "bg-amber-50/60 hover:bg-amber-50/90"
-                                    : "bg-white hover:bg-slate-50/70"
+                                    ? "bg-amber-50/50 hover:bg-amber-50/80"
+                                    : "bg-white hover:bg-slate-50/50"
                                 }`}
                               >
-                                {/* 1. Indikator Parameter General (Tanpa Sub-Kode Angka) */}
-                                <td className="py-2.5 px-3 pl-8 border-r border-[#dbe2ea] align-middle">
-                                  <div className="flex items-start gap-2.5">
+                                {/* 1. Indikator KPI & Target (Minimalist flat text) */}
+                                <td className="py-2 px-3.5 pl-6 border-r border-slate-200 align-middle">
+                                  <div className="flex items-start gap-2">
+                                    <span
+                                      className={`text-xs font-mono shrink-0 mt-0.5 w-6 ${
+                                        isIndUnfilled && validationAttempted
+                                          ? "text-amber-700 font-bold"
+                                          : "text-slate-400 font-medium"
+                                      }`}
+                                    >
+                                      {indCode}
+                                    </span>
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-center gap-2 flex-wrap">
-                                        <div className="font-semibold text-slate-800 text-xs">
+                                        <span className="font-medium text-slate-900 text-xs leading-snug">
                                           {ind.indicatorName}
-                                        </div>
+                                        </span>
                                         {isIndUnfilled && validationAttempted && (
-                                          <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-900 border border-amber-300">
+                                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700">
                                             <AlertTriangle className="h-3 w-3 text-amber-600 shrink-0" />
                                             <span>Belum Diisi</span>
                                           </span>
                                         )}
                                       </div>
                                       {ind.target !== null && ind.target !== undefined && (
-                                        <div className="text-[11px] text-slate-500 mt-0.5">
-                                          Target:{" "}
-                                          <span className="font-medium text-slate-700">
+                                        <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1 font-mono">
+                                          <span className="text-slate-400 font-sans">Target:</span>
+                                          <span className="font-semibold text-slate-700">
                                             {formatTargetNumber(ind.target, ind.unit)}
                                           </span>
                                         </div>
                                       )}
-                                      {ind.indicatorDescription && (
-                                        <div className="text-[11px] text-slate-500 mt-0.5 line-clamp-2">
-                                          {ind.indicatorDescription}
-                                        </div>
-                                      )}
                                       {ind.evidenceList && ind.evidenceList.length > 0 && (
-                                        <div className="mt-1.5 flex items-center">
+                                        <div className="mt-1 flex items-center">
                                           <button
                                             type="button"
                                             onClick={() =>
@@ -3892,7 +3728,7 @@ export function MonthlyAssessmentView({
                                                 items: ind.evidenceList || [],
                                               })
                                             }
-                                            className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded border border-emerald-200 transition active:scale-95 cursor-pointer shadow-2xs"
+                                            className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 hover:text-emerald-800 hover:underline transition cursor-pointer"
                                             title={`Klik untuk melihat dokumen bukti (${ind.evidenceList.length} berkas)`}
                                           >
                                             <Eye className="w-3 h-3 text-emerald-600 shrink-0" />
@@ -3904,63 +3740,77 @@ export function MonthlyAssessmentView({
                                   </div>
                                 </td>
 
-                                {/* 2. Kriteria Penilaian */}
-                                <td className="py-2.5 px-3 border-r border-[#dbe2ea] align-middle">
-                                  <div className="space-y-1">
-                                    {ind.scoringRules && ind.scoringRules.length > 0 ? (
-                                      <>
-                                        {ind.scoringRules.slice(0, 3).map((r, rIdx) => (
+                                {/* 2. Kriteria Penilaian Acuan (Flat sub-rows dengan border tipis) */}
+                                <td className="p-0 border-r border-slate-200 align-middle">
+                                  {ind.scoringRules && ind.scoringRules.length > 0 ? (
+                                    <div className="divide-y divide-slate-200/80">
+                                      {ind.scoringRules.slice(0, 3).map((r, rIdx) => {
+                                        const matchedLabel = ind.annualBandLabel || ind.bandLabel;
+                                        const isRuleMatched =
+                                          hasActual &&
+                                          (matchedLabel === (r.label || `${r.score}`) ||
+                                            effectiveScore === Number(r.score));
+                                        return (
                                           <div
                                             key={rIdx}
-                                            className="h-6 flex items-center px-2 rounded text-[11px] border border-slate-200 bg-slate-50 font-mono text-slate-700 font-medium truncate"
+                                            className={`h-7 flex items-center px-3 text-[11px] font-mono truncate transition-colors ${
+                                              isRuleMatched
+                                                ? "bg-sky-100/80 text-blue-900 font-semibold"
+                                                : "text-slate-600 font-normal"
+                                            }`}
                                             title={cleanRuleNumeric(r, ind.unit)}
                                           >
                                             {cleanRuleNumeric(r, ind.unit)}
                                           </div>
-                                        ))}
-                                        {ind.scoringRules.length > 3 && (
-                                          <button
-                                            type="button"
-                                            onClick={() => setCriteriaModalItem(ind)}
-                                            className="text-[10px] text-slate-600 hover:text-blue-600 hover:underline font-medium block pt-0.5"
-                                          >
-                                            +{ind.scoringRules.length - 3} lainnya...
-                                          </button>
-                                        )}
-                                      </>
-                                    ) : (
-                                      <span className="text-slate-300 font-mono text-xs">-</span>
-                                    )}
-                                  </div>
+                                        );
+                                      })}
+                                      {ind.scoringRules.length > 3 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setCriteriaModalItem(ind)}
+                                          className="w-full text-left px-3 py-1 text-[10px] text-blue-600 hover:text-blue-800 hover:underline font-medium block"
+                                        >
+                                          +{ind.scoringRules.length - 3} lainnya...
+                                        </button>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="px-3 py-2 text-slate-300 font-mono text-xs">-</div>
+                                  )}
                                 </td>
 
-                                {/* 3. Skor */}
-                                <td className="py-2.5 px-2 border-r border-[#dbe2ea] align-middle text-center">
-                                  <div className="space-y-1">
-                                    {ind.scoringRules && ind.scoringRules.length > 0 ? (
-                                      <>
-                                        {ind.scoringRules.slice(0, 3).map((r, rIdx) => (
+                                {/* 3. Skor Nilai Acuan (Flat sub-rows dengan border tipis) */}
+                                <td className="p-0 border-r border-slate-200 align-middle text-center">
+                                  {ind.scoringRules && ind.scoringRules.length > 0 ? (
+                                    <div className="divide-y divide-slate-200/80">
+                                      {ind.scoringRules.slice(0, 3).map((r, rIdx) => {
+                                        const isRuleMatched = hasActual && effectiveScore === Number(r.score);
+                                        return (
                                           <div
                                             key={rIdx}
-                                            className="h-6 flex items-center justify-center rounded text-[11px] font-bold text-slate-700 bg-slate-100 border border-slate-200 font-mono"
+                                            className={`h-7 flex items-center justify-center px-2 text-[11px] font-mono tabular-nums ${
+                                              isRuleMatched
+                                                ? "bg-sky-100/80 text-blue-900 font-bold"
+                                                : "text-slate-600 font-medium"
+                                            }`}
                                           >
                                             {r.score}
                                           </div>
-                                        ))}
-                                        {ind.scoringRules.length > 3 && (
-                                          <div className="h-[15px] pt-0.5" aria-hidden="true" />
-                                        )}
-                                      </>
-                                    ) : (
-                                      <span className="text-slate-300 font-mono text-xs">-</span>
-                                    )}
-                                  </div>
+                                        );
+                                      })}
+                                      {ind.scoringRules.length > 3 && (
+                                        <div className="h-[23px]" aria-hidden="true" />
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="px-2 py-2 text-slate-300 font-mono text-xs">-</div>
+                                  )}
                                 </td>
 
-                                {/* 4. Realisasi */}
-                                <td className="py-2.5 px-3 border-r border-[#dbe2ea] text-center align-middle font-sans">
+                                {/* 4. Realisasi Aktual (Flat text + ikon info kecil) */}
+                                <td className="py-2 px-2.5 border-r border-slate-200 text-center align-middle font-sans">
                                   {!hasActual || effectiveScore === null ? (
-                                    <span className="text-slate-400 text-sm font-normal select-none cursor-default">-</span>
+                                    <span className="text-slate-300 text-xs font-normal select-none cursor-default">-</span>
                                   ) : (
                                     <button
                                       type="button"
@@ -3970,30 +3820,51 @@ export function MonthlyAssessmentView({
                                       onClick={(e) => handleTriggerClick(e, "realization", ind, cat.categoryName, cat.categoryWeight)}
                                       onMouseEnter={(e) => handleTriggerMouseEnter("realization", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
                                       onMouseLeave={handleTriggerMouseLeave}
-                                      className="group inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 active:scale-95"
+                                      className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 whitespace-nowrap"
                                     >
-                                      <span className="tabular-nums font-semibold">
+                                      <span className="text-xs font-semibold text-slate-800 font-mono tabular-nums">
                                         {displayScore}
                                       </span>
                                       <Info
-                                        className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
+                                        className="w-[11px] h-[11px] stroke-[1.75] text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
                                         aria-hidden="true"
                                       />
                                     </button>
                                   )}
                                 </td>
 
-                                {/* 5. Bobot: HANYA Bobot Utama (Tanpa Bobot Internal) */}
-                                <td className="py-2.5 px-2 border-r border-[#dbe2ea] text-center align-middle font-sans">
-                                  <span className="tabular-nums font-semibold text-xs text-slate-700 font-mono">
-                                    {Math.round((cat.categoryWeight || 0) * 100)}%
-                                  </span>
+                                {/* 5. Bobot */}
+                                <td className="py-2 px-2 border-r border-slate-200 text-center align-middle font-sans">
+                                  {isTargetKerja ? (
+                                    <button
+                                      type="button"
+                                      aria-expanded={isWeightPopoverOpen}
+                                      aria-haspopup="dialog"
+                                      aria-label={`Rincian bobot internal ${ind.indicatorName}, nilai ${weightPctVal}%`}
+                                      onClick={(e) => handleTriggerClick(e, "weight", ind, cat.categoryName, cat.categoryWeight)}
+                                      onMouseEnter={(e) => handleTriggerMouseEnter("weight", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
+                                      onMouseLeave={handleTriggerMouseLeave}
+                                      className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 whitespace-nowrap"
+                                    >
+                                      <span className="tabular-nums font-medium font-mono">
+                                        {weightPctVal}%
+                                      </span>
+                                      <Info
+                                        className="w-[11px] h-[11px] stroke-[1.75] text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
+                                        aria-hidden="true"
+                                      />
+                                    </button>
+                                  ) : (
+                                    <span className="tabular-nums font-medium text-xs text-slate-700 font-mono">
+                                      {Math.round((cat.categoryWeight || 0) * 100)}%
+                                    </span>
+                                  )}
                                 </td>
 
                                 {/* 6. Skor Akhir */}
-                                <td className="py-2.5 px-2 border-r border-[#dbe2ea] text-center align-middle font-sans">
+                                <td className="py-2 px-2 border-r border-slate-200 text-center align-middle font-sans">
                                   {!finalScoreStr || finalScoreStr === "-" ? (
-                                    <span className="tabular-nums font-bold text-xs text-slate-800 font-mono">
+                                    <span className="tabular-nums font-semibold text-xs text-slate-800 font-mono">
                                       {(cat.annualScorePercentage ?? cat.scorePercentage ?? 0).toFixed(1)}%
                                     </span>
                                   ) : (
@@ -4005,28 +3876,26 @@ export function MonthlyAssessmentView({
                                       onClick={(e) => handleTriggerClick(e, "final_score", ind, cat.categoryName, cat.categoryWeight)}
                                       onMouseEnter={(e) => handleTriggerMouseEnter("final_score", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
                                       onMouseLeave={handleTriggerMouseLeave}
-                                      className="group inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 active:scale-95"
+                                      className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs font-semibold text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 whitespace-nowrap"
                                     >
-                                      <span className="tabular-nums font-bold">
+                                      <span className="tabular-nums font-semibold text-blue-600 text-xs font-mono">
                                         {finalScoreStr}
                                       </span>
                                       <Info
-                                        className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
+                                        className="w-[11px] h-[11px] stroke-[1.75] text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
                                         aria-hidden="true"
                                       />
                                     </button>
                                   )}
                                 </td>
 
-                                {/* 7. Aksi: Button input murni tanpa bungkus card */}
-                                <td className="py-2.5 px-2 text-center align-middle">
-                                  <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                                {/* 7. Aksi */}
+                                <td className="py-2 px-2.5 text-center align-middle">
+                                  <div className="flex items-center justify-center gap-1.5">
                                     {ind.isEditable === false ? (
-                                      <div
-                                        className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium border cursor-not-allowed select-none ${
-                                          isIndSubmitted
-                                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                            : "bg-slate-100 text-slate-400 border-slate-200"
+                                      <span
+                                        className={`inline-flex items-center gap-1 text-[11px] font-medium select-none ${
+                                          isIndSubmitted ? "text-emerald-700" : "text-slate-400"
                                         }`}
                                         title={
                                           isIndSubmitted
@@ -4036,24 +3905,23 @@ export function MonthlyAssessmentView({
                                       >
                                         <Lock className={`h-3 w-3 shrink-0 ${isIndSubmitted ? "text-emerald-600" : "text-slate-400"}`} />
                                         <span>{isIndSubmitted ? "Terkirim" : "Terkunci"}</span>
-                                      </div>
+                                      </span>
                                     ) : (
                                       <button
                                         type="button"
                                         onClick={() => handleOpenAssessmentModal(ind, cat.categoryName)}
-                                        className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition active:scale-95 cursor-pointer shadow-2xs whitespace-nowrap ${
+                                        className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition cursor-pointer whitespace-nowrap border ${
                                           isIndUnfilled && validationAttempted
-                                            ? "bg-amber-600 hover:bg-amber-700 text-white font-bold ring-2 ring-amber-300"
-                                            : "text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200"
+                                            ? "bg-amber-600 hover:bg-amber-700 text-white border-amber-600"
+                                            : "text-slate-700 hover:text-blue-700 bg-white hover:bg-slate-50 border-slate-200"
                                         }`}
                                         title={`Input rincian penilaian untuk ${ind.indicatorName}`}
                                       >
-                                        <Pencil className={`h-3 w-3 shrink-0 ${isIndUnfilled && validationAttempted ? "text-white" : "text-slate-600"}`} />
-                                        <span>{isIndUnfilled && validationAttempted ? "Isi Nilai" : hasActual ? "Edit" : "Input"}</span>
+                                        <Pencil className="h-2.5 w-2.5 shrink-0 text-slate-400" />
+                                        <span>{hasActual ? "Edit Nilai" : "Input Nilai"}</span>
                                       </button>
                                     )}
 
-                                    {/* Button View Evidence */}
                                     {ind.evidenceList && ind.evidenceList.length > 0 && (
                                       <button
                                         type="button"
@@ -4065,28 +3933,47 @@ export function MonthlyAssessmentView({
                                             items: ind.evidenceList || [],
                                           })
                                         }
-                                        className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition active:scale-95 cursor-pointer shadow-2xs whitespace-nowrap"
+                                        className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-50 border border-slate-200 transition cursor-pointer whitespace-nowrap"
                                         title={`Lihat berkas bukti untuk ${ind.indicatorName} (${ind.evidenceList.length} berkas)`}
                                       >
                                         <Eye className="h-3 w-3 text-emerald-600 shrink-0" />
-                                        <span>Bukti</span>
-                                        {ind.evidenceList.length > 1 && (
-                                          <span className="rounded-full bg-emerald-200/80 px-1 py-0.2 text-[9px] font-bold text-emerald-800">
-                                            {ind.evidenceList.length}
-                                          </span>
-                                        )}
+                                        <span>{ind.evidenceList.length}</span>
                                       </button>
                                     )}
                                   </div>
                                 </td>
                               </tr>
                             );
-                          })()
+                          })
                         )
                       )}
                     </React.Fragment>
                   );
                 })
+              )}
+
+              {/* Baris Total Bobot & Total Skor Akhir KPI (Orange Muda) */}
+              {liveCategories.length > 0 && (
+                <tr className="border-t border-orange-200/90 bg-orange-100 font-bold text-orange-950 select-none">
+                  <td
+                    colSpan={4}
+                    className="py-2.5 px-3.5 text-left align-middle border-r border-orange-200/80 text-xs font-bold uppercase tracking-tight text-orange-950"
+                  >
+                    Total Skor Akhir KPI
+                  </td>
+                  <td className="py-2.5 px-2 text-center align-middle border-r border-orange-200/80 font-mono text-xs font-bold text-orange-950">
+                    {Math.round(
+                      liveCategories.reduce((sum, c) => sum + (c.categoryWeight || 0), 0) * 100
+                    ) || (initialDetail?.templateId ? 115 : 100)}
+                    %
+                  </td>
+                  <td className="py-2.5 px-2 text-center align-middle border-r border-orange-200/80 font-mono text-xs font-bold text-orange-700">
+                    {liveAnnualOverall.overallScoreDisplay}
+                  </td>
+                  <td className="py-2.5 px-2.5 text-center align-middle text-xs font-semibold text-orange-700">
+                    Grade {liveAnnualOverall.grade}
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
@@ -4291,14 +4178,23 @@ export function MonthlyAssessmentView({
         id="alur-persetujuan"
         className="mt-8 pt-6 border-t border-slate-200/80 scroll-mt-6"
       >
-        {/* Minimalist Staging Approval Tracker (No Card, Clean Horizontal Line) */}
+        {/* Minimalist Staging Approval Tracker (Dynamic Workflow RBAC) */}
         <div>
           <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="flex h-2 w-2 rounded-full bg-indigo-600" />
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
                 Alur Persetujuan (Staging Tracker)
               </h3>
+              {workflowResolved && (
+                <span className="rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                  {workflowResolved.mode === "DIRECT_TO_REPORT"
+                    ? "Mode: Langsung ke Report"
+                    : workflowResolved.mode === "SINGLE_HR_VALIDATION"
+                    ? "Mode: Validasi HR (By NIK)"
+                    : `Mode: Berjenjang (${Math.max(1, workflowResolved.steps.length - 2)} Tingkat)`}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2 text-xs">
               <span className="text-slate-400">Tahap saat ini:</span>
@@ -4314,7 +4210,9 @@ export function MonthlyAssessmentView({
                 {currentAppraisalStatus === "FINAL"
                   ? "Selesai (Final)"
                   : isRevised
-                  ? `Perlu Revisi (${currentStage})`
+                  ? `Perlu Revisi (${workflowResolved?.activeStageLabel || currentStage})`
+                  : workflowResolved?.activeStageLabel
+                  ? `Tahap ${workflowResolved.activeStageLabel}`
                   : currentStage === "PENILAI"
                   ? "Tahap Penilai"
                   : currentStage === "HEAD_DEPT"
@@ -4328,68 +4226,79 @@ export function MonthlyAssessmentView({
             </div>
           </div>
 
-          {/* Stepper Steps (Clean row, no card) */}
-          <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5 py-3 border-y border-slate-200/70">
-            {[
-              {
-                key: "PENILAI",
-                num: 1,
-                label: "Penilai",
-                desc: "Input & Draft",
-                isDone: currentAppraisalStatus !== "DRAFT" && currentAppraisalStatus !== "REVISED_PENILAI",
-                isActive: currentStage === "PENILAI",
-                name: approvalLine?.appraiser?.name || "Atasan Langsung",
-              },
-              {
-                key: "HEAD_DEPT",
-                num: 2,
-                label: "Head Dept",
-                desc: "Review Dept",
-                isDone:
-                  currentAppraisalStatus === "PENDING_MANAGER" ||
-                  currentAppraisalStatus === "PENDING_HR" ||
-                  currentAppraisalStatus === "REVIEWED" ||
-                  currentAppraisalStatus === "FINAL" ||
-                  currentAppraisalStatus === "REVISED_MGR",
-                isActive: currentStage === "HEAD_DEPT",
-                name: approvalLine?.headDept?.name || "Head Dept",
-              },
-              {
-                key: "MANAGER",
-                num: 3,
-                label: "Manager",
-                desc: "Validasi Divisi",
-                isDone:
-                  currentAppraisalStatus === "PENDING_HR" ||
-                  currentAppraisalStatus === "REVIEWED" ||
-                  currentAppraisalStatus === "FINAL",
-                isActive: currentStage === "MANAGER",
-                name: approvalLine?.manager?.name || "Manager",
-              },
-              {
-                key: "HR",
-                num: 4,
-                label: "HR Approval",
-                desc: "Persetujuan Akhir",
-                isDone: currentAppraisalStatus === "FINAL",
-                isActive: currentStage === "HR",
-                name: "Divisi HR",
-              },
-              {
-                key: "FINAL",
-                num: 5,
-                label: "Final",
-                desc: "Selesai & Sah",
-                isDone: currentAppraisalStatus === "FINAL",
-                isActive: currentAppraisalStatus === "FINAL",
-                name: "KPI Resmi",
-              },
-            ].map((st, idx, arr) => {
+          {/* Stepper Steps (Clean row, dynamically adapts to 2, 3, 4, 5, or N steps) */}
+          <div className="flex flex-wrap items-center justify-between gap-3 py-3 border-y border-slate-200/70">
+            {(workflowResolved?.steps && workflowResolved.steps.length > 0
+              ? workflowResolved.steps.filter((s) => !s.isSkipped).map((s, idx) => ({
+                  key: `${s.stageKey}-${idx}`,
+                  num: idx + 1,
+                  label: s.label,
+                  desc: s.description,
+                  isDone: s.isDone,
+                  isActive: s.isActive,
+                  name: s.displayOfficialName,
+                }))
+              : [
+                  {
+                    key: "PENILAI",
+                    num: 1,
+                    label: "Penilai",
+                    desc: "Input & Draft",
+                    isDone: currentAppraisalStatus !== "DRAFT" && currentAppraisalStatus !== "REVISED_PENILAI",
+                    isActive: currentStage === "PENILAI",
+                    name: approvalLine?.appraiser?.name || "Atasan Langsung",
+                  },
+                  {
+                    key: "HEAD_DEPT",
+                    num: 2,
+                    label: "Head Dept",
+                    desc: "Review Dept",
+                    isDone:
+                      currentAppraisalStatus === "PENDING_MANAGER" ||
+                      currentAppraisalStatus === "PENDING_HR" ||
+                      currentAppraisalStatus === "REVIEWED" ||
+                      currentAppraisalStatus === "FINAL" ||
+                      currentAppraisalStatus === "REVISED_MGR",
+                    isActive: currentStage === "HEAD_DEPT",
+                    name: approvalLine?.headDept?.name || "Head Dept",
+                  },
+                  {
+                    key: "MANAGER",
+                    num: 3,
+                    label: "Manager",
+                    desc: "Validasi Divisi",
+                    isDone:
+                      currentAppraisalStatus === "PENDING_HR" ||
+                      currentAppraisalStatus === "REVIEWED" ||
+                      currentAppraisalStatus === "FINAL",
+                    isActive: currentStage === "MANAGER",
+                    name: approvalLine?.manager?.name || "Manager",
+                  },
+                  {
+                    key: "HR",
+                    num: 4,
+                    label: "HR Approval",
+                    desc: "Persetujuan Akhir",
+                    isDone: currentAppraisalStatus === "FINAL",
+                    isActive: currentStage === "HR",
+                    name: "Divisi HR",
+                  },
+                  {
+                    key: "FINAL",
+                    num: 5,
+                    label: "Final",
+                    desc: "Selesai & Sah",
+                    isDone: currentAppraisalStatus === "FINAL",
+                    isActive: currentAppraisalStatus === "FINAL",
+                    name: "KPI Resmi",
+                  },
+                ]
+            ).map((st, idx, arr) => {
               const isCurrent = st.isActive;
               const isDone = st.isDone;
 
               return (
-                <div key={st.key} className="flex items-center gap-2">
+                <div key={st.key} className="flex items-center gap-2 min-w-[140px] flex-1">
                   <div className="flex items-center gap-2 min-w-0 flex-1">
                     <span
                       className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold transition ${
@@ -4404,7 +4313,7 @@ export function MonthlyAssessmentView({
                     >
                       {isDone ? (
                         <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                         </svg>
                       ) : (
                         st.num
@@ -4468,6 +4377,14 @@ export function MonthlyAssessmentView({
         let sumScore = 0;
         const validActuals: number[] = [];
 
+        const effectiveDirection = resolveKpiDirection(
+          ind.scoringRules,
+          ind.direction,
+          ind.indicatorName,
+          ind.measurementType,
+          ind.unit
+        );
+
         const monthRows = Array.from({ length: 12 }, (_, i) => {
           const m = i + 1;
           const temp = assessmentModal.tempValues[m];
@@ -4497,9 +4414,10 @@ export function MonthlyAssessmentView({
             maxScore: ind.maxScore,
             compareBasis: ind.compareBasis,
             target: effectiveTarget,
-            direction: ind.direction,
+            direction: effectiveDirection,
             measurementType: ind.measurementType,
             unit: ind.unit,
+            indicatorName: ind.indicatorName,
           });
 
           const score = actualNum !== null ? mScoreRes.score : null;
@@ -4570,15 +4488,16 @@ export function MonthlyAssessmentView({
           maxScore: ind.maxScore,
           compareBasis: ind.compareBasis,
           target: parsedMasterTarget,
-          direction: ind.direction,
+          direction: effectiveDirection,
           measurementType: ind.measurementType,
           unit: ind.unit,
+          indicatorName: ind.indicatorName,
         });
 
         const directionLabel =
-          ind.direction === "LOWER_IS_BETTER"
+          effectiveDirection === "LOWER_IS_BETTER"
             ? "Lower is Better ↓"
-            : ind.direction === "NOT_APPLICABLE"
+            : effectiveDirection === "NOT_APPLICABLE"
             ? "Not Applicable"
             : "Higher is Better ↑";
 
@@ -4590,20 +4509,20 @@ export function MonthlyAssessmentView({
         const concreteFormulaText = (() => {
           if (actualPeriode === null) return null;
           const tgt = parsedMasterTarget ?? 0;
-          if (ind.direction === "NOT_APPLICABLE" || ind.measurementType === "BOOLEAN") {
+          if (effectiveDirection === "NOT_APPLICABLE" || ind.measurementType === "BOOLEAN") {
             return `Evaluasi langsung: Actual "${actualPeriodeDisplay}" dievaluasi terhadap kriteria Band.`;
           }
-          if (ind.direction === "LOWER_IS_BETTER") {
+          if (effectiveDirection === "LOWER_IS_BETTER") {
             return `(${tgt} / ${actualPeriodeDisplay}) × 100% = ${periodScoreRes.realizationPctDisplay}`;
           }
           return `(${actualPeriodeDisplay} / ${tgt}) × 100% = ${periodScoreRes.realizationPctDisplay}`;
         })();
 
-        // Subjudul employee · nik · template
+        // Subjudul ringkas: Nama Karyawan · NIK · Template singkat
         const modalSubtitle = [
           initialDetail?.employee.name,
           initialDetail?.employee.nik ? `NIK ${initialDetail?.employee.nik}` : null,
-          activeTemplateName ? `Template ${activeTemplateName}` : null,
+          simpleTemplateLabel ? `Template ${simpleTemplateLabel}` : null,
         ]
           .filter(Boolean)
           .join(" · ");
@@ -4975,7 +4894,7 @@ export function MonthlyAssessmentView({
                                     )}
                                   </td>
                                   <td className="px-3.5 py-1.5 text-center relative tabular-nums">
-                                    <div className="inline-flex items-center justify-center gap-1.5">
+                                    <div className="inline-flex items-center justify-center gap-1">
                                       <span className="font-semibold text-blue-700">
                                         {r.score !== null ? r.score : <span className="text-slate-300 font-normal">-</span>}
                                       </span>
@@ -4987,7 +4906,7 @@ export function MonthlyAssessmentView({
                                           title="Lihat Band & detail perhitungan"
                                           aria-label={`Detail skor bulan ${r.monthName}`}
                                         >
-                                          <Info className="w-3.5 h-3.5" />
+                                          <Info className="w-[11px] h-[11px] stroke-[1.75]" />
                                         </button>
                                       )}
                                     </div>
@@ -5304,17 +5223,21 @@ export function MonthlyAssessmentView({
 
         // Actual calculation
         const pActualDisplay = (() => {
-          if (pInd.annualActual === null || pInd.annualActual === undefined) return "-";
+          const rawAct =
+            pInd.annualActual !== null && pInd.annualActual !== undefined
+              ? pInd.annualActual
+              : pInd.actualValue;
+          if (rawAct === null || rawAct === undefined) return "-";
           if (pInd.unit === "%") {
-            return `${pInd.annualActual.toLocaleString("id-ID", { maximumFractionDigits: 2 })}%`;
+            return `${rawAct.toLocaleString("id-ID", { maximumFractionDigits: 2 })}%`;
           }
           if (pInd.unit) {
-            return `${pInd.annualActual.toLocaleString("id-ID", { maximumFractionDigits: 2 })} ${pInd.unit}`;
+            return `${rawAct.toLocaleString("id-ID", { maximumFractionDigits: 2 })} ${pInd.unit}`;
           }
           if (pAch !== null && pAch !== undefined) {
             return `${pAch.toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`;
           }
-          return pInd.annualActual.toLocaleString("id-ID", { maximumFractionDigits: 2 });
+          return rawAct.toLocaleString("id-ID", { maximumFractionDigits: 2 });
         })();
 
         // Weights
@@ -5812,56 +5735,56 @@ export function MonthlyAssessmentView({
               </div>
             </div>
 
-            {/* Employee Information & Summary */}
-            <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                <div>
-                  <span className="block text-[11px] font-semibold uppercase text-slate-400">Karyawan</span>
-                  <span className="mt-0.5 block text-sm font-bold text-slate-900">
+            {/* Employee Information & Summary (Minimalist Thin Border Grid) */}
+            <div className="mt-5 rounded-lg border border-slate-200 bg-white overflow-hidden">
+              <div className="grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-slate-200">
+                <div className="p-3.5">
+                  <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Karyawan</span>
+                  <span className="mt-0.5 block text-xs sm:text-sm font-semibold text-slate-900 truncate">
                     {initialDetail?.employee.name || currentEmp?.name}
                   </span>
-                  <span className="block text-xs text-slate-500">
+                  <span className="block text-[11px] text-slate-500 font-mono">
                     NIK: {initialDetail?.employee.nik || currentEmp?.nik}
                   </span>
                 </div>
 
-                <div>
-                  <span className="block text-[11px] font-semibold uppercase text-slate-400">Posisi & Dept</span>
-                  <span className="mt-0.5 block text-sm font-medium text-slate-800">
+                <div className="p-3.5">
+                  <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Posisi & Dept</span>
+                  <span className="mt-0.5 block text-xs sm:text-sm font-medium text-slate-800 truncate">
                     {initialDetail?.employee.jobPosition || currentEmp?.jobPosition}
                   </span>
-                  <span className="block text-xs text-slate-500">
+                  <span className="block text-[11px] text-slate-500 truncate">
                     {initialDetail?.employee.departmentName || currentEmp?.departmentName}
                   </span>
                 </div>
 
-                <div>
-                  <span className="block text-[11px] font-semibold uppercase text-slate-400">Master Template & Periode</span>
-                  <span className="mt-0.5 block text-sm font-semibold text-slate-800 truncate" title={activeTemplateName}>
-                    {activeTemplateName}
+                <div className="p-3.5">
+                  <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Master Template & Periode</span>
+                  <span className="mt-0.5 block text-xs sm:text-sm font-medium text-slate-800 truncate" title={activeTemplateName}>
+                    {simpleTemplateLabel ? `Template ${simpleTemplateLabel}` : activeTemplateName}
                   </span>
-                  <span className="block text-xs text-slate-500">
+                  <span className="block text-[11px] text-slate-500">
                     Tahun {currentYear} • {overallProgressParameters} Parameter Terisi
                   </span>
                 </div>
 
-                <div className="rounded-lg bg-emerald-50 p-2.5 ring-1 ring-emerald-500/20">
-                  <span className="block text-[11px] font-semibold uppercase text-emerald-700">Total Skor Akhir Tahunan</span>
+                <div className="p-3.5 bg-slate-50/50">
+                  <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Total Skor Akhir Tahunan</span>
                   <div className="mt-0.5 flex items-baseline gap-2">
-                    <span className="text-xl font-extrabold text-emerald-800">
+                    <span className="text-lg font-bold text-emerald-700 font-mono tabular-nums">
                       {liveAnnualOverall.overallScoreDisplay}
                     </span>
-                    <span className="rounded-md bg-emerald-600 px-1.5 py-0.5 text-[11px] font-bold text-white">
-                      Grade {liveAnnualOverall.grade}
+                    <span className="text-xs font-semibold text-emerald-700">
+                      (Grade {liveAnnualOverall.grade})
                     </span>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* TABEL 1: REKAPITULASI PENILAIAN PER PARAMETER & INDIKATOR (FULL UTUH) */}
+            {/* TABEL 1: REKAPITULASI PENILAIAN PER PARAMETER & INDIKATOR (MINIMALIST THIN BORDERS) */}
             <div className="mt-6">
-              <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
                     1. Rekapitulasi Capaian &amp; Skor Akhir KPI
@@ -5871,67 +5794,73 @@ export function MonthlyAssessmentView({
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  {activeTemplateName && (
-                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600">
-                      <span className="text-slate-400">Template:</span>
-                      <span className="font-semibold text-slate-800">{activeTemplateName}</span>
-                    </span>
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  {simpleTemplateLabel && (
+                    <>
+                      <span>
+                        Template: <strong className="font-semibold text-slate-700">{simpleTemplateLabel}</strong>
+                      </span>
+                      <span className="text-slate-300">•</span>
+                    </>
                   )}
-                  <span className="text-xs text-slate-400 font-medium">
+                  <span>
                     {liveCategories.reduce((acc, c) => acc + c.indicators.length, 0)} Indikator Aktif
                   </span>
                 </div>
               </div>
 
-              <div className="overflow-x-auto rounded-xl border border-[#dbe2ea] bg-white shadow-2xs">
+              <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
-                    <tr
-                      className="border-b border-blue-700 text-xs font-semibold text-white select-none bg-blue-600"
-                    >
-                      <th className="py-2.5 px-4 text-left border-r border-blue-500/60 min-w-[260px] text-white">
-                        Parameter
+                    <tr className="border-b border-slate-200 bg-slate-100/80 text-[11px] font-semibold text-slate-600 select-none">
+                      <th className="py-2.5 px-3.5 text-left border-r border-slate-200 min-w-[240px]">
+                        Parameter / Indikator KPI
                       </th>
-                      <th className="py-2.5 px-3 text-left border-r border-blue-500/60 min-w-[220px] text-white">
-                        Kriteria Penilaian / Skor
+                      <th className="py-2.5 px-3 text-left border-r border-slate-200 min-w-[160px]">
+                        Kriteria Penilaian
                       </th>
-                      <th className="py-2.5 px-3 text-center border-r border-blue-500/60 min-w-[150px] w-44 text-white">
+                      <th className="py-2.5 px-2 text-center border-r border-slate-200 w-16 min-w-[60px]">
+                        Skor
+                      </th>
+                      <th className="py-2.5 px-2.5 text-center border-r border-slate-200 w-24 min-w-[88px]">
                         Realisasi
                       </th>
-                      <th className="py-2.5 px-2 text-center border-r border-blue-500/60 w-20 text-white">
+                      <th className="py-2.5 px-2 text-center border-r border-slate-200 w-20 min-w-[72px]">
                         Bobot
                       </th>
-                      <th className="py-2.5 px-4 text-right w-28 text-white">
+                      <th className="py-2.5 px-3 text-right w-28 min-w-[90px]">
                         Skor Akhir
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody>
                     {liveCategories.map((cat) => (
                       <React.Fragment key={cat.categoryId}>
-                        {/* Parameter Header Row (Group Header) matching Input Penilaian KPI */}
-                        <tr className="bg-slate-100/90 border-t-2 border-slate-200 text-slate-900 font-bold select-none">
-                          <td className="px-4 py-2.5 border-r border-[#dbe2ea]">
+                        {/* Parameter Header Row (Bright Light Blue Separator) */}
+                        <tr className="bg-sky-100 border-b border-sky-200/90 text-slate-900 select-none">
+                          <td className="px-3.5 py-2 border-r border-sky-200/80">
                             <div className="flex items-center gap-2">
-                              <span className="flex h-5 w-5 items-center justify-center rounded bg-[#163a7d] text-[10px] font-bold text-white shrink-0">
-                                {cat.categoryNumber}
+                              <span className="font-mono text-xs font-bold text-blue-600 shrink-0">
+                                {cat.categoryNumber}.
                               </span>
-                              <span className="text-xs font-bold uppercase tracking-wider text-slate-900">
+                              <span className="text-xs font-bold uppercase tracking-tight text-blue-950">
                                 {cat.categoryName}
                               </span>
                             </div>
                           </td>
-                          <td className="px-3 py-2.5 text-slate-500 font-normal text-xs border-r border-[#dbe2ea]">
-                            {cat.indicators.length} Indikator
+                          <td className="px-3 py-2 text-slate-700 font-medium text-xs border-r border-sky-200/80">
+                            {cat.indicators.length} {cat.indicators.length > 1 ? "Indikator" : "Indikator Utama"}
                           </td>
-                          <td className="px-3 py-2.5 text-center text-slate-400 font-mono text-xs border-r border-[#dbe2ea]">
+                          <td className="px-2 py-2 text-center text-slate-400 font-mono text-xs border-r border-sky-200/80">
                             -
                           </td>
-                          <td className="px-2 py-2.5 text-center font-bold text-slate-800 font-mono text-xs border-r border-[#dbe2ea]">
+                          <td className="px-2.5 py-2 text-center text-slate-400 font-mono text-xs border-r border-sky-200/80">
+                            -
+                          </td>
+                          <td className="px-2 py-2 text-center font-semibold text-slate-900 font-mono text-xs border-r border-sky-200/80">
                             {Math.round(cat.categoryWeight * 100)}%
                           </td>
-                          <td className="px-4 py-2.5 text-right font-extrabold text-[#163a7d] font-mono text-xs">
+                          <td className="px-3 py-2 text-right font-bold text-blue-600 font-mono text-xs">
                             {(cat.annualScorePercentage ?? cat.scorePercentage ?? 0).toFixed(1)}%
                           </td>
                         </tr>
@@ -5939,26 +5868,35 @@ export function MonthlyAssessmentView({
                         {/* Indicator Rows */}
                         {cat.indicators.map((ind) => {
                           const isExpanded = expandedRecapId === ind.appraisalItemId;
+                          const effectiveScore =
+                            ind.annualScore !== null && ind.annualScore !== undefined
+                              ? ind.annualScore
+                              : ind.score !== null && ind.score !== undefined
+                              ? ind.score
+                              : null;
+                          const hasActual =
+                            (ind.annualActual !== null && ind.annualActual !== undefined) ||
+                            (ind.actualValue !== null && ind.actualValue !== undefined) ||
+                            effectiveScore !== null;
 
                           return (
                             <React.Fragment key={ind.appraisalItemId}>
                               <tr
-                                className={`hover:bg-slate-50/80 transition-colors border-b border-[#dbe2ea] ${
-                                  isExpanded ? "bg-indigo-50/30" : "bg-white"
+                                className={`hover:bg-slate-50/50 transition-colors border-b border-slate-200 ${
+                                  isExpanded ? "bg-slate-50/60" : "bg-white"
                                 }`}
                               >
-                                {/* 1. Parameter (dengan icon detail ⓘ di samping nama) */}
-                                <td className="py-2.5 px-3 pl-8 border-r border-[#dbe2ea] align-top">
+                                {/* 1. Parameter / Indikator KPI */}
+                                <td className="py-2 px-3.5 pl-6 border-r border-slate-200 align-middle">
                                   <div className="flex items-start gap-2">
-                                    <span className="font-mono text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 shrink-0 mt-0.5">
+                                    <span className="font-mono text-xs text-slate-400 font-medium shrink-0 mt-0.5 w-6">
                                       {ind.indicatorCode}
                                     </span>
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-center gap-1.5 flex-wrap">
-                                        <span className="font-semibold text-slate-900 text-xs leading-snug">
+                                        <span className="font-medium text-slate-900 text-xs leading-snug">
                                           {ind.indicatorName}
                                         </span>
-                                        {/* Icon detail/info kecil ⓘ di samping nama parameter */}
                                         <button
                                           type="button"
                                           onClick={() =>
@@ -5966,10 +5904,10 @@ export function MonthlyAssessmentView({
                                               prev === ind.appraisalItemId ? null : ind.appraisalItemId
                                             )
                                           }
-                                          className={`inline-flex items-center justify-center w-4.5 h-4.5 rounded-full transition cursor-pointer shrink-0 ${
+                                          className={`inline-flex items-center justify-center p-0.5 rounded transition cursor-pointer shrink-0 ${
                                             isExpanded
-                                              ? "bg-[#163a7d] text-white shadow-2xs"
-                                              : "text-slate-400 hover:text-[#163a7d] hover:bg-slate-100"
+                                              ? "text-blue-700"
+                                              : "text-slate-400 hover:text-blue-600"
                                           }`}
                                           title={
                                             isExpanded
@@ -5978,15 +5916,15 @@ export function MonthlyAssessmentView({
                                           }
                                           aria-label={`Detail transparansi perhitungan ${ind.indicatorName}`}
                                         >
-                                          <Info className="w-3.5 h-3.5" />
+                                          <Info className="w-[11px] h-[11px] stroke-[1.75]" />
                                         </button>
                                       </div>
 
                                       {/* Target & Ringkasan Parameter */}
-                                      <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-500 flex-wrap">
+                                      <div className="mt-0.5 flex items-center gap-2 text-[11px] text-slate-500 flex-wrap">
                                         <span>
                                           Target:{" "}
-                                          <strong className="font-mono font-bold text-slate-700">
+                                          <strong className="font-mono font-semibold text-slate-700">
                                             {formatTargetNumber(ind.target, ind.unit)}
                                           </strong>
                                         </span>
@@ -6006,9 +5944,8 @@ export function MonthlyAssessmentView({
                                         </div>
                                       )}
 
-                                      {/* Dokumen Bukti Badge jika ada */}
                                       {ind.evidenceList && ind.evidenceList.length > 0 && (
-                                        <div className="mt-1.5 flex items-center">
+                                        <div className="mt-1 flex items-center">
                                           <button
                                             type="button"
                                             onClick={() =>
@@ -6019,7 +5956,7 @@ export function MonthlyAssessmentView({
                                                 items: ind.evidenceList || [],
                                               })
                                             }
-                                            className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded border border-emerald-200 transition active:scale-95 cursor-pointer shadow-2xs"
+                                            className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 hover:text-emerald-800 hover:underline transition cursor-pointer"
                                             title={`Klik untuk melihat dokumen bukti (${ind.evidenceList.length} berkas)`}
                                           >
                                             <Eye className="w-3 h-3 text-emerald-600 shrink-0" />
@@ -6031,115 +5968,105 @@ export function MonthlyAssessmentView({
                                   </div>
                                 </td>
 
-                                {/* 2. Kriteria Penilaian – Skor */}
-                                <td className="py-2.5 px-3 border-r border-[#dbe2ea] align-top">
-                                  <div className="space-y-1">
-                                    {ind.scoringRules && ind.scoringRules.length > 0 ? (
-                                      <>
-                                        {ind.scoringRules.slice(0, 3).map((r, rIdx) => {
-                                          const isMatched =
-                                            ind.annualScore !== null &&
-                                            ind.annualScore !== undefined &&
-                                            Number(r.score) === Number(ind.annualScore);
+                                {/* 2. Kriteria Penilaian (Flat sub-rows dengan border tipis) */}
+                                <td className="p-0 border-r border-slate-200 align-middle">
+                                  {ind.scoringRules && ind.scoringRules.length > 0 ? (
+                                    <div className="divide-y divide-slate-200/80">
+                                      {ind.scoringRules.slice(0, 3).map((r, rIdx) => {
+                                        const matchedLabel = ind.annualBandLabel || ind.bandLabel;
+                                        const isMatched =
+                                          hasActual &&
+                                          (matchedLabel === (r.label || `${r.score}`) ||
+                                            effectiveScore === Number(r.score));
 
-                                          return (
-                                            <div
-                                              key={rIdx}
-                                              className={`flex items-center justify-between gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono border transition ${
-                                                isMatched
-                                                  ? "bg-indigo-50/90 border-indigo-300 text-indigo-950 font-semibold ring-1 ring-indigo-400/30"
-                                                  : "bg-slate-50 border-slate-200 text-slate-700"
-                                              }`}
-                                              title={cleanRuleNumeric(r, ind.unit)}
-                                            >
-                                              <span className="truncate max-w-[130px]">
-                                                {cleanRuleNumeric(r, ind.unit)}
-                                              </span>
-                                              <div className="flex items-center gap-1 shrink-0">
-                                                <span
-                                                  className={`px-1.5 py-0.2 rounded font-bold text-[10px] ${
-                                                    isMatched
-                                                      ? "bg-[#163a7d] text-white"
-                                                      : "bg-white text-indigo-700 border border-indigo-100"
-                                                  }`}
-                                                >
-                                                  {r.score} pt
-                                                </span>
-                                                {isMatched && (
-                                                  <span className="text-[9px] font-bold text-emerald-700 bg-emerald-100 px-1 py-0.2 rounded">
-                                                    ✓
-                                                  </span>
-                                                )}
-                                              </div>
-                                            </div>
-                                          );
-                                        })}
-                                        {ind.scoringRules.length > 3 && (
-                                          <button
-                                            type="button"
-                                            onClick={() => setCriteriaModalItem(ind)}
-                                            className="text-[10px] text-indigo-600 hover:underline font-medium block pt-0.5"
+                                        return (
+                                          <div
+                                            key={rIdx}
+                                            className={`h-7 flex items-center px-3 text-[11px] font-mono truncate ${
+                                              isMatched
+                                                ? "bg-sky-50/70 text-sky-900 font-semibold"
+                                                : "text-slate-600 font-normal"
+                                            }`}
+                                            title={cleanRuleNumeric(r, ind.unit)}
                                           >
-                                            +{ind.scoringRules.length - 3} lainnya...
-                                          </button>
-                                        )}
-                                      </>
-                                    ) : (
-                                      <span className="text-slate-300 font-mono text-xs">-</span>
-                                    )}
-                                  </div>
+                                            {cleanRuleNumeric(r, ind.unit)}
+                                          </div>
+                                        );
+                                      })}
+                                      {ind.scoringRules.length > 3 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setCriteriaModalItem(ind)}
+                                          className="w-full text-left px-3 py-1 text-[10px] text-blue-600 hover:underline font-medium block"
+                                        >
+                                          +{ind.scoringRules.length - 3} lainnya...
+                                        </button>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="px-3 py-2 text-slate-300 font-mono text-xs">-</div>
+                                  )}
                                 </td>
 
-                                {/* 3. Realisasi (Menampilkan Skor Utama + Ikon Info) */}
-                                <td className="py-2.5 px-3 border-r border-[#dbe2ea] text-center align-middle font-sans">
-                                  {(() => {
-                                    const effectiveScore =
-                                      ind.annualScore !== null && ind.annualScore !== undefined
-                                        ? ind.annualScore
-                                        : ind.score !== null && ind.score !== undefined
-                                        ? ind.score
-                                        : null;
-
-                                    const hasActual =
-                                      (ind.annualActual !== null && ind.annualActual !== undefined) ||
-                                      (ind.actualValue !== null && ind.actualValue !== undefined) ||
-                                      (ind.annualScore !== null && ind.annualScore !== undefined);
-
-                                    if (!hasActual || effectiveScore === null) {
-                                      return <span className="text-slate-400 text-sm font-normal select-none cursor-default">-</span>;
-                                    }
-
-                                    const displayScore = `${effectiveScore} pt`;
-
-                                    const isPopoverOpen =
-                                      popoverAnchor?.type === "realization" &&
-                                      popoverAnchor.indicator.appraisalItemId === ind.appraisalItemId;
-
-                                    return (
-                                      <button
-                                        type="button"
-                                        aria-expanded={isPopoverOpen}
-                                        aria-haspopup="dialog"
-                                        aria-label={`Rincian perhitungan realisasi ${ind.indicatorName}, skor ${displayScore}`}
-                                        onClick={(e) => handleTriggerClick(e, "realization", ind, cat.categoryName, cat.categoryWeight)}
-                                        onMouseEnter={(e) => handleTriggerMouseEnter("realization", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
-                                        onMouseLeave={handleTriggerMouseLeave}
-                                        className="group inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold text-slate-800 hover:bg-blue-50/80 hover:text-blue-950 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 active:scale-95"
-                                      >
-                                        <span className="tabular-nums font-semibold">
-                                          {displayScore}
-                                        </span>
-                                        <Info
-                                          className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
-                                          aria-hidden="true"
-                                        />
-                                      </button>
-                                    );
-                                  })()}
+                                {/* 3. Skor (Flat sub-rows dengan border tipis) */}
+                                <td className="p-0 border-r border-slate-200 align-middle text-center">
+                                  {ind.scoringRules && ind.scoringRules.length > 0 ? (
+                                    <div className="divide-y divide-slate-200/80">
+                                      {ind.scoringRules.slice(0, 3).map((r, rIdx) => {
+                                        const isMatched = hasActual && effectiveScore === Number(r.score);
+                                        return (
+                                          <div
+                                            key={rIdx}
+                                            className={`h-7 flex items-center justify-center px-2 text-[11px] font-mono tabular-nums ${
+                                              isMatched
+                                                ? "bg-sky-50/70 text-sky-900 font-bold"
+                                                : "text-slate-600 font-medium"
+                                            }`}
+                                          >
+                                            {r.score}
+                                          </div>
+                                        );
+                                      })}
+                                      {ind.scoringRules.length > 3 && (
+                                        <div className="h-[23px]" aria-hidden="true" />
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="px-2 py-2 text-slate-300 font-mono text-xs">-</div>
+                                  )}
                                 </td>
 
-                                {/* 4. Bobot (Nilai Bobot + Ikon Info) */}
-                                <td className="py-2.5 px-2 border-r border-[#dbe2ea] text-center align-middle font-sans">
+                                {/* 4. Realisasi (Menampilkan Skor Utama + Ikon Info) */}
+                                <td className="py-2 px-2.5 border-r border-slate-200 text-center align-middle font-sans">
+                                  {!hasActual || effectiveScore === null ? (
+                                    <span className="text-slate-300 text-xs font-normal select-none cursor-default">-</span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      aria-expanded={
+                                        popoverAnchor?.type === "realization" &&
+                                        popoverAnchor.indicator.appraisalItemId === ind.appraisalItemId
+                                      }
+                                      aria-haspopup="dialog"
+                                      aria-label={`Rincian perhitungan realisasi ${ind.indicatorName}, skor ${effectiveScore} pt`}
+                                      onClick={(e) => handleTriggerClick(e, "realization", ind, cat.categoryName, cat.categoryWeight)}
+                                      onMouseEnter={(e) => handleTriggerMouseEnter("realization", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
+                                      onMouseLeave={handleTriggerMouseLeave}
+                                      className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs font-semibold text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 whitespace-nowrap"
+                                    >
+                                      <span className="tabular-nums font-semibold font-mono">
+                                        {effectiveScore} pt
+                                      </span>
+                                      <Info
+                                        className="w-[11px] h-[11px] stroke-[1.75] text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
+                                        aria-hidden="true"
+                                      />
+                                    </button>
+                                  )}
+                                </td>
+
+                                {/* 5. Bobot (Nilai Bobot + Ikon Info) */}
+                                <td className="py-2 px-2 border-r border-slate-200 text-center align-middle font-sans">
                                   {(() => {
                                     const isSingleIndicator = cat.indicators.length === 1;
                                     const weightPctVal = isSingleIndicator
@@ -6159,13 +6086,13 @@ export function MonthlyAssessmentView({
                                         onClick={(e) => handleTriggerClick(e, "weight", ind, cat.categoryName, cat.categoryWeight)}
                                         onMouseEnter={(e) => handleTriggerMouseEnter("weight", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
                                         onMouseLeave={handleTriggerMouseLeave}
-                                        className="group inline-flex items-center justify-center gap-1 px-2 py-1 rounded-md text-xs font-semibold text-slate-700 hover:bg-blue-50/80 hover:text-blue-950 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 active:scale-95"
+                                        className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 whitespace-nowrap"
                                       >
-                                        <span className="tabular-nums font-medium">
+                                        <span className="tabular-nums font-medium font-mono">
                                           {weightPctDisplay}
                                         </span>
                                         <Info
-                                          className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
+                                          className="w-[11px] h-[11px] stroke-[1.75] text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
                                           aria-hidden="true"
                                         />
                                       </button>
@@ -6173,12 +6100,12 @@ export function MonthlyAssessmentView({
                                   })()}
                                 </td>
 
-                                {/* 5. Skor Akhir (Nilai Skor Akhir + Ikon Info) */}
-                                <td className="py-2.5 px-4 text-right align-middle font-sans">
+                                {/* 6. Skor Akhir (Nilai Skor Akhir + Ikon Info) */}
+                                <td className="py-2 px-3 text-right align-middle font-sans">
                                   {(() => {
                                     const finalScoreStr = ind.annualFinalScoreDisplay || ind.finalScoreDisplay;
                                     if (!finalScoreStr || finalScoreStr === "-") {
-                                      return <span className="text-slate-400 text-xs font-normal select-none cursor-default">-</span>;
+                                      return <span className="text-slate-300 text-xs font-normal select-none cursor-default">-</span>;
                                     }
 
                                     const isFinalPopoverOpen =
@@ -6194,13 +6121,13 @@ export function MonthlyAssessmentView({
                                         onClick={(e) => handleTriggerClick(e, "final_score", ind, cat.categoryName, cat.categoryWeight)}
                                         onMouseEnter={(e) => handleTriggerMouseEnter("final_score", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
                                         onMouseLeave={handleTriggerMouseLeave}
-                                        className="group inline-flex items-center justify-end gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold text-slate-900 hover:bg-blue-50/80 hover:text-blue-950 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 active:scale-95"
+                                        className="group inline-flex items-center justify-end gap-1 px-1.5 py-1 rounded text-xs font-semibold text-blue-700 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 whitespace-nowrap"
                                       >
-                                        <span className="tabular-nums font-bold">
+                                        <span className="tabular-nums font-semibold font-mono">
                                           {finalScoreStr}
                                         </span>
                                         <Info
-                                          className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
+                                          className="w-[11px] h-[11px] stroke-[1.75] text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
                                           aria-hidden="true"
                                         />
                                       </button>
@@ -6211,61 +6138,59 @@ export function MonthlyAssessmentView({
 
                               {/* Expandable Detail Drawer: Transparansi Perhitungan Lengkap */}
                               {isExpanded && (
-                                <tr className="bg-slate-50/80 border-b border-[#dbe2ea]">
-                                  <td colSpan={5} className="px-6 py-4">
-                                    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs space-y-4">
+                                <tr className="bg-slate-50/50 border-b border-slate-200">
+                                  <td colSpan={6} className="px-6 py-4">
+                                    <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-4">
                                       {/* Header Drawer Info */}
                                       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
-                                        <div className="flex items-center gap-2.5">
-                                          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#163a7d] text-white text-xs font-bold">
-                                            ⓘ
-                                          </span>
-                                          <div>
-                                            <div className="flex items-center gap-2">
-                                              <span className="font-mono text-xs font-bold text-slate-500">
-                                                {ind.indicatorCode}
-                                              </span>
-                                              <h4 className="text-xs sm:text-sm font-bold text-slate-900">
-                                                Transparansi Perhitungan: {ind.indicatorName}
-                                              </h4>
-                                            </div>
-                                            {ind.indicatorDescription && (
-                                              <p className="text-[11px] text-slate-500 mt-0.5">
-                                                {ind.indicatorDescription}
-                                              </p>
-                                            )}
+                                        <div>
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-mono text-xs font-semibold text-slate-400">
+                                              {ind.indicatorCode}
+                                            </span>
+                                            <h4 className="text-xs sm:text-sm font-bold text-slate-900">
+                                              Transparansi Perhitungan: {ind.indicatorName}
+                                            </h4>
                                           </div>
+                                          {ind.indicatorDescription && (
+                                            <p className="text-[11px] text-slate-500 mt-0.5">
+                                              {ind.indicatorDescription}
+                                            </p>
+                                          )}
                                         </div>
 
-                                        {/* Quick Metrics Badges */}
-                                        <div className="flex items-center gap-2 text-xs flex-wrap font-mono">
-                                          <span className="px-2 py-1 rounded bg-slate-100 border border-slate-200 text-slate-700">
+                                        {/* Quick Metrics (Minimalist inline separator) */}
+                                        <div className="flex items-center gap-2.5 text-xs flex-wrap font-mono text-slate-600">
+                                          <span>
                                             Satuan: <strong className="text-slate-900">{ind.unit || "%"}</strong>
                                           </span>
-                                          <span className="px-2 py-1 rounded bg-slate-100 border border-slate-200 text-slate-700">
+                                          <span className="text-slate-300">•</span>
+                                          <span>
                                             Target:{" "}
                                             <strong className="text-slate-900">
                                               {formatTargetNumber(ind.target, ind.unit)}
                                             </strong>
                                           </span>
-                                          <span className="px-2 py-1 rounded bg-indigo-50 border border-indigo-200 text-indigo-900">
+                                          <span className="text-slate-300">•</span>
+                                          <span>
                                             Realisasi:{" "}
-                                            <strong className="text-indigo-700">
+                                            <strong className="text-blue-700">
                                               {ind.annualActual !== null
                                                 ? formatActualNumber(ind.annualActual, ind.unit)
                                                 : "-"}
                                             </strong>
                                           </span>
-                                          <span className="px-2 py-1 rounded bg-emerald-50 border border-emerald-200 text-emerald-900 font-bold">
-                                            Skor: {ind.annualScore !== null ? `${ind.annualScore} pt` : "-"}
+                                          <span className="text-slate-300">•</span>
+                                          <span>
+                                            Skor: <strong className="text-emerald-700">{ind.annualScore !== null ? `${ind.annualScore} pt` : "-"}</strong>
                                           </span>
                                         </div>
                                       </div>
 
-                                      {/* 1. Formula & Metode Agregasi */}
-                                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs">
-                                        <div>
-                                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                                      {/* 1. Formula & Metode Agregasi (Thin Border Columns) */}
+                                      <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 rounded-lg border border-slate-200 bg-slate-50/40 text-xs">
+                                        <div className="p-3">
+                                          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">
                                             Metode Agregasi
                                           </span>
                                           <span className="font-bold text-slate-800 font-mono mt-0.5 block">
@@ -6279,8 +6204,8 @@ export function MonthlyAssessmentView({
                                               : "Rata-rata aktual bulan yang terisi"}
                                           </span>
                                         </div>
-                                        <div>
-                                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                                        <div className="p-3">
+                                          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">
                                             Basis Komparasi
                                           </span>
                                           <span className="font-bold text-slate-800 font-mono mt-0.5 block">
@@ -6292,11 +6217,11 @@ export function MonthlyAssessmentView({
                                               : "Dibandingkan langsung ke nilai aktual"}
                                           </span>
                                         </div>
-                                        <div>
-                                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                                        <div className="p-3">
+                                          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">
                                             Formula Skor Akhir
                                           </span>
-                                          <span className="font-bold text-indigo-700 font-mono mt-0.5 block">
+                                          <span className="font-bold text-blue-700 font-mono mt-0.5 block">
                                             Skor ({ind.annualScore ?? 0}) × Bobot ({Math.round(ind.indicatorWeight * 100)}%) = {ind.finalScoreDisplay}
                                           </span>
                                           <span className="text-[10px] text-slate-500 block">
@@ -6309,7 +6234,7 @@ export function MonthlyAssessmentView({
                                       <div>
                                         <div className="flex items-center justify-between mb-1.5">
                                           <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700">
-                                            📅 Rincian Inputan Realisasi 12 Bulan (Januari - Desember {currentYear})
+                                            Rincian Inputan Realisasi 12 Bulan (Januari - Desember {currentYear})
                                           </span>
                                           <span className="text-[10px] text-slate-400 font-mono">
                                             {SHORT_MONTH_NAMES.filter(
@@ -6323,45 +6248,45 @@ export function MonthlyAssessmentView({
                                         <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
                                           <table className="w-full text-center text-xs border-collapse">
                                             <thead>
-                                              <tr className="bg-slate-100 border-b border-slate-200 text-[10px] font-bold text-slate-600 uppercase">
-                                                <th className="py-1.5 px-2 text-left w-20">Data</th>
+                                              <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-semibold text-slate-600 uppercase">
+                                                <th className="py-1.5 px-2 text-left w-20 border-r border-slate-200">Data</th>
                                                 {SHORT_MONTH_NAMES.map((m) => (
-                                                  <th key={m} className="py-1.5 px-1.5 min-w-[45px]">
+                                                  <th key={m} className="py-1.5 px-1.5 min-w-[45px] border-r border-slate-200">
                                                     {m}
                                                   </th>
                                                 ))}
-                                                <th className="py-1.5 px-2 bg-slate-200/60 font-bold">Total/Avg</th>
+                                                <th className="py-1.5 px-2 bg-slate-100/80 font-semibold">Total/Avg</th>
                                               </tr>
                                             </thead>
-                                            <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
+                                            <tbody className="divide-y divide-slate-200 font-mono text-[11px]">
                                               {/* Baris Target */}
                                               <tr className="hover:bg-slate-50/50">
-                                                <td className="py-1 px-2 text-left text-slate-500 font-sans font-medium text-[10px]">
+                                                <td className="py-1 px-2 text-left text-slate-500 font-sans font-medium text-[10px] border-r border-slate-200">
                                                   Target
                                                 </td>
                                                 {SHORT_MONTH_NAMES.map((_, idx) => {
                                                   const mTarget = ind.monthlyDetails?.[idx]?.target ?? ind.target;
                                                   return (
-                                                    <td key={idx} className="py-1 px-1.5 text-slate-500">
+                                                    <td key={idx} className="py-1 px-1.5 text-slate-500 border-r border-slate-200">
                                                       {mTarget !== null && mTarget !== undefined
                                                         ? formatTargetNumber(mTarget, ind.unit)
                                                         : "-"}
                                                     </td>
                                                   );
                                                 })}
-                                                <td className="py-1 px-2 bg-slate-50 font-bold text-slate-700">
+                                                <td className="py-1 px-2 bg-slate-50 font-semibold text-slate-700">
                                                   {formatTargetNumber(ind.target, ind.unit)}
                                                 </td>
                                               </tr>
                                               {/* Baris Aktual */}
-                                              <tr className="hover:bg-slate-50/50 bg-indigo-50/20 font-semibold">
-                                                <td className="py-1 px-2 text-left text-indigo-900 font-sans font-bold text-[10px]">
+                                              <tr className="hover:bg-slate-50/50 bg-sky-50/30 font-semibold">
+                                                <td className="py-1 px-2 text-left text-slate-800 font-sans font-semibold text-[10px] border-r border-slate-200">
                                                   Aktual
                                                 </td>
                                                 {SHORT_MONTH_NAMES.map((_, idx) => {
                                                   const mAct = ind.monthlyDetails?.[idx]?.actual;
                                                   return (
-                                                    <td key={idx} className="py-1 px-1.5 text-slate-900">
+                                                    <td key={idx} className="py-1 px-1.5 text-slate-900 border-r border-slate-200">
                                                       {mAct !== null && mAct !== undefined ? (
                                                         formatActualNumber(mAct, ind.unit)
                                                       ) : (
@@ -6370,7 +6295,7 @@ export function MonthlyAssessmentView({
                                                     </td>
                                                   );
                                                 })}
-                                                <td className="py-1 px-2 bg-indigo-50/60 font-extrabold text-indigo-700">
+                                                <td className="py-1 px-2 bg-sky-50/60 font-bold text-blue-700">
                                                   {ind.annualActual !== null
                                                     ? formatActualNumber(ind.annualActual, ind.unit)
                                                     : "-"}
@@ -6378,13 +6303,13 @@ export function MonthlyAssessmentView({
                                               </tr>
                                               {/* Baris Skor Bulanan */}
                                               <tr className="hover:bg-slate-50/50 text-[10px]">
-                                                <td className="py-1 px-2 text-left text-slate-500 font-sans font-medium">
+                                                <td className="py-1 px-2 text-left text-slate-500 font-sans font-medium border-r border-slate-200">
                                                   Skor Poin
                                                 </td>
                                                 {SHORT_MONTH_NAMES.map((_, idx) => {
                                                   const mScore = ind.monthlyDetails?.[idx]?.score;
                                                   return (
-                                                    <td key={idx} className="py-1 px-1.5 text-slate-600">
+                                                    <td key={idx} className="py-1 px-1.5 text-slate-600 border-r border-slate-200">
                                                       {mScore !== null && mScore !== undefined ? (
                                                         `${mScore} pt`
                                                       ) : (
@@ -6393,7 +6318,7 @@ export function MonthlyAssessmentView({
                                                     </td>
                                                   );
                                                 })}
-                                                <td className="py-1 px-2 bg-slate-50 font-bold text-indigo-700">
+                                                <td className="py-1 px-2 bg-slate-50 font-bold text-blue-700">
                                                   {ind.annualScore !== null ? `${ind.annualScore} pt` : "-"}
                                                 </td>
                                               </tr>
@@ -6402,57 +6327,52 @@ export function MonthlyAssessmentView({
                                         </div>
                                       </div>
 
-                                      {/* 3. Tingkatan Rentang Band Kriteria (dengan Matched Highlight) */}
+                                      {/* 3. Tingkatan Rentang Band Kriteria (Minimalist Thin Border Table) */}
                                       <div>
                                         <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700 block mb-1.5">
-                                          🎯 Tingkatan Kriteria Penilaian &amp; Band yang Tercapai
+                                          Tingkatan Kriteria Penilaian &amp; Band yang Tercapai
                                         </span>
                                         {ind.scoringRules && ind.scoringRules.length > 0 ? (
-                                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                                            {ind.scoringRules.map((rule, rIdx) => {
-                                              const isMatched =
-                                                ind.annualScore !== null &&
-                                                ind.annualScore !== undefined &&
-                                                Number(rule.score) === Number(ind.annualScore);
-                                              return (
-                                                <div
-                                                  key={rIdx}
-                                                  className={`flex items-center justify-between p-2.5 rounded-lg border text-xs ${
-                                                    isMatched
-                                                      ? "bg-indigo-50/90 border-indigo-300 text-indigo-950 ring-1 ring-indigo-400/30 shadow-2xs font-semibold"
-                                                      : "bg-slate-50 border-slate-200 text-slate-700"
-                                                  }`}
-                                                >
-                                                  <div>
-                                                    <span className="font-semibold block font-mono">
-                                                      {formatRuleLabel(rule, ind.unit)}
-                                                    </span>
-                                                    {rule.label &&
-                                                      rule.label !== formatRuleLabel(rule, ind.unit) && (
-                                                        <span className="text-[10px] text-slate-400 block mt-0.5">
-                                                          {rule.label}
-                                                        </span>
-                                                      )}
-                                                  </div>
-                                                  <div className="flex items-center gap-1.5 ml-2 shrink-0">
-                                                    <span
-                                                      className={`font-mono font-extrabold text-xs px-2 py-0.5 rounded ${
-                                                        isMatched
-                                                          ? "bg-[#163a7d] text-white"
-                                                          : "bg-white text-slate-600 border border-slate-200"
-                                                      }`}
+                                          <div className="rounded-lg border border-slate-200 overflow-hidden">
+                                            <table className="w-full text-left text-xs border-collapse">
+                                              <thead>
+                                                <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-semibold text-slate-500 uppercase">
+                                                  <th className="py-1.5 px-3 border-r border-slate-200">Rentang Kriteria</th>
+                                                  <th className="py-1.5 px-3 text-center w-24 border-r border-slate-200">Skor</th>
+                                                  <th className="py-1.5 px-3 text-center w-28">Status</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody className="divide-y divide-slate-200 font-mono text-[11px]">
+                                                {ind.scoringRules.map((rule, rIdx) => {
+                                                  const isMatched =
+                                                    ind.annualScore !== null &&
+                                                    ind.annualScore !== undefined &&
+                                                    Number(rule.score) === Number(ind.annualScore);
+                                                  return (
+                                                    <tr
+                                                      key={rIdx}
+                                                      className={isMatched ? "bg-sky-50/70 font-semibold text-sky-950" : "bg-white text-slate-700"}
                                                     >
-                                                      {rule.score} pt
-                                                    </span>
-                                                    {isMatched && (
-                                                      <span className="text-[9px] font-bold text-emerald-700 bg-emerald-100 px-1 py-0.5 rounded">
-                                                        TERCAPAI
-                                                      </span>
-                                                    )}
-                                                  </div>
-                                                </div>
-                                              );
-                                            })}
+                                                      <td className="py-1.5 px-3 border-r border-slate-200">
+                                                        {formatRuleLabel(rule, ind.unit)}
+                                                      </td>
+                                                      <td className="py-1.5 px-3 text-center border-r border-slate-200 font-bold">
+                                                        {rule.score} pt
+                                                      </td>
+                                                      <td className="py-1.5 px-3 text-center font-sans">
+                                                        {isMatched ? (
+                                                          <span className="text-[10px] font-semibold text-emerald-700">
+                                                            Tercapai ✓
+                                                          </span>
+                                                        ) : (
+                                                          <span className="text-slate-300">-</span>
+                                                        )}
+                                                      </td>
+                                                    </tr>
+                                                  );
+                                                })}
+                                              </tbody>
+                                            </table>
                                           </div>
                                         ) : (
                                           <p className="text-xs text-slate-400 italic">
@@ -6462,12 +6382,12 @@ export function MonthlyAssessmentView({
                                       </div>
 
                                       {/* 4. Catatan Penilai & Dokumen Bukti */}
-                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100 text-xs">
-                                        <div>
-                                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 rounded-lg border border-slate-200 text-xs">
+                                        <div className="p-3">
+                                          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-1">
                                             Catatan Penilai (Realisasi Tahunan)
                                           </span>
-                                          <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-700 text-xs min-h-[48px]">
+                                          <div className="text-slate-700 text-xs">
                                             {ind.annualNotes || ind.notes || (
                                               <span className="text-slate-400 italic">
                                                 Tidak ada catatan penilai khusus untuk indikator ini.
@@ -6475,18 +6395,18 @@ export function MonthlyAssessmentView({
                                             )}
                                           </div>
                                         </div>
-                                        <div>
-                                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                                        <div className="p-3">
+                                          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-1">
                                             Dokumen Bukti (Evidence) Terlampir
                                           </span>
                                           {ind.evidenceList && ind.evidenceList.length > 0 ? (
-                                            <div className="space-y-1.5">
+                                            <div className="divide-y divide-slate-100">
                                               {ind.evidenceList.map((ev, evIdx) => (
                                                 <div
                                                   key={ev.id || evIdx}
-                                                  className="flex items-center justify-between p-2 rounded-lg bg-emerald-50/60 border border-emerald-200 text-emerald-900 text-xs"
+                                                  className="flex items-center justify-between py-1 text-xs"
                                                 >
-                                                  <div className="flex items-center gap-2 truncate mr-2">
+                                                  <div className="flex items-center gap-2 truncate mr-2 text-slate-700">
                                                     <FileText className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                                                     <span className="truncate font-medium">{ev.fileName}</span>
                                                   </div>
@@ -6501,7 +6421,7 @@ export function MonthlyAssessmentView({
                                                         initialIndex: evIdx,
                                                       })
                                                     }
-                                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-white text-emerald-700 border border-emerald-300 hover:bg-emerald-100 transition shrink-0 cursor-pointer"
+                                                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:underline shrink-0 cursor-pointer"
                                                   >
                                                     <Eye className="w-3 h-3" />
                                                     <span>Lihat</span>
@@ -6510,7 +6430,7 @@ export function MonthlyAssessmentView({
                                               ))}
                                             </div>
                                           ) : (
-                                            <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-400 text-xs italic min-h-[48px] flex items-center">
+                                            <div className="text-slate-400 text-xs italic">
                                               Belum ada berkas dokumen bukti yang dilampirkan.
                                             </div>
                                           )}
@@ -6526,20 +6446,23 @@ export function MonthlyAssessmentView({
                       </React.Fragment>
                     ))}
 
-                    {/* Overall Summary Row (5 Kolom) */}
-                    <tr className="bg-emerald-50/80 font-bold text-emerald-950 border-t-2 border-emerald-300">
-                      <td colSpan={2} className="px-4 py-3 text-left font-bold text-xs">
-                        TOTAL HASIL PENILAIAN AKHIR KPI (TAHUNAN)
+                    {/* Overall Summary Row (6 Kolom - Orange Muda) */}
+                    <tr className="bg-orange-100 font-bold text-orange-950 border-t border-orange-200/90">
+                      <td colSpan={3} className="px-3.5 py-2.5 text-left font-bold text-xs uppercase tracking-tight text-orange-950 border-r border-orange-200/80">
+                        Total Skor Akhir KPI
                       </td>
-                      <td className="px-3 py-3 text-center">
-                        <span className="rounded-md bg-emerald-600 px-2 py-0.5 text-[11px] font-bold text-white shadow-2xs">
+                      <td className="px-2.5 py-2.5 text-center border-r border-orange-200/80">
+                        <span className="text-xs font-bold text-orange-700">
                           Grade {liveAnnualOverall.grade}
                         </span>
                       </td>
-                      <td className="px-2 py-3 text-center font-bold text-slate-900 font-mono text-xs">
-                        {initialDetail?.templateId ? "115%" : "100%"}
+                      <td className="px-2 py-2.5 text-center font-bold text-orange-950 font-mono text-xs border-r border-orange-200/80">
+                        {Math.round(
+                          liveCategories.reduce((sum, c) => sum + (c.categoryWeight || 0), 0) * 100
+                        ) || (initialDetail?.templateId ? 115 : 100)}
+                        %
                       </td>
-                      <td className="px-4 py-3 text-right text-sm text-emerald-800 font-extrabold font-mono">
+                      <td className="px-3 py-2.5 text-right text-xs text-orange-700 font-bold font-mono">
                         {liveAnnualOverall.overallScoreDisplay}
                       </td>
                     </tr>
@@ -6564,42 +6487,42 @@ export function MonthlyAssessmentView({
                 </span>
               </div>
 
-              <div className="overflow-x-auto rounded-xl border border-slate-200">
-                <table className="w-full text-left text-xs">
+              <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                <table className="w-full text-left text-xs border-collapse">
                   <thead>
-                    <tr className="border-b border-slate-200 bg-slate-100/80 text-[11px] font-bold text-slate-700">
-                      <th className="px-3 py-2.5 min-w-[180px]">Indikator KPI</th>
-                      <th className="px-2 py-2.5 text-right">Target</th>
+                    <tr className="border-b border-slate-200 bg-slate-50/90 text-[11px] font-semibold text-slate-600">
+                      <th className="px-3 py-2 min-w-[180px] border-r border-slate-200">Indikator KPI</th>
+                      <th className="px-2 py-2 text-right border-r border-slate-200">Target</th>
                       {SHORT_MONTH_NAMES.map((m) => (
-                        <th key={m} className="px-2 py-2.5 text-right min-w-[50px]">
+                        <th key={m} className="px-2 py-2 text-right min-w-[50px] border-r border-slate-200">
                           {m}
                         </th>
                       ))}
-                      <th className="px-3 py-2.5 text-right bg-slate-200/50">Rata-rata</th>
+                      <th className="px-3 py-2 text-right bg-slate-100/70">Rata-rata</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody className="divide-y divide-slate-200">
                     {liveCategories.flatMap((cat) =>
                       cat.indicators.map((ind) => (
                         <tr key={ind.appraisalItemId} className="hover:bg-slate-50/50">
-                          <td className="px-3 py-2 font-medium text-slate-800">
-                            <span className="text-slate-400 mr-1.5">{ind.indicatorCode}</span>
+                          <td className="px-3 py-2 font-medium text-slate-800 border-r border-slate-200">
+                            <span className="text-slate-400 font-mono mr-1.5">{ind.indicatorCode}</span>
                             {ind.indicatorName}
                           </td>
-                          <td className="px-2 py-2 text-right text-slate-600 font-mono">
+                          <td className="px-2 py-2 text-right text-slate-600 font-mono border-r border-slate-200">
                             {formatTargetNumber(ind.target, ind.unit)}
                           </td>
                           {(ind.monthlyDetails || []).map((m) => (
                             <td
                               key={m.month}
-                              className={`px-2 py-2 text-right ${
+                              className={`px-2 py-2 text-right font-mono tabular-nums border-r border-slate-200 ${
                                 m.actual !== null ? "font-semibold text-slate-900" : "text-slate-300"
                               }`}
                             >
                               {m.actual !== null ? m.actual.toLocaleString("id-ID") : "-"}
                             </td>
                           ))}
-                          <td className="px-3 py-2 text-right font-bold text-indigo-700 bg-slate-50/50">
+                          <td className="px-3 py-2 text-right font-bold font-mono tabular-nums text-indigo-700 bg-slate-50/50">
                             {ind.annualActual !== null ? ind.annualActual.toLocaleString("id-ID") : "-"}
                           </td>
                         </tr>
@@ -7078,6 +7001,8 @@ export function MonthlyAssessmentView({
           periodYear={initialDetail.period.year}
           availableIndicators={extractMatchingTargetsFromCategories(initialDetail.categories || [])}
           onSuccess={() => {
+            setEditedValues({});
+            setEditedAnnualValues({});
             router.refresh();
           }}
           onEvidenceUpdated={async () => {

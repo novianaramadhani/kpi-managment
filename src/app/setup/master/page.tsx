@@ -158,19 +158,8 @@ export default async function MasterDataPage({
   const currentInfo = tabTitles[activeTab] || tabTitles.karyawan;
 
   return (
-    <div className="space-y-6">
-      {/* Breadcrumb Header */}
-      <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-        <Link href="/admin" className="hover:text-slate-900 transition">
-          WORKSPACE
-        </Link>
-        <span className="text-slate-300">/</span>
-        <span className="text-slate-500">Master Data</span>
-        <span className="text-slate-300">/</span>
-        <span className="text-slate-900 font-bold">{currentInfo.title}</span>
-      </nav>
-
-      {/* Header Halaman */}
+    <div className="space-y-4">
+      {/* Header Halaman (Single Back Navigation) */}
       <PageHeader
         title={currentInfo.title}
         subtitle={currentInfo.subtitle}
@@ -178,17 +167,17 @@ export default async function MasterDataPage({
         backLabel="Kembali ke Workspace"
       />
 
-      {/* Navigation Tabs */}
-      <div className="flex flex-wrap items-center gap-1 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-2xs">
+      {/* Navigation Tabs (Soft Light-Blue Active State) */}
+      <div className="flex flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-white p-1">
         {tabs.map(([k, l]) => (
           <Link
             key={k}
             href={`/setup/master?tab=${k}`}
             prefetch={false}
-            className={`rounded-xl px-3.5 py-2 text-xs transition ${
+            className={`rounded-lg px-3.5 py-1.5 text-xs transition ${
               activeTab === k
-                ? "bg-slate-900 text-white font-bold shadow-xs"
-                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium"
+                ? "bg-sky-100/90 text-sky-950 font-semibold border border-sky-200/80"
+                : "text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium"
             }`}
           >
             {l}

@@ -1,5 +1,6 @@
 import type { GenericScoringRule } from "@/lib/scoring";
-export type { GenericScoringRule };
+import type { ResolvedAppraisalWorkflow } from "@/lib/approval-workflow-utils";
+export type { GenericScoringRule, ResolvedAppraisalWorkflow };
 
 export const INDONESIAN_MONTH_NAMES = [
   "Januari",
@@ -120,6 +121,7 @@ export interface MonthlyCategoryGroup {
   indicatorCount?: number;
   progressMonths?: string;
   scorePercentage?: number;
+  annualScorePercentage?: number;
   parameterScore: {
     totalFraction: number;
     totalPercentage: number;
@@ -150,6 +152,7 @@ export interface MonthlyAssessmentDetailResult {
     headDept: { id: number; name: string; nik: string; jobPosition: string; role: string } | null;
     manager: { id: number; name: string; nik: string; jobPosition: string; role: string } | null;
   } | null;
+  workflowResolved?: ResolvedAppraisalWorkflow | null;
   appraisalId: number;
   appraisalStatus?: string;
   currentStage?: "PENILAI" | "HEAD_DEPT" | "MANAGER" | "HR" | "FINAL" | string | null;

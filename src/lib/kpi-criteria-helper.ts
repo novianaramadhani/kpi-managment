@@ -164,6 +164,7 @@ export function extractCriteriaUnit(raw: string | null | undefined): string | nu
         "s", "d", "sd", "sampai", "to", "rentang", "teks", "dan", "atau",
         "gt", "gte", "lt", "lte", "eq", "between", "min", "max", "tier",
         "kategori", "target", "tercapai", "kurang", "lebih", "sama", "dari", "dengan",
+        "tidak", "ada", "terlibat", "tanpa", "bukan", "ya", "aktif", "nol", "insiden", "accident", "nearmiss",
         "x", "null", "undefined"
       ].includes(low)
     ) {
@@ -177,15 +178,37 @@ export function extractCriteriaUnit(raw: string | null | undefined): string | nu
 /**
  * Detects the dominant and authentic unit of an indicator across its parameter definition and criteria bands.
  */
+export function isNumericIndicatorUnit(unit?: string | null): boolean {
+  if (!unit) return false;
+  const u = unit.trim().toLowerCase();
+  return (
+    u === "%" ||
+    u === "persen" ||
+    u === "percentage" ||
+    u === "rp" ||
+    u === "idr" ||
+    u === "rupiah" ||
+    u.startsWith("rp/") ||
+    u.startsWith("rp /")
+  );
+}
+
 export function detectIndicatorUnit<T extends { label?: string; criteriaValue?: string }>(
   paramUnit?: string | null,
   bands?: T[]
 ): string {
   const cleanParamUnit = (paramUnit || "").trim();
 
-  // If parameter explicitly states a unit other than '%' or empty
-  if (cleanParamUnit && cleanParamUnit !== "%") {
-    return cleanParamUnit;
+  // If parameter explicitly states a unit
+  if (cleanParamUnit) {
+    if (isNumericIndicatorUnit(cleanParamUnit)) {
+      const uLow = cleanParamUnit.toLowerCase();
+      if (uLow === "%" || uLow === "persen" || uLow === "percentage") return "%";
+      if (uLow === "rp" || uLow === "idr" || uLow === "rupiah") return "Rp";
+      return cleanParamUnit;
+    }
+    // Pokoknya selain angka, tipe datanya adalah 'teks'
+    return "teks";
   }
 
   // Inspect criteria text in bands for specific contextual units (e.g. 'hari', 'jam', 'dokumen')
@@ -211,11 +234,17 @@ export function detectIndicatorUnit<T extends { label?: string; criteriaValue?: 
     }
 
     if (topUnit && maxCount >= 1) {
-      return topUnit;
+      if (isNumericIndicatorUnit(topUnit)) {
+        const uLow = topUnit.toLowerCase();
+        if (uLow === "%" || uLow === "persen") return "%";
+        if (uLow === "rp" || uLow === "idr" || uLow === "rupiah") return "Rp";
+        return topUnit;
+      }
+      return "teks";
     }
   }
 
-  return cleanParamUnit || "%";
+  return "%";
 }
 
 export function formatValueWithUnit(num: number | string, unit: string): string {

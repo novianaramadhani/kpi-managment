@@ -18,7 +18,11 @@ export interface ExcelParsedBlock {
   monthlyActuals: (number | null)[];
   annualTarget: number | null;
   annualActual: number | null;
+  excelScore?: number | null;
+  excelWeightedScore?: number | null;
+  excelUnit?: string | null;
   excelPercentageText?: string;
+  excelBandCriteria?: string;
   hasMonthlyData: boolean;
   warningNotes: string[];
   rowNumber: number;
@@ -60,7 +64,11 @@ export interface BatchPreviewItem {
   excelAnnualActual: number | null;
   excelMonthlyActuals: (number | null)[];
   excelMonthlyTargets: (number | null)[];
+  excelScore?: number | null;
+  excelWeightedScore?: number | null;
+  excelUnit?: string | null;
   excelPercentageText?: string;
+  excelBandCriteria?: string;
   hasMonthlyData: boolean;
 
   // Evaluated result using existing scoring logic
@@ -212,23 +220,220 @@ export function sanitizeNumericCell(val: unknown): number | null {
 // 2. EXCEL PARSER (Spesifik Kolom H, I-T, U, V)
 // ============================================================================
 
-/**
- * Membaca sheet Excel dengan struktur:
- * Kolom H (index 7): Judul Parameter, "Type", "Target", "Actual"
- * Kolom I s/d T (index 8..19): Bulan Jan s/d Dec (12 bulan)
- * Kolom U (index 20): Realisasi (Nilai Tahunan)
- * Kolom V (index 21): Persentase capaian di Excel
- *
- * Mendukung auto-detection kolom anchor bila tabel bergeser kolom.
- */
-export function parseKpiExcelMatrix(rawMatrix: unknown[][]): ExcelParsedBlock[] {
-  const blocks: ExcelParsedBlock[] = [];
-  if (!rawMatrix || rawMatrix.length === 0) return blocks;
+// ============================================================================
+// 2. EXCEL PARSER (Mendukung Form Realisasi Actual, Form Penilaian, & Legacy)
+// ============================================================================
 
+/**
+ * Parser khusus untuk lembar kerja "Form Realisasi Actual"
+ * Struktur:
+ * - Col 0 (A): No
+ * - Col 1 (B): Indikator KPI
+ * - Col 2 (C): Bobot Indikator (%)
+ * - Col 3 (D): Target Tahunan
+ * - Col 4 (E): Satuan
+ * - Col 5 (F): Type ("Target" / "Actual")
+ * - Col 6..17 (G..R): Jan s/d Des (12 Bulan)
+ * - Col 18 (S): Realisasi Tahunan (Agregasi)
+ */
+function parseFormRealisasiActual(rawMatrix: unknown[][], startHeaderIdx = 6): ExcelParsedBlock[] {
+  const blocks: ExcelParsedBlock[] = [];
+  let headerRow = startHeaderIdx >= 0 ? startHeaderIdx : 6;
+  let typeCol = 5;
+  let nameCol = 1;
+  let targetCol = 3;
+  let unitCol = 4;
+  let monthStartCol = 6;
+  let annualCol = 18;
+
+  for (let r = 0; r < Math.min(rawMatrix.length, 15); r++) {
+    const row = (rawMatrix[r] as unknown[]) || [];
+    for (let c = 0; c < row.length; c++) {
+      const val = String(row[c] || "").trim().toLowerCase();
+      if (val === "type") {
+        headerRow = r;
+        typeCol = c;
+      }
+      if (val === "indikator" || val === "indikator kpi") nameCol = c;
+      if (val === "target" || val.includes("target tahunan")) targetCol = c;
+      if (val === "satuan" || val === "unit") unitCol = c;
+      if (val === "jan" || val === "januari") monthStartCol = c;
+      if (val.includes("realisasi tahunan")) annualCol = c;
+    }
+  }
+
+  for (let r = headerRow + 1; r < rawMatrix.length; r++) {
+    const row = (rawMatrix[r] as unknown[]) || [];
+    const cellType = String(row[typeCol] || "").trim().toLowerCase();
+
+    if (cellType === "target") {
+      let rawTitle = String(row[nameCol] || "").trim();
+      if (!rawTitle) {
+        for (let c = 0; c < typeCol; c++) {
+          const cand = String(row[c] || "").trim();
+          if (cand && !/^\d+(\.\d+)?$/.test(cand) && cand.toLowerCase() !== "target") {
+            rawTitle = cand;
+            break;
+          }
+        }
+      }
+      if (!rawTitle && r > 0) {
+        const prevRow = (rawMatrix[r - 1] as unknown[]) || [];
+        rawTitle = String(prevRow[nameCol] || prevRow[1] || "").trim();
+      }
+
+      // Lewati baris judul kategori / summary bar
+      if (!rawTitle || /^\d+\.\s+[A-Z\s]+\(\d+%\)$/.test(rawTitle)) continue;
+
+      const annualTarget = sanitizeNumericCell(row[targetCol]) ?? sanitizeNumericCell(row[annualCol]);
+      const rawUnit = String(row[unitCol] || "").trim();
+
+      const monthlyTargets: (number | null)[] = [];
+      for (let m = 0; m < 12; m++) {
+        monthlyTargets.push(sanitizeNumericCell(row[monthStartCol + m]));
+      }
+
+      let actualRow: unknown[] | null = null;
+      let nextR = r + 1;
+      while (nextR < Math.min(rawMatrix.length, r + 4)) {
+        const candRow = (rawMatrix[nextR] as unknown[]) || [];
+        const candType = String(candRow[typeCol] || "").trim().toLowerCase();
+        if (candType === "actual" || candType === "aktual") {
+          actualRow = candRow;
+          break;
+        }
+        nextR++;
+      }
+      if (!actualRow && rawMatrix[r + 1]) actualRow = rawMatrix[r + 1] as unknown[];
+
+      const monthlyActuals: (number | null)[] = [];
+      let annualActual: number | null = null;
+      const warningNotes: string[] = [];
+
+      if (actualRow) {
+        for (let m = 0; m < 12; m++) {
+          monthlyActuals.push(sanitizeNumericCell(actualRow[monthStartCol + m]));
+        }
+        const rawAnnAct = actualRow[annualCol];
+        if (typeof rawAnnAct === "string" && rawAnnAct.includes("#DIV/0!")) {
+          warningNotes.push("Formula Excel menghasilkan error #DIV/0! (pembagian nol).");
+        }
+        annualActual = sanitizeNumericCell(rawAnnAct);
+      }
+
+      blocks.push({
+        rawTitle,
+        annualTarget,
+        annualActual,
+        monthlyTargets,
+        monthlyActuals,
+        excelUnit: rawUnit || undefined,
+        hasMonthlyData: monthlyActuals.some((v) => v !== null),
+        warningNotes,
+        rowNumber: r + 1,
+      });
+
+      if (actualRow && nextR > r) r = nextR;
+    }
+  }
+
+  return blocks;
+}
+
+/**
+ * Parser khusus untuk lembar kerja "Form Penilaian"
+ * Struktur:
+ * - Col 0 (A): No
+ * - Col 1 (B): Parameter
+ * - Col 2 (C): Bobot Parameter (%)
+ * - Col 3 (D): Indikator
+ * - Col 4 (E): Bobot Indikator (%)
+ * - Col 5 (F): Target Tahunan
+ * - Col 6 (G): Satuan
+ * - Col 7 (H): Realisasi Tahunan (Evaluasi Kriteria / Skor Tercapai)
+ * - Col 8 (I): Kriteria Penilaian
+ * - Col 9 (J): Skor
+ * - Col 10 (K): Nilai Akhir
+ */
+function parseFormPenilaian(rawMatrix: unknown[][], startHeaderIdx = 6): ExcelParsedBlock[] {
+  const blocks: ExcelParsedBlock[] = [];
+  let headerRow = startHeaderIdx >= 0 ? startHeaderIdx : 6;
+  let nameCol = 3;
+  let targetCol = 5;
+  let unitCol = 6;
+  let realizationCol = 7;
+  let scoreCol = 9;
+  let finalCol = 10;
+
+  for (let r = 0; r < Math.min(rawMatrix.length, 12); r++) {
+    const row = (rawMatrix[r] as unknown[]) || [];
+    for (let c = 0; c < row.length; c++) {
+      const val = String(row[c] || "").trim().toLowerCase();
+      if (val === "indikator") {
+        nameCol = c;
+        headerRow = r;
+      }
+      if (val.includes("target tahunan") || val === "target") targetCol = c;
+      if (val === "satuan" || val === "unit") unitCol = c;
+      if (val.includes("realisasi tahunan") || val === "realisasi") realizationCol = c;
+      if (val === "skor") scoreCol = c;
+      if (val.includes("nilai akhir")) finalCol = c;
+    }
+  }
+
+  for (let r = headerRow + 1; r < rawMatrix.length; r++) {
+    const row = (rawMatrix[r] as unknown[]) || [];
+    let rawTitle = String(row[nameCol] || "").trim();
+
+    if (
+      !rawTitle ||
+      /^\d+\.\s+[A-Z\s]+\(\d+%\)$/.test(rawTitle) ||
+      rawTitle.toLowerCase().includes("total bobot") ||
+      rawTitle.toLowerCase().includes("overall score")
+    ) {
+      continue;
+    }
+
+    const annualTarget = sanitizeNumericCell(row[targetCol]);
+    const rawUnit = String(row[unitCol] || "").trim();
+    const evaluatedScore = sanitizeNumericCell(row[realizationCol]);
+    const excelScore = evaluatedScore ?? sanitizeNumericCell(row[scoreCol]);
+    const rawFinal = sanitizeNumericCell(row[finalCol]);
+    const excelWeightedScore =
+      rawFinal !== null
+        ? rawFinal <= 1 && rawFinal > 0
+          ? parseFloat((rawFinal * 100).toFixed(2))
+          : rawFinal
+        : null;
+    const criteriaCol = scoreCol > 0 ? scoreCol - 1 : 8;
+    const excelBandCriteria = String(row[criteriaCol] || "").trim() || undefined;
+
+    blocks.push({
+      rawTitle,
+      annualTarget,
+      annualActual: evaluatedScore,
+      excelScore,
+      excelWeightedScore,
+      excelUnit: rawUnit || undefined,
+      excelBandCriteria,
+      monthlyTargets: Array(12).fill(null),
+      monthlyActuals: Array(12).fill(null),
+      hasMonthlyData: false,
+      warningNotes: [],
+      rowNumber: r + 1,
+    });
+  }
+
+  return blocks;
+}
+
+/**
+ * Parser format legacy (Kolom H = Type, I-T = Bulan, U = Realisasi)
+ */
+function parseLegacyKpiMatrix(rawMatrix: unknown[][]): ExcelParsedBlock[] {
+  const blocks: ExcelParsedBlock[] = [];
   for (let r = 0; r < rawMatrix.length; r++) {
     const row = (rawMatrix[r] as unknown[]) || [];
-
-    // Cari kolom yang memuat teks "Type" atau baris "Target" (prioritas Kolom H = index 7)
     let colTypeIdx = -1;
     let isDirectTargetRow = false;
 
@@ -238,7 +443,6 @@ export function parseKpiExcelMatrix(rawMatrix: unknown[][]): ExcelParsedBlock[] 
       colTypeIdx = 7;
       isDirectTargetRow = true;
     } else {
-      // Fallback auto-detection jika ada geseran kolom
       for (let c = 0; c < row.length; c++) {
         const cellVal = String(row[c] || "").trim().toLowerCase();
         if (cellVal === "type") {
@@ -254,7 +458,6 @@ export function parseKpiExcelMatrix(rawMatrix: unknown[][]): ExcelParsedBlock[] 
       let actualRow: unknown[] | null = null;
 
       if (isDirectTargetRow) {
-        // Ekstraksi langsung dari baris matriks: Kolom D (Indikator) atau Kolom B (Parameter)
         rawTitle = String(row[3] || row[1] || "").trim();
         targetRow = row;
         const nextR = (rawMatrix[r + 1] as unknown[]) || [];
@@ -262,8 +465,6 @@ export function parseKpiExcelMatrix(rawMatrix: unknown[][]): ExcelParsedBlock[] 
           actualRow = nextR;
         }
       } else {
-        // Baris r adalah baris header 'Type'.
-        // 1. Ekstraksi Judul Parameter dari baris sebelumnya (r - 1) di kolom yang sama
         for (let lookback = 1; lookback <= 3; lookback++) {
           const prevRow = rawMatrix[r - lookback] as unknown[] | undefined;
           if (prevRow) {
@@ -272,7 +473,6 @@ export function parseKpiExcelMatrix(rawMatrix: unknown[][]): ExcelParsedBlock[] 
               rawTitle = cand;
               break;
             }
-            // Jika di kolom colTypeIdx bertuliskan "Parameter", cek kolom sebelahnya (colTypeIdx + 1)
             const candNext = String(prevRow[colTypeIdx + 1] || "").trim();
             if (candNext) {
               rawTitle = candNext;
@@ -281,7 +481,6 @@ export function parseKpiExcelMatrix(rawMatrix: unknown[][]): ExcelParsedBlock[] 
           }
         }
 
-        // 2. Baris Target (biasanya r + 1) dan Baris Actual (biasanya r + 2)
         for (let offset = 1; offset <= 4; offset++) {
           const nextRow = rawMatrix[r + offset] as unknown[] | undefined;
           if (!nextRow) continue;
@@ -290,22 +489,13 @@ export function parseKpiExcelMatrix(rawMatrix: unknown[][]): ExcelParsedBlock[] 
           const labelNext = String(nextRow[colTypeIdx + 1] || "").trim().toLowerCase();
           const combined = `${labelPrimary} ${labelPrev} ${labelNext}`;
 
-          if (
-            combined.includes("target") ||
-            combined.includes("tgt") ||
-            combined.includes("harus")
-          ) {
+          if (combined.includes("target") || combined.includes("tgt") || combined.includes("harus")) {
             targetRow = nextRow;
-          } else if (
-            combined.includes("actual") ||
-            combined.includes("aktual") ||
-            combined.includes("realisasi")
-          ) {
+          } else if (combined.includes("actual") || combined.includes("aktual") || combined.includes("realisasi")) {
             actualRow = nextRow;
           }
         }
 
-        // Jika baris target atau actual tidak memiliki label eksplisit, ambil berurutan r+1 dan r+2
         if (!targetRow && rawMatrix[r + 1]) targetRow = rawMatrix[r + 1] as unknown[];
         if (!actualRow && rawMatrix[r + 2]) actualRow = rawMatrix[r + 2] as unknown[];
 
@@ -314,15 +504,12 @@ export function parseKpiExcelMatrix(rawMatrix: unknown[][]): ExcelParsedBlock[] 
         }
       }
 
-      if (!rawTitle) {
-        continue;
-      }
+      if (!rawTitle) continue;
 
       const monthlyTargets: (number | null)[] = [];
       const monthlyActuals: (number | null)[] = [];
       const warningNotes: string[] = [];
 
-      // Ekstraksi 12 bulan (Kolom I s/d T, yaitu index colTypeIdx + 1 s/d colTypeIdx + 12)
       for (let m = 1; m <= 12; m++) {
         const colIdx = colTypeIdx + m;
         const tgtVal = targetRow ? sanitizeNumericCell(targetRow[colIdx]) : null;
@@ -331,7 +518,6 @@ export function parseKpiExcelMatrix(rawMatrix: unknown[][]): ExcelParsedBlock[] 
         monthlyActuals.push(actVal);
       }
 
-      // Ekstraksi Kolom U (Realisasi) = colTypeIdx + 13
       const realisasiColIdx = colTypeIdx + 13;
       const annualTarget = targetRow ? sanitizeNumericCell(targetRow[realisasiColIdx]) : null;
       const rawAnnualActual = actualRow ? actualRow[realisasiColIdx] : null;
@@ -341,7 +527,6 @@ export function parseKpiExcelMatrix(rawMatrix: unknown[][]): ExcelParsedBlock[] 
       }
       const annualActual = sanitizeNumericCell(rawAnnualActual);
 
-      // Ekstraksi Kolom V (Persentase Excel) = colTypeIdx + 14
       const pctColIdx = colTypeIdx + 14;
       const rawPct = actualRow ? actualRow[pctColIdx] : null;
       const excelPercentageText = rawPct !== null && rawPct !== undefined ? String(rawPct).trim() : undefined;
@@ -360,17 +545,70 @@ export function parseKpiExcelMatrix(rawMatrix: unknown[][]): ExcelParsedBlock[] 
         rowNumber: r + 1,
       });
 
-      // Lewati baris target & actual yang sudah diproses
       r += isDirectTargetRow ? 1 : 2;
     }
   }
-
   return blocks;
 }
 
-export function parseKpiExcelSheet(sheet: XLSX.WorkSheet): ExcelParsedBlock[] {
+/**
+ * Entry point parser matriks Excel dengan deteksi otomatis format sheet
+ */
+export function parseKpiExcelMatrix(rawMatrix: unknown[][], sheetName = ""): ExcelParsedBlock[] {
+  if (!rawMatrix || rawMatrix.length === 0) return [];
+
+  let isFormRealisasiActual = false;
+  let isFormPenilaian = false;
+  let headerRowIdx = -1;
+
+  for (let r = 0; r < Math.min(rawMatrix.length, 15); r++) {
+    const row = (rawMatrix[r] as unknown[]) || [];
+    const rowText = row.map((cell) => String(cell || "").toLowerCase().trim()).join(" ");
+
+    if (
+      rowText.includes("realisasi bulanan") ||
+      (rowText.includes("type") && (rowText.includes("realisasi tahunan") || rowText.includes("indikator")))
+    ) {
+      isFormRealisasiActual = true;
+      headerRowIdx = r;
+      break;
+    }
+
+    if (
+      (rowText.includes("kriteria penilaian") || rowText.includes("nilai akhir")) &&
+      (rowText.includes("parameter") || rowText.includes("indikator"))
+    ) {
+      isFormPenilaian = true;
+      headerRowIdx = r;
+      break;
+    }
+  }
+
+  if (!isFormRealisasiActual && !isFormPenilaian) {
+    const sLow = sheetName.toLowerCase();
+    if (sLow.includes("realisasi") || sLow.includes("actual")) {
+      isFormRealisasiActual = true;
+    } else if (sLow.includes("penilaian") || sLow.includes("matrix")) {
+      isFormPenilaian = true;
+    }
+  }
+
+  if (isFormRealisasiActual) {
+    const res = parseFormRealisasiActual(rawMatrix, headerRowIdx);
+    if (res.length > 0) return res;
+  }
+
+  if (isFormPenilaian) {
+    const res = parseFormPenilaian(rawMatrix, headerRowIdx);
+    if (res.length > 0) return res;
+  }
+
+  return parseLegacyKpiMatrix(rawMatrix);
+}
+
+export function parseKpiExcelSheet(sheet: XLSX.WorkSheet, sheetName = ""): ExcelParsedBlock[] {
   const rawMatrix: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
-  return parseKpiExcelMatrix(rawMatrix);
+  return parseKpiExcelMatrix(rawMatrix, sheetName);
 }
 
 // ============================================================================
@@ -402,6 +640,17 @@ const PARAM_ALIAS_MAP: Record<string, string> = {
   soh: "stockonhand",
   rasiodeadstock: "deadstock",
   deadstock: "deadstock",
+  keselamatankerja: "keselamatankerja",
+  safety: "keselamatankerja",
+  k3: "keselamatankerja",
+  kepatuhandansp: "sp",
+  sp: "sp",
+  suratperingatan: "sp",
+  inovasidanimprovement: "improvement",
+  improvement: "improvement",
+  inovasi: "improvement",
+  costperbcm: "costbcm",
+  bcm: "costbcm",
 };
 
 export function matchParameter(
@@ -518,6 +767,10 @@ export function formatValueWithUnit(val: number | null, unit?: string | null): s
     return `${val.toLocaleString("id-ID")} M`;
   } else if (u && (u.toLowerCase() === "juta" || u.toLowerCase() === "jt")) {
     return `${val.toLocaleString("id-ID")} Jt`;
+  } else if (u && (u.toLowerCase() === "rp" || u.toLowerCase() === "idr" || u.toLowerCase() === "rupiah")) {
+    return `Rp ${val.toLocaleString("id-ID")}`;
+  } else if (u && u.toLowerCase() === "teks") {
+    return `${val}`;
   } else if (u) {
     return `${val.toLocaleString("id-ID")} ${u}`;
   }
@@ -632,8 +885,9 @@ export function generateBatchPreview(
       }
     }
 
-    const targetDisplay = formatValueWithUnit(effectiveTarget, ind?.unit);
-    const realizationDisplay = formatValueWithUnit(effectiveRealization, ind?.unit);
+    const effectiveUnit = block.excelUnit || ind?.unit;
+    const targetDisplay = formatValueWithUnit(effectiveTarget, effectiveUnit);
+    const realizationDisplay = formatValueWithUnit(effectiveRealization, effectiveUnit);
 
     // 4. Eksekusi Scoring Engine Eksisting Menggunakan Target & Actual Excel
     let scoreResult: KpiScoreResult | null = null;
@@ -646,14 +900,56 @@ export function generateBatchPreview(
         target: effectiveTarget,
         direction: ind.direction,
         measurementType: ind.measurementType,
-        unit: ind.unit,
+        unit: effectiveUnit,
       });
     }
 
     const currentScore = ind?.currentScore ?? null;
-    const newScore = scoreResult?.score ?? null;
+    let newScore = scoreResult?.score ?? null;
+    if (newScore === null && block.excelScore !== null && block.excelScore !== undefined) {
+      newScore = block.excelScore;
+    }
     const scoreDelta =
       newScore !== null && currentScore !== null ? newScore - currentScore : null;
+
+    let finalWeightedScoreFraction = scoreResult?.finalScoreFraction ?? 0;
+    let finalWeightedScorePct = scoreResult?.finalScorePercentage ?? 0;
+    let finalWeightedScoreDisplay = scoreResult?.finalScoreDisplay ?? "0.0%";
+
+    if (block.excelWeightedScore !== null && block.excelWeightedScore !== undefined) {
+      finalWeightedScorePct = block.excelWeightedScore;
+      finalWeightedScoreFraction = block.excelWeightedScore / 100;
+      finalWeightedScoreDisplay = `${block.excelWeightedScore.toFixed(2)}%`;
+    } else if (finalWeightedScoreFraction === 0 && newScore !== null && ind) {
+      const maxScore = ind.maxScore || 25;
+      const indW = normalizeWeight(ind.indicatorWeight);
+      const catW = normalizeWeight(ind.parameterWeight);
+      finalWeightedScoreFraction = maxScore > 0 ? (newScore / maxScore) * indW * catW : 0;
+      finalWeightedScorePct = parseFloat((finalWeightedScoreFraction * 100).toFixed(2));
+      finalWeightedScoreDisplay = `${finalWeightedScorePct}%`;
+    }
+
+    let realizationPct = scoreResult?.realizationPct ?? null;
+    let realizationPctDisplay = scoreResult?.realizationPctDisplay ?? "-";
+    if (
+      (realizationPctDisplay === "-" || realizationPct === null) &&
+      effectiveRealization !== null &&
+      effectiveTarget !== null &&
+      effectiveTarget > 0
+    ) {
+      if (effectiveUnit?.toLowerCase() === "teks") {
+        realizationPct = effectiveRealization === effectiveTarget ? 100 : 0;
+        realizationPctDisplay = `${realizationPct.toFixed(1)}%`;
+      } else {
+        realizationPct = parseFloat(((effectiveRealization / effectiveTarget) * 100).toFixed(1));
+        realizationPctDisplay = `${realizationPct.toFixed(1)}%`;
+      }
+    }
+
+    let bandLabel = scoreResult?.bandLabel ?? null;
+    if (!bandLabel && block.excelBandCriteria) {
+      bandLabel = block.excelBandCriteria;
+    }
 
     items.push({
       key: `block-${i}-${block.rowNumber}`,
@@ -669,6 +965,10 @@ export function generateBatchPreview(
       excelAnnualActual: block.annualActual,
       excelMonthlyActuals: block.monthlyActuals,
       excelMonthlyTargets: block.monthlyTargets,
+      excelScore: block.excelScore,
+      excelWeightedScore: block.excelWeightedScore,
+      excelUnit: block.excelUnit,
+      excelBandCriteria: block.excelBandCriteria,
       excelPercentageText: block.excelPercentageText,
       hasMonthlyData: block.hasMonthlyData,
 
@@ -676,13 +976,13 @@ export function generateBatchPreview(
       targetDisplay,
       effectiveRealization,
       realizationDisplay,
-      realizationPct: scoreResult?.realizationPct ?? null,
-      realizationPctDisplay: scoreResult?.realizationPctDisplay ?? "-",
+      realizationPct,
+      realizationPctDisplay,
       score: newScore,
-      bandLabel: scoreResult?.bandLabel ?? null,
-      weightedScoreFraction: scoreResult?.finalScoreFraction ?? 0,
-      weightedScorePct: scoreResult?.finalScorePercentage ?? 0,
-      weightedScoreDisplay: scoreResult?.finalScoreDisplay ?? "0.0%",
+      bandLabel,
+      weightedScoreFraction: finalWeightedScoreFraction,
+      weightedScorePct: finalWeightedScorePct,
+      weightedScoreDisplay: finalWeightedScoreDisplay,
       status: scoreResult?.status ?? "BELUM_DIISI",
 
       currentScore,
@@ -803,8 +1103,9 @@ export function recalculatePreviewItemMapping(
     }
   }
 
-  const targetDisplay = formatValueWithUnit(effectiveTarget, newInd.unit);
-  const realizationDisplay = formatValueWithUnit(effectiveRealization, newInd.unit);
+  const effectiveUnit = item.excelUnit || newInd.unit;
+  const targetDisplay = formatValueWithUnit(effectiveTarget, effectiveUnit);
+  const realizationDisplay = formatValueWithUnit(effectiveRealization, effectiveUnit);
 
   let scoreResult: KpiScoreResult | null = null;
   if (effectiveRealization !== null) {
@@ -816,14 +1117,56 @@ export function recalculatePreviewItemMapping(
       target: effectiveTarget,
       direction: newInd.direction,
       measurementType: newInd.measurementType,
-      unit: newInd.unit,
+      unit: effectiveUnit,
     });
   }
 
   const currentScore = newInd.currentScore ?? null;
-  const newScore = scoreResult?.score ?? null;
+  let newScore = scoreResult?.score ?? null;
+  if (newScore === null && item.excelScore !== null && item.excelScore !== undefined) {
+    newScore = item.excelScore;
+  }
   const scoreDelta =
     newScore !== null && currentScore !== null ? newScore - currentScore : null;
+
+  let finalWeightedScoreFraction = scoreResult?.finalScoreFraction ?? 0;
+  let finalWeightedScorePct = scoreResult?.finalScorePercentage ?? 0;
+  let finalWeightedScoreDisplay = scoreResult?.finalScoreDisplay ?? "0.0%";
+
+  if (item.excelWeightedScore !== null && item.excelWeightedScore !== undefined) {
+    finalWeightedScorePct = item.excelWeightedScore;
+    finalWeightedScoreFraction = item.excelWeightedScore / 100;
+    finalWeightedScoreDisplay = `${item.excelWeightedScore.toFixed(2)}%`;
+  } else if (finalWeightedScoreFraction === 0 && newScore !== null && newInd) {
+    const maxScore = newInd.maxScore || 25;
+    const indW = normalizeWeight(newInd.indicatorWeight);
+    const catW = normalizeWeight(newInd.parameterWeight);
+    finalWeightedScoreFraction = maxScore > 0 ? (newScore / maxScore) * indW * catW : 0;
+    finalWeightedScorePct = parseFloat((finalWeightedScoreFraction * 100).toFixed(2));
+    finalWeightedScoreDisplay = `${finalWeightedScorePct}%`;
+  }
+
+  let realizationPct = scoreResult?.realizationPct ?? null;
+  let realizationPctDisplay = scoreResult?.realizationPctDisplay ?? "-";
+  if (
+    (realizationPctDisplay === "-" || realizationPct === null) &&
+    effectiveRealization !== null &&
+    effectiveTarget !== null &&
+    effectiveTarget > 0
+  ) {
+    if (effectiveUnit?.toLowerCase() === "teks") {
+      realizationPct = effectiveRealization === effectiveTarget ? 100 : 0;
+      realizationPctDisplay = `${realizationPct.toFixed(1)}%`;
+    } else {
+      realizationPct = parseFloat(((effectiveRealization / effectiveTarget) * 100).toFixed(1));
+      realizationPctDisplay = `${realizationPct.toFixed(1)}%`;
+    }
+  }
+
+  let bandLabel = scoreResult?.bandLabel ?? null;
+  if (!bandLabel && item.excelBandCriteria) {
+    bandLabel = item.excelBandCriteria;
+  }
 
   return {
     ...item,
@@ -836,13 +1179,13 @@ export function recalculatePreviewItemMapping(
     targetDisplay,
     effectiveRealization,
     realizationDisplay,
-    realizationPct: scoreResult?.realizationPct ?? null,
-    realizationPctDisplay: scoreResult?.realizationPctDisplay ?? "-",
+    realizationPct,
+    realizationPctDisplay,
     score: newScore,
-    bandLabel: scoreResult?.bandLabel ?? null,
-    weightedScoreFraction: scoreResult?.finalScoreFraction ?? 0,
-    weightedScorePct: scoreResult?.finalScorePercentage ?? 0,
-    weightedScoreDisplay: scoreResult?.finalScoreDisplay ?? "0.0%",
+    bandLabel,
+    weightedScoreFraction: finalWeightedScoreFraction,
+    weightedScorePct: finalWeightedScorePct,
+    weightedScoreDisplay: finalWeightedScoreDisplay,
     status: scoreResult?.status ?? "BELUM_DIISI",
     currentScore,
     scoreDelta,
@@ -909,16 +1252,16 @@ export function extractSheetEmployeeInfo(
       if (!cellStr) continue;
 
       const lower = cellStr.toLowerCase();
+      const norm = lower.replace(/:+$/, "").replace(/\s+/g, " ").trim();
 
       // Deteksi NIK
       if (!detectedNik) {
         if (
-          lower === "nik" ||
-          lower === "n.i.k" ||
-          lower === "no. induk" ||
-          lower === "no induk" ||
-          lower === "badge id" ||
-          lower === "nik:"
+          norm === "nik" ||
+          norm === "n.i.k" ||
+          norm === "no. induk" ||
+          norm === "no induk" ||
+          norm === "badge id"
         ) {
           const nextVal = String(row[c + 1] || "").trim();
           const belowVal = matrix[r + 1] ? String((matrix[r + 1] as unknown[])[c] || "").trim() : "";
@@ -928,8 +1271,8 @@ export function extractSheetEmployeeInfo(
             detectedNik = belowVal;
           }
         } else {
-          // Format standar NIK (misal 1.1025.273 atau 01.1224.001)
-          const nikMatch = cellStr.match(/\b\d{1,2}\.\d{4}\.\d{3,4}\b/);
+          // Format standar NIK (misal 1.1025.273 atau 01.1224.001 atau 20.524.219)
+          const nikMatch = cellStr.match(/\b\d{1,2}\.\d{3,4}\.\d{3,4}\b/);
           if (nikMatch) {
             detectedNik = nikMatch[0];
           }
@@ -939,16 +1282,20 @@ export function extractSheetEmployeeInfo(
       // Deteksi Nama
       if (!detectedName) {
         if (
-          lower === "nama" ||
-          lower === "nama karyawan" ||
-          lower === "nama employee" ||
-          lower === "nama pegawai" ||
-          lower === "nama:" ||
-          lower === "employee name"
+          norm === "nama" ||
+          norm === "nama karyawan" ||
+          norm === "nama employee" ||
+          norm === "nama pegawai" ||
+          norm === "employee name"
         ) {
           const nextVal = String(row[c + 1] || "").trim();
           const belowVal = matrix[r + 1] ? String((matrix[r + 1] as unknown[])[c] || "").trim() : "";
-          if (nextVal && !nextVal.toLowerCase().includes("nik") && !nextVal.toLowerCase().includes("jabatan")) {
+          if (
+            nextVal &&
+            !nextVal.toLowerCase().includes("nik") &&
+            !nextVal.toLowerCase().includes("jabatan") &&
+            !nextVal.toLowerCase().includes("job")
+          ) {
             detectedName = nextVal;
           } else if (belowVal) {
             detectedName = belowVal;
@@ -959,13 +1306,12 @@ export function extractSheetEmployeeInfo(
       // Deteksi Departemen
       if (!detectedDept) {
         if (
-          lower === "departemen" ||
-          lower === "department" ||
-          lower === "dept" ||
-          lower === "divisi" ||
-          lower === "bagian" ||
-          lower === "departemen:" ||
-          lower === "unit"
+          norm === "departemen" ||
+          norm === "department" ||
+          norm === "dept" ||
+          norm === "divisi" ||
+          norm === "bagian" ||
+          norm === "unit"
         ) {
           const nextVal = String(row[c + 1] || "").trim();
           const belowVal = matrix[r + 1] ? String((matrix[r + 1] as unknown[])[c] || "").trim() : "";
@@ -977,11 +1323,10 @@ export function extractSheetEmployeeInfo(
       // Deteksi Periode / Tahun
       if (!detectedYear) {
         if (
-          lower === "periode" ||
-          lower === "tahun" ||
-          lower === "period" ||
-          lower === "tahun penilaian" ||
-          lower === "periode:"
+          norm === "periode" ||
+          norm === "tahun" ||
+          norm === "period" ||
+          norm === "tahun penilaian"
         ) {
           const nextVal = String(row[c + 1] || "").trim();
           const yearMatch = nextVal.match(/\b(20\d\d)\b/);
@@ -999,22 +1344,8 @@ export function extractSheetEmployeeInfo(
   // Fallback dari Nama Sheet jika belum terdeteksi dari sel
   const cleanSheetName = sheetName.trim();
   if (!detectedNik) {
-    const nikMatch = cleanSheetName.match(/\b\d{1,2}\.\d{4}\.\d{3,4}\b/);
+    const nikMatch = cleanSheetName.match(/\b\d{1,2}\.\d{3,4}\.\d{3,4}\b/);
     if (nikMatch) detectedNik = nikMatch[0];
-  }
-
-  if (!detectedName) {
-    if (!/^sheet\d+$/i.test(cleanSheetName) && !/template|rekap|summary|panduan/i.test(cleanSheetName)) {
-      const nameCand = cleanSheetName
-        .replace(/\b\d{1,2}\.\d{4}\.\d{3,4}\b/, "")
-        .replace(/[-_()]/g, " ")
-        .trim();
-      if (nameCand.length > 2) {
-        detectedName = nameCand;
-      } else {
-        detectedName = cleanSheetName;
-      }
-    }
   }
 
   // Validasi kecocokan dengan karyawan aktif saat ini
@@ -1034,6 +1365,24 @@ export function extractSheetEmployeeInfo(
       isCurrentEmployeeMatch = true;
     } else if (currName && sName.includes(currName)) {
       isCurrentEmployeeMatch = true;
+    }
+  }
+
+  if (!detectedName) {
+    if (
+      !/^sheet\d+$/i.test(cleanSheetName) &&
+      !/template|rekap|summary|panduan|form realisasi|form penilaian|kpi matrix|_system_mapping/i.test(cleanSheetName)
+    ) {
+      const nameCand = cleanSheetName
+        .replace(/\b\d{1,2}\.\d{3,4}\.\d{3,4}\b/, "")
+        .replace(/[-_()]/g, " ")
+        .trim();
+      if (nameCand.length > 2) {
+        detectedName = nameCand;
+      }
+    }
+    if (!detectedName && currentEmployee?.name && isCurrentEmployeeMatch) {
+      detectedName = currentEmployee.name;
     }
   }
 
@@ -1059,11 +1408,16 @@ export function parseKpiExcelWorkbook(
 
   for (let i = 0; i < wb.SheetNames.length; i++) {
     const sheetName = wb.SheetNames[i];
+    // Lewati sheet mapping sistem dan panduan
+    if (/^_system_mapping|panduan & ketentuan|panduan/i.test(sheetName)) {
+      continue;
+    }
+
     const ws = wb.Sheets[sheetName];
     if (!ws) continue;
 
     const employeeInfo = extractSheetEmployeeInfo(ws, sheetName, currentEmployee);
-    const blocks = parseKpiExcelSheet(ws);
+    const blocks = parseKpiExcelSheet(ws, sheetName);
     const preview = generateBatchPreview(blocks, availableIndicators, fileName);
 
     sheets.push({
@@ -1079,13 +1433,54 @@ export function parseKpiExcelWorkbook(
     });
   }
 
-  // Cari default activeSheetIndex:
-  // 1. Sheet yang sesuai dengan karyawan aktif & memiliki parameter
-  // 2. Sheet pertama yang memiliki parameter > 0
-  // 3. Fallback ke sheet index 0
+  // Cross-Sheet Correlation:
+  // Jika ada Form Realisasi Actual DAN Form Penilaian dalam berkas yang sama:
+  // Hubungkan nilai skor yang telah dievaluasi di Form Penilaian ke Form Realisasi Actual!
+  const actualSheet = sheets.find((s) => /realisasi|actual/i.test(s.sheetName));
+  const penilaianSheet = sheets.find((s) => /penilaian|matrix/i.test(s.sheetName));
+
+  if (actualSheet && penilaianSheet) {
+    for (const actItem of actualSheet.items) {
+      const matchedP = penilaianSheet.items.find(
+        (p) => cleanParamTitle(p.rawTitle) === cleanParamTitle(actItem.rawTitle)
+      );
+      if (matchedP) {
+        // Form Realisasi Actual adalah sumber utama pengukuran aktual (misal 97%, 99%, 7%, 25M, 101%, 288).
+        // HANYA gunakan skor dari Form Penilaian jika Form Realisasi Actual belum menghasilkan skor (misal teks/kualitatif)
+        if (
+          (actItem.score === null || actItem.score === undefined) &&
+          matchedP.score !== null &&
+          matchedP.score !== undefined
+        ) {
+          actItem.excelScore = matchedP.score;
+          actItem.score = matchedP.score;
+          actItem.weightedScoreFraction = matchedP.weightedScoreFraction;
+          actItem.weightedScorePct = matchedP.weightedScorePct;
+          actItem.weightedScoreDisplay = matchedP.weightedScoreDisplay;
+        }
+        if (matchedP.bandLabel && (!actItem.bandLabel || actItem.bandLabel === "Tidak cocok")) {
+          actItem.bandLabel = matchedP.bandLabel;
+        }
+        if (matchedP.excelBandCriteria && (!actItem.bandLabel || actItem.bandLabel === "Tidak cocok")) {
+          actItem.excelBandCriteria = matchedP.excelBandCriteria;
+          actItem.bandLabel = matchedP.excelBandCriteria;
+        }
+        if (matchedP.excelUnit && !actItem.excelUnit) {
+          actItem.excelUnit = matchedP.excelUnit;
+        }
+      }
+    }
+  }
+
+  // Prioritaskan Form Realisasi Actual sebagai default activeSheetIndex jika memiliki data
   let activeSheetIndex = sheets.findIndex(
-    (s) => s.employeeInfo.isCurrentEmployeeMatch && s.totalParsedBlocks > 0
+    (s) => /realisasi|actual/i.test(s.sheetName) && s.totalParsedBlocks > 0
   );
+  if (activeSheetIndex === -1) {
+    activeSheetIndex = sheets.findIndex(
+      (s) => s.employeeInfo.isCurrentEmployeeMatch && s.totalParsedBlocks > 0
+    );
+  }
   if (activeSheetIndex === -1) {
     activeSheetIndex = sheets.findIndex((s) => s.totalParsedBlocks > 0);
   }

@@ -59,6 +59,7 @@ export interface ScoringContext {
   direction?: string | null;
   measurementType?: string | null;
   unit?: string | null;
+  indicatorName?: string | null;
 }
 
 export interface KpiScoreResult {
@@ -80,19 +81,151 @@ export interface KpiScoreResult {
 }
 
 /**
+ * Menentukan arah evaluasi KPI (Higher is Better vs Lower is Better) secara akurat.
+ * Prioritas utama adalah membaca pola operator pada Kriteria Penilaian (scoring rules)
+ * agar selalu konsisten dengan penilaian aktual di tabel.
+ */
+export function resolveKpiDirection(
+  rules?: GenericScoringRule[] | null,
+  explicitDirection?: string | null,
+  indicatorName?: string | null,
+  measurementType?: string | null,
+  unit?: string | null
+): "HIGHER_IS_BETTER" | "LOWER_IS_BETTER" | "EXACT_TARGET" | "NOT_APPLICABLE" {
+  const dirUpper = (explicitDirection || "").toUpperCase().trim();
+  const mTypeUpper = (measurementType || "").toUpperCase().trim();
+  const uLower = (unit || "").toLowerCase().trim();
+  const nameLower = (indicatorName || "").toLowerCase().trim();
+
+  if (
+    dirUpper === "NOT_APPLICABLE" ||
+    dirUpper === "NONE" ||
+    mTypeUpper === "TEXT" ||
+    mTypeUpper === "BOOLEAN" ||
+    uLower === "teks" ||
+    uLower === "biner"
+  ) {
+    return "NOT_APPLICABLE";
+  }
+
+  // 1. Evaluasi objektif dari aturan Kriteria Penilaian (scoring bands)
+  if (Array.isArray(rules) && rules.length >= 2) {
+    const validRules = rules.filter(
+      (r) => r && r.score !== null && r.score !== undefined && !isNaN(Number(r.score))
+    );
+    if (validRules.length >= 2) {
+      const sortedByScore = [...validRules].sort((a, b) => Number(b.score) - Number(a.score));
+      const bestRule = sortedByScore[0];
+      const worstRule = sortedByScore[sortedByScore.length - 1];
+      const bestOp = String(bestRule.operator || "").toUpperCase().trim();
+      const worstOp = String(worstRule.operator || "").toUpperCase().trim();
+      const bestLabel = String(bestRule.label || "").trim();
+      const worstLabel = String(worstRule.label || "").trim();
+
+      // Cek operator pada skor tertinggi (best band)
+      if (
+        bestOp === "GT" ||
+        bestOp === ">" ||
+        bestOp === "GTE" ||
+        bestOp === ">=" ||
+        bestOp === "≥" ||
+        /^(?:>=?|≥)/.test(bestLabel)
+      ) {
+        return "HIGHER_IS_BETTER";
+      }
+      if (
+        bestOp === "LT" ||
+        bestOp === "<" ||
+        bestOp === "LTE" ||
+        bestOp === "<=" ||
+        bestOp === "≤" ||
+        /^(?:<=?|≤)/.test(bestLabel)
+      ) {
+        return "LOWER_IS_BETTER";
+      }
+
+      // Jika best band adalah EQ / BETWEEN, cek operator pada skor terendah (worst band)
+      if (
+        worstOp === "LT" ||
+        worstOp === "<" ||
+        worstOp === "LTE" ||
+        worstOp === "<=" ||
+        worstOp === "≤" ||
+        /^(?:<=?|≤)/.test(worstLabel)
+      ) {
+        return "HIGHER_IS_BETTER";
+      }
+      if (
+        worstOp === "GT" ||
+        worstOp === ">" ||
+        worstOp === "GTE" ||
+        worstOp === ">=" ||
+        worstOp === "≥" ||
+        /^(?:>=?|≥)/.test(worstLabel)
+      ) {
+        return "LOWER_IS_BETTER";
+      }
+
+      // Bandingkan nilai ambang antara bestRule dan worstRule jika nilainya berbeda
+      const bestVal = bestRule.minValue ?? bestRule.maxValue ?? null;
+      const worstVal = worstRule.minValue ?? worstRule.maxValue ?? null;
+      if (bestVal !== null && worstVal !== null && Number(bestVal) !== Number(worstVal)) {
+        return Number(bestVal) < Number(worstVal) ? "LOWER_IS_BETTER" : "HIGHER_IS_BETTER";
+      }
+    }
+  }
+
+  // 2. Gunakan direction eksplisit jika tersedia
+  if (dirUpper === "LOWER_IS_BETTER" || dirUpper === "INVERSE") {
+    return "LOWER_IS_BETTER";
+  }
+  if (dirUpper === "EXACT_TARGET") {
+    return "EXACT_TARGET";
+  }
+  if (dirUpper === "HIGHER_IS_BETTER" || dirUpper === "NORMAL") {
+    return "HIGHER_IS_BETTER";
+  }
+
+  // 3. Fallback dari kata kunci nama indikator / satuan
+  if (
+    uLower === "sp" ||
+    uLower === "insiden" ||
+    uLower === "kasus" ||
+    nameLower.includes("deadstock") ||
+    nameLower.includes("stock on hand") ||
+    /\bsp\b/i.test(nameLower) ||
+    nameLower.includes("surat peringatan") ||
+    nameLower.includes("kasus") ||
+    nameLower.includes("pelanggaran") ||
+    nameLower.includes("komplain") ||
+    nameLower.includes("insiden") ||
+    nameLower.includes("accident") ||
+    nameLower.includes("terlambat") ||
+    nameLower.includes("loss")
+  ) {
+    return "LOWER_IS_BETTER";
+  }
+
+  return "HIGHER_IS_BETTER";
+}
+
+/**
  * Menghitung persentase Realisasi Aktual secara dinamis berdasarkan Target dan KPI Direction.
  * Aturan:
- * Higher is Better = (Actual / Target) * 100%
- * Lower is Better = (Target / Actual) * 100%
- * Text/Boolean / Not Applicable = Tidak menggunakan rumus persentase (return null, evaluasi langsung ke criteria).
- * Exact Target = Actual == Target ? 100% : 0%
+ * - Jika satuan adalah '%' dan target sudah berupa skala persentase (<= 100) dengan basis komparasi ACTUAL,
+ *   maka nilai aktual itu sendiri adalah persentase realisasi (contoh: Actual 97% -> Realisasi 97%).
+ * - Higher is Better = (Actual / Target) * 100%
+ * - Lower is Better = (Target / Actual) * 100%
+ * - Text/Boolean / Not Applicable = Tidak menggunakan rumus persentase (return null, evaluasi langsung ke criteria).
+ * - Exact Target = Actual == Target ? 100% : 0%
  */
 export function calculateDynamicRealization(
   actual: number | string | null | undefined,
   target: number | string | null | undefined,
   direction?: string | null,
   measurementType?: string | null,
-  unit?: string | null
+  unit?: string | null,
+  compareBasis?: string | null
 ): {
   realizationPct: number | null;
   isNotApplicable: boolean;
@@ -101,6 +234,7 @@ export function calculateDynamicRealization(
   const dirUpper = (direction || "").toUpperCase().trim();
   const mTypeUpper = (measurementType || "").toUpperCase().trim();
   const uLower = (unit || "").toLowerCase().trim();
+  const basisUpper = (compareBasis || "ACTUAL").toUpperCase().trim();
 
   const isTextOrBool =
     dirUpper === "NOT_APPLICABLE" ||
@@ -141,7 +275,25 @@ export function calculateDynamicRealization(
     ? (typeof target === "number" ? target : parseFloat(String(target).replace(/,/g, ".")))
     : null;
 
-  if (isNaN(actNum) || tgtNum === null || isNaN(tgtNum)) {
+  if (isNaN(actNum)) {
+    return {
+      realizationPct: null,
+      isNotApplicable: false,
+      cleanDirection: cleanDir,
+    };
+  }
+
+  // Jika indikator sudah bersatuan '%' dengan target skala persentase (<= 100) dan dievaluasi langsung (ACTUAL),
+  // tampilkan nilai aktual persentase secara langsung agar selaras dengan rentang Band (contoh: 97% vs > 95%).
+  if ((uLower === "%" || uLower === "persen") && basisUpper !== "ACHIEVEMENT" && (tgtNum === null || isNaN(tgtNum) || tgtNum <= 100)) {
+    return {
+      realizationPct: parseFloat(actNum.toFixed(2)),
+      isNotApplicable: false,
+      cleanDirection: cleanDir,
+    };
+  }
+
+  if (tgtNum === null || isNaN(tgtNum)) {
     return {
       realizationPct: null,
       isNotApplicable: false,
@@ -196,23 +348,64 @@ export function matchGenericRule(
   const numVal = isValNumeric ? Number(value) : null;
   const strVal = String(value).trim().toLowerCase();
 
-  // 1. First pass: Standard exact operator matching
+  // Deteksi apakah rules memiliki petunjuk multiplier (Miliar, Juta, Ribu)
+  const setHasMiliar = ordered.some((r) => /(?:miliar|milyar|[0-9]\s*m\b)/i.test(r.label || ""));
+  const setHasJuta = ordered.some((r) => /(?:juta|million|[0-9]\s*jt\b)/i.test(r.label || ""));
+  const setHasRibu = ordered.some((r) => /(?:ribu|thousand|[0-9]\s*k\b)/i.test(r.label || ""));
+
+  // 1. First pass: Standard exact operator matching with full numeric support
   for (const r of ordered) {
     const op = String(r.operator || "").toUpperCase();
-    const min = r.minValue !== null && r.minValue !== undefined ? Number(r.minValue) : null;
-    const max = r.maxValue !== null && r.maxValue !== undefined ? Number(r.maxValue) : null;
+    let min = r.minValue !== null && r.minValue !== undefined ? Number(r.minValue) : null;
+    let max = r.maxValue !== null && r.maxValue !== undefined ? Number(r.maxValue) : null;
 
     if (op === "TEXT" || op === "CONTAINS" || (!isValNumeric && r.label)) {
       const ruleText = (r.label || "").toLowerCase();
       if (op === "CONTAINS" && strVal.includes(ruleText)) return r;
       if (ruleText === strVal) return r;
       if (ruleText.includes(strVal) && strVal.length > 0) return r;
+      if (numVal !== null && Number(r.score) === numVal) return r;
       continue;
     }
 
     if (numVal === null) {
       if (r.label && r.label.toLowerCase() === strVal) return r;
       continue;
+    }
+
+    // Dynamic multiplier scaling (e.g. 25 M -> 25.000.000.000)
+    const ruleLabel = (r.label || "").toLowerCase();
+    let mult = 1;
+    if (
+      /(?:miliar|milyar|[0-9]\s*m\b)/i.test(ruleLabel) ||
+      (setHasMiliar && ((min !== null && min > 0 && min <= 1000) || (max !== null && max > 0 && max <= 1000)))
+    ) {
+      mult = 1_000_000_000;
+    } else if (
+      /(?:juta|million|[0-9]\s*jt\b)/i.test(ruleLabel) ||
+      (setHasJuta && ((min !== null && min > 0 && min <= 1000) || (max !== null && max > 0 && max <= 1000)))
+    ) {
+      mult = 1_000_000;
+    } else if (
+      /(?:ribu|thousand|[0-9]\s*k\b)/i.test(ruleLabel) ||
+      (setHasRibu && ((min !== null && min > 0 && min <= 1000) || (max !== null && max > 0 && max <= 1000)))
+    ) {
+      mult = 1_000;
+    } else if (
+      numVal >= 1_000_000_000 &&
+      ((min !== null && min > 0 && min <= 1000) || (max !== null && max > 0 && max <= 1000))
+    ) {
+      mult = 1_000_000_000;
+    } else if (
+      numVal >= 1_000_000 &&
+      ((min !== null && min > 0 && min <= 1000) || (max !== null && max > 0 && max <= 1000))
+    ) {
+      mult = 1_000_000;
+    }
+
+    if (mult > 1) {
+      if (min !== null && min <= 1000) min = min * mult;
+      if (max !== null && max <= 1000) max = max * mult;
     }
 
     switch (op) {
@@ -302,15 +495,27 @@ export function calculateKpiScore(
   const pWeight = normalizeWeight(context.indicatorWeight);
   const cWeight = normalizeWeight(context.parameterWeight);
 
-  const { realizationPct, isNotApplicable } = calculateDynamicRealization(
-    actualValue,
-    context.target,
+  const resolvedDirection = resolveKpiDirection(
+    rules,
     context.direction,
+    context.indicatorName,
     context.measurementType,
     context.unit
   );
 
-  const realizationPctDisplay = realizationPct !== null ? `${realizationPct.toFixed(1)}%` : "-";
+  const { realizationPct, isNotApplicable } = calculateDynamicRealization(
+    actualValue,
+    context.target,
+    resolvedDirection,
+    context.measurementType,
+    context.unit,
+    context.compareBasis
+  );
+
+  const realizationPctDisplay =
+    realizationPct !== null
+      ? `${Number.isInteger(realizationPct) ? realizationPct : Number(realizationPct.toFixed(1))}%`
+      : "-";
 
   if (actualValue === null || actualValue === undefined || String(actualValue).trim() === "") {
     return {
@@ -339,14 +544,36 @@ export function calculateKpiScore(
   } else {
     const isNumeric = typeof actualValue === "number" || (!isNaN(Number(actualValue)) && String(actualValue).trim() !== "");
     const numActual = isNumeric ? Number(actualValue) : null;
+    const tgtNum =
+      context.target !== null && context.target !== undefined && String(context.target).trim() !== ""
+        ? Number(context.target)
+        : null;
+
     const rulesHavePercent = rules.some(
       (r) =>
         (r.label && r.label.includes("%")) ||
         (r.minValue !== null && r.minValue !== undefined && Number(r.minValue) > 30) ||
         (r.maxValue !== null && r.maxValue !== undefined && Number(r.maxValue) > 30)
     );
+
+    // Deteksi jika Target adalah angka non-persentase (> 100, misal 288 hari kerja) namun Band berupa % (<= 100)
+    const maxRuleThreshold = rules.reduce((max, r) => {
+      const m1 = r.minValue !== null && r.minValue !== undefined ? Number(r.minValue) : 0;
+      const m2 = r.maxValue !== null && r.maxValue !== undefined ? Number(r.maxValue) : 0;
+      return Math.max(max, m1, m2);
+    }, 0);
+    const isTargetCountWithPercentBands =
+      tgtNum !== null &&
+      !isNaN(tgtNum) &&
+      tgtNum > 105 &&
+      maxRuleThreshold > 0 &&
+      maxRuleThreshold <= 105 &&
+      numActual !== null &&
+      numActual > 105;
+
     const isAchievementBasis =
       context.compareBasis === "ACHIEVEMENT" ||
+      isTargetCountWithPercentBands ||
       (context.compareBasis !== "ACTUAL" && (rulesHavePercent || context.unit === "%"));
 
     if (isAchievementBasis && realizationPct !== null) {
@@ -531,15 +758,43 @@ export function scoreItem(
   let annualActual: number | null = null;
   let achievement: number | null = null;
 
-  if (param.inputType === "QUALITATIVE" || (param as any).measurementType === "TEXT") {
-    if (!input.qualitativeValue) return empty;
-    const cleanQual = input.qualitativeValue.trim().toLowerCase();
+  const isNumericUnit = (u?: string | null) => {
+    const s = (u || "").trim().toLowerCase();
+    return s === "%" || s === "persen" || s === "percentage" || s === "rp" || s === "idr" || s === "rupiah" || s.includes("rp/");
+  };
+
+  const isQual =
+    param.inputType === "QUALITATIVE" ||
+    (param as any).measurementType === "TEXT" ||
+    (param.unit || "").trim().toLowerCase() === "teks" ||
+    !isNumericUnit(param.unit);
+
+  if (isQual) {
+    const rawVal =
+      input.qualitativeValue ||
+      (input.actual !== null && input.actual !== undefined ? String(input.actual) : "");
+    if (!rawVal.trim()) return empty;
+    const cleanQual = rawVal.trim().toLowerCase();
+    const numVal = Number(rawVal);
+    const isNum = !isNaN(numVal);
+
     band =
       bands.find((b) => {
+        if (
+          isNum &&
+          (num(b.score) === numVal || (b.minValue !== null && num(b.minValue) === numVal))
+        ) {
+          return true;
+        }
         const bLabel = (b.label || "").trim().toLowerCase();
-        const bMin = b.minValue !== null && b.minValue !== undefined ? String(b.minValue).trim().toLowerCase() : "";
+        const bMin =
+          b.minValue !== null && b.minValue !== undefined
+            ? String(b.minValue).trim().toLowerCase()
+            : "";
         return bLabel === cleanQual || (bMin !== "" && bMin === cleanQual);
       }) ?? null;
+
+    annualActual = isNum ? numVal : (band ? (num(band.score) ?? null) : null);
   } else {
     let target = input.target;
     const mActuals = input.monthlyActuals ?? [];

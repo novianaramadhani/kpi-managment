@@ -7,8 +7,6 @@ import {
   Plus,
   Pencil,
   Trash2,
-  ArrowUp,
-  ArrowDown,
   AlertTriangle,
   AlertCircle,
   Info,
@@ -16,6 +14,8 @@ import {
   X,
   Loader2,
   Settings,
+  Upload,
+  FileSpreadsheet,
 } from "lucide-react";
 import type { KpiCategory, KpiParameter, KpiBand, KpiCalculationRule } from "@/db/schema";
 import Swal from "sweetalert2";
@@ -57,6 +57,8 @@ export interface KpiModernSpreadsheetProps {
   isEditTemplateMode?: boolean;
   onToggleEditTemplateMode?: () => void;
   templateId?: number;
+  onImportExcel?: () => void;
+  onAddCategory?: () => void;
 }
 
 // Helper untuk memformat Kondisi, Nilai / Range, dan Skor
@@ -73,7 +75,11 @@ function formatCriteriaValues(band: KpiBand, unit?: string | null) {
       : null;
   const scoreNum =
     band.score !== null && band.score !== undefined ? Number(band.score) : 0;
-  const score = !isNaN(scoreNum) ? scoreNum.toFixed(2) : "0.00";
+  const score = !isNaN(scoreNum)
+    ? Number.isInteger(scoreNum)
+      ? String(scoreNum)
+      : scoreNum.toFixed(2).replace(/\.?0+$/, "")
+    : "0";
 
   let condition = "";
   let valueRange = "";
@@ -121,7 +127,6 @@ function formatCriteriaValues(band: KpiBand, unit?: string | null) {
     valueRange = min !== null ? (max !== null ? `${min} - ${max}` : String(min)) : "-";
   }
 
-  // Jika ada label terformat spesifik atau teks keterangan kualitatif (e.g. "Sangat Baik", "Baik", "Kurang")
   if (band.label && band.label.trim()) {
     const lbl = band.label.trim();
     if (/^[><=≥≤\d]/.test(lbl) || lbl.includes("%") || lbl.includes("-")) {
@@ -133,7 +138,6 @@ function formatCriteriaValues(band: KpiBand, unit?: string | null) {
     }
   }
 
-  // Ekstraksi terpisah: Operator pembanding & Nilai kriteria
   let operatorSymbol = "=";
   let criteriaValue = condition;
   let isUnrecognizedOperator = false;
@@ -171,7 +175,6 @@ function formatCriteriaValues(band: KpiBand, unit?: string | null) {
     criteriaValue = extractCriteriaValue(rawText, "EQ") || rawText;
   }
 
-  // Jika criteriaValue masih diawali simbol operator, bersihkan agar benar-benar terpisah
   if (operatorSymbol === "<" || operatorSymbol === ">" || operatorSymbol === "=") {
     criteriaValue = criteriaValue.replace(/^[<>=≤≥\s]+/, "").trim();
   } else if (operatorSymbol === "<=" || operatorSymbol === ">=") {
@@ -186,31 +189,27 @@ function formatCriteriaValues(band: KpiBand, unit?: string | null) {
 }
 
 export function renderOperatorBadge(operatorSymbol: string, isUnrecognizedOperator?: boolean) {
-  let colorClasses = "bg-slate-50 text-slate-600 border-slate-200";
-
   if (isUnrecognizedOperator || operatorSymbol === "?") {
-    colorClasses = "bg-amber-50 text-amber-700 border-amber-300 ring-1 ring-amber-300";
-  } else if (operatorSymbol === "<" || operatorSymbol === "<=" || operatorSymbol === "≤") {
-    colorClasses = "bg-rose-50 text-rose-500 border-rose-200";
-  } else if (operatorSymbol === "=") {
-    colorClasses = "bg-blue-50 text-blue-500 border-blue-200";
-  } else if (operatorSymbol === ">" || operatorSymbol === ">=" || operatorSymbol === "≥") {
-    colorClasses = "bg-emerald-50 text-emerald-600 border-emerald-200";
-  } else if (operatorSymbol === "Rentang") {
-    colorClasses = "bg-purple-50 text-purple-600 border-purple-200";
-  } else if (operatorSymbol === "Teks") {
-    colorClasses = "bg-slate-50 text-slate-600 border-slate-200";
+    return (
+      <span
+        className="inline-flex items-center justify-center px-1.5 py-0.5 text-[11px] font-bold font-mono rounded bg-amber-50 text-amber-700 border border-amber-200 select-none"
+        title={`Operator: ${operatorSymbol}`}
+      >
+        {operatorSymbol}
+      </span>
+    );
   }
 
   return (
     <span
-      className={`inline-flex items-center justify-center min-w-[40px] px-1.5 h-6 text-xs font-bold font-mono rounded border shadow-2xs select-none ${colorClasses}`}
+      className="text-[11px] font-mono font-medium text-slate-600 select-none"
       title={`Operator: ${operatorSymbol}`}
     >
       {operatorSymbol}
     </span>
   );
 }
+
 export function renderEditableOperatorCell(
   bandId: number,
   currentOp: string,
@@ -223,7 +222,7 @@ export function renderEditableOperatorCell(
       value={val}
       onChange={(e) => onChange(bandId, "operatorSymbol", e.target.value)}
       aria-label="Pilih operator kriteria"
-      className="w-full min-w-[56px] max-w-[76px] h-7 px-1 text-xs font-mono font-bold text-center bg-white border border-slate-300 rounded focus:border-blue-500 focus:ring-1 focus:ring-blue-500 shadow-2xs cursor-pointer mx-auto block"
+      className="w-full min-w-[54px] max-w-[72px] h-6 px-1 text-[11px] font-mono font-semibold text-center bg-white border border-slate-200 rounded focus:border-blue-500 focus:outline-hidden cursor-pointer mx-auto block"
     >
       <option value="<">&lt;</option>
       <option value="<=">&le;</option>
@@ -250,7 +249,7 @@ export function renderEditableCriteriaCell(
       onChange={(e) => onChange(bandId, "criteriaValue", e.target.value)}
       placeholder="Nilai Kriteria"
       aria-label="Nilai kriteria"
-      className="w-full h-7 px-2 text-xs font-medium text-slate-900 bg-white border border-slate-300 rounded focus:border-blue-500 focus:ring-1 focus:ring-blue-500 shadow-2xs"
+      className="w-full h-6 px-2 text-[11px] font-mono text-slate-800 bg-white border border-slate-200 rounded focus:border-blue-500 focus:outline-hidden"
     />
   );
 }
@@ -270,7 +269,7 @@ export function renderEditableScoreCell(
       onChange={(e) => onChange(bandId, "score", e.target.value)}
       placeholder="0"
       aria-label="Skor kriteria"
-      className="w-16 h-7 px-1.5 text-xs font-bold tabular-nums text-center text-slate-900 bg-white border border-slate-300 rounded focus:border-blue-500 focus:ring-1 focus:ring-blue-500 shadow-2xs mx-auto block"
+      className="w-14 h-6 px-1 text-[11px] font-mono font-semibold tabular-nums text-center text-slate-800 bg-white border border-slate-200 rounded focus:border-blue-500 focus:outline-hidden mx-auto block"
     />
   );
 }
@@ -279,7 +278,6 @@ export function KpiModernSpreadsheet({
   categories,
   parameters,
   bands,
-  calculationRules = [],
   templateTargetPct = 115,
   expandedCategoryIds,
   onToggleCategory,
@@ -291,24 +289,19 @@ export function KpiModernSpreadsheet({
   onAddIndicator,
   onEditIndicator,
   onDeleteIndicator,
-  onDuplicateIndicator,
-  onMoveIndicatorOrder,
   onAddCriteriaBand,
-  onEditCriteriaBand,
-  onDeleteCriteriaBand,
-  onMoveBandOrder,
   isEditTemplateMode = false,
   onToggleEditTemplateMode,
   templateId,
+  onImportExcel,
+  onAddCategory,
 }: KpiModernSpreadsheetProps) {
-  // Mode Edit Template - State & Drafts
   const [draftBands, setDraftBands] = useState<
     Record<number, { operatorSymbol: string; criteriaValue: string; score: string }>
   >({});
   const [isSavingBands, setIsSavingBands] = useState(false);
   const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
 
-  // Close contextual action menu on click outside
   useEffect(() => {
     if (!openActionMenuId) return;
     const handleClickOutside = (e: MouseEvent) => {
@@ -321,7 +314,6 @@ export function KpiModernSpreadsheet({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [openActionMenuId]);
 
-  // Inisialisasi draft saat masuk ke Mode Edit Template atau ketika bands diperbarui
   useEffect(() => {
     if (isEditTemplateMode) {
       const initialDrafts: Record<
@@ -412,12 +404,11 @@ export function KpiModernSpreadsheet({
       setIsSavingBands(false);
     }
   };
-  // Sort categories by sortOrder ASC, id ASC
+
   const sortedCategories = useMemo(() => {
     return [...categories].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
   }, [categories]);
 
-  // Group parameters by category
   const categoryParametersMap = useMemo(() => {
     const map = new Map<number, KpiParameter[]>();
     for (const cat of sortedCategories) {
@@ -429,12 +420,14 @@ export function KpiModernSpreadsheet({
     return map;
   }, [sortedCategories, parameters]);
 
-  // Inline editing parameter name & weight state
+  const totalTemplateWeightPct = useMemo(() => {
+    return sortedCategories.reduce((sum, c) => sum + Math.round(Number(c.weight) * 100), 0);
+  }, [sortedCategories]);
+
   const [editingCatId, setEditingCatId] = useState<number | null>(null);
   const [draftCatName, setDraftCatName] = useState("");
   const [draftCatWeight, setDraftCatWeight] = useState("");
 
-  // Quick edit weight only state (for parameter & indicator)
   const [quickWeightCatId, setQuickWeightCatId] = useState<number | null>(null);
   const [quickWeightCatValue, setQuickWeightCatValue] = useState("");
 
@@ -523,25 +516,18 @@ export function KpiModernSpreadsheet({
   };
 
   return (
-    <div className="w-full bg-white border border-[#dbe2ea] rounded-xl overflow-hidden shadow-2xs text-slate-800">
+    <div className="w-full overflow-x-auto rounded-lg border border-slate-200 bg-white text-slate-800">
       {/* Sticky Banner Mode Edit Template */}
       {isEditTemplateMode && (
-        <div className="p-3 sm:p-3.5 px-4 bg-slate-900 border-b border-slate-800 text-white flex flex-wrap items-center justify-between gap-3 animate-in fade-in duration-150 sticky top-0 z-20">
-          <div className="flex items-center gap-2.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-amber-400 shrink-0" />
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs sm:text-[13px] font-bold text-white">
-                  Mode Edit Template Aktif
-                </span>
-                <span className="text-[10px] font-semibold text-amber-300 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-700/60">
-                  Edit Massal
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-300 mt-0.5">
-                Ubah Operator, Kriteria Penilaian, dan Skor langsung pada baris tabel, lalu simpan semua perubahan sekaligus.
-              </p>
-            </div>
+        <div className="px-4 py-2.5 bg-sky-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 sticky top-0 z-10">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-sky-600 shrink-0" />
+            <span className="text-xs font-semibold text-sky-950">
+              Mode Edit Massal Aktif:
+            </span>
+            <span className="text-xs text-slate-600">
+              Ubah Operator, Kriteria Penilaian, dan Skor langsung pada tabel.
+            </span>
           </div>
 
           <div className="flex items-center gap-2">
@@ -549,7 +535,7 @@ export function KpiModernSpreadsheet({
               type="button"
               onClick={handleCancelEditTemplate}
               disabled={isSavingBands}
-              className="px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition cursor-pointer disabled:opacity-50"
+              className="px-3 py-1 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white border border-slate-200 rounded-md transition cursor-pointer disabled:opacity-50"
             >
               Batal
             </button>
@@ -557,7 +543,7 @@ export function KpiModernSpreadsheet({
               type="button"
               onClick={handleSaveAllTemplateEdits}
               disabled={isSavingBands}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-2xs transition cursor-pointer active:scale-98 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-sky-950 bg-sky-100 hover:bg-sky-200/80 border border-sky-200 rounded-md transition cursor-pointer disabled:opacity-50"
             >
               {isSavingBands ? (
                 <>
@@ -575,975 +561,674 @@ export function KpiModernSpreadsheet({
         </div>
       )}
 
-      <div className="w-full overflow-x-auto">
-        <table className="w-full min-w-[760px] border-collapse text-left table-fixed">
-          {/* 6 Kolom KPI Spreadsheet: Parameter 30% | Operator 75px | Kriteria 38% | Skor 70px | Bobot 70px | Aksi 48px */}
-          <colgroup>
-            <col style={{ width: "30%" }} />
-            <col style={{ width: "75px", minWidth: "75px", maxWidth: "75px" }} />
-            <col style={{ width: "38%" }} />
-            <col style={{ width: "70px", minWidth: "70px", maxWidth: "70px" }} />
-            <col style={{ width: "70px", minWidth: "70px", maxWidth: "70px" }} />
-            <col style={{ width: "48px", minWidth: "48px", maxWidth: "48px" }} />
-          </colgroup>
+      <table className="w-full text-left text-xs border-collapse">
+        {/* ========================================================= */}
+        {/* HEADER TABEL (Nama Kolom Tetap Sama, Desain Sama dengan Form Penilaian) */}
+        {/* ========================================================= */}
+        <thead>
+          <tr className="border-b border-slate-200 bg-slate-100/80 text-[11px] font-semibold text-slate-600 select-none">
+            <th className="py-2.5 px-3.5 text-left border-r border-slate-200 min-w-[220px]">
+              Parameter / Indikator
+            </th>
+            <th className="py-2.5 px-2.5 text-center border-r border-slate-200 w-24 min-w-[80px]">
+              Operator
+            </th>
+            <th className="py-2.5 px-3 text-left border-r border-slate-200 min-w-[180px]">
+              Kriteria Penilaian
+            </th>
+            <th className="py-2.5 px-2 text-center border-r border-slate-200 w-20 min-w-[68px]">
+              Skor
+            </th>
+            <th className="py-2.5 px-2 text-center border-r border-slate-200 w-20 min-w-[72px]">
+              Bobot
+            </th>
+            <th className="py-2.5 px-2.5 text-center w-24 min-w-[84px]">
+              Aksi
+            </th>
+          </tr>
+        </thead>
 
-          {/* ========================================================= */}
-          {/* HEADER TABEL: Header Ringkas 1 Baris (Compact 36px)        */}
-          {/* ========================================================= */}
-          <thead>
-            <tr
-              className="border-b border-[#dbe2ea] text-xs font-semibold text-slate-700 select-none h-9"
-              style={{ backgroundColor: "#f8fafc" }}
-            >
-              <th
-                className="py-1.5 px-3 text-left border-r border-[#dbe2ea] align-middle font-semibold"
-                style={{ width: "30%" }}
-              >
-                Parameter / Indikator
-              </th>
-              <th
-                className="py-1.5 px-2 text-center border-r border-[#dbe2ea] align-middle font-semibold"
-                style={{ width: "75px", minWidth: "75px", maxWidth: "75px" }}
-              >
-                Operator
-              </th>
-              <th
-                className="py-1.5 px-3 text-left border-r border-[#dbe2ea] align-middle font-semibold"
-                style={{ width: "38%" }}
-              >
-                Kriteria Penilaian
-              </th>
-              <th
-                className="py-1.5 px-2 text-center border-r border-[#dbe2ea] align-middle font-semibold"
-                style={{ width: "70px", minWidth: "70px", maxWidth: "70px" }}
-              >
-                Skor
-              </th>
-              <th
-                className="py-1.5 px-2 text-center border-r border-[#dbe2ea] align-middle font-semibold"
-                style={{ width: "70px", minWidth: "70px", maxWidth: "70px" }}
-              >
-                Bobot
-              </th>
-              <th
-                className="py-1.5 px-1 text-center align-middle font-semibold"
-                style={{ width: "48px", minWidth: "48px", maxWidth: "48px" }}
-              >
-                Aksi
-              </th>
-            </tr>
-          </thead>
-
-          {/* ========================================================= */}
-          {/* BODY TABEL: Semua Baris Mengikuti 6 Kolom Sesuai Desain   */}
-          {/* ========================================================= */}
-          <tbody>
-            {sortedCategories.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="py-8 text-center text-slate-400 text-xs italic bg-white">
-                  Belum ada parameter KPI. Klik tombol &ldquo;Tambah Kategori&rdquo; untuk mulai menyusun template.
-                </td>
-              </tr>
-            ) : (
-              sortedCategories.map((cat, catIdx) => {
-                const isDirect = cat.categoryType === "DIRECT";
-                const catWeightPct = Math.round(Number(cat.weight) * 100);
-                const catParams = categoryParametersMap.get(cat.id) || [];
-                const isExpanded = expandedCategoryIds.has(cat.id);
-                const isCatHighlighted = highlightedIds?.categoryId === cat.id;
-
-                // Direct parameter item (if mode DIRECT)
-                const directParam = isDirect ? catParams[0] : null;
-
-                // Count summary
-                const totalIndikator = isDirect ? 1 : catParams.length;
-                const paramIds = isDirect
-                  ? directParam
-                    ? [directParam.id]
-                    : []
-                  : catParams.map((p) => p.id);
-                const totalKriteria = bands.filter((b) => paramIds.includes(b.parameterId)).length;
-
-                const issueEntry = categoryIssuesMap?.get(cat.id);
-                const hasIssue = Boolean(issueEntry);
-                const issueSeverity =
-                  typeof issueEntry === "object" && issueEntry !== null && "severity" in issueEntry
-                    ? (issueEntry.severity as "INFO" | "WARNING" | "ERROR")
-                    : "WARNING";
-                const issueTooltip =
-                  typeof issueEntry === "object" && issueEntry !== null && "message" in issueEntry
-                    ? issueEntry.message
-                    : typeof issueEntry === "string"
-                    ? issueEntry
-                    : "Terdapat perhatian validasi pada parameter ini";
-
-                return (
-                  <React.Fragment key={cat.id}>
-                    {/* ========================================================= */}
-                    {/* 1. HEADER PARAMETER: Expanded (Navy Solid) vs Collapsed  */}
-                    {/* ========================================================= */}
-                    {isExpanded ? (
-                      /* EXPANDED: 6 Kolom Sempurna dengan solid royal navy yang konsisten */
-                      <tr
-                        id={`category-row-${cat.id}`}
-                        className="select-none border-b border-[#163a7d] h-9"
-                        style={{ backgroundColor: "#163a7d" }}
+        <tbody>
+          {sortedCategories.length === 0 ? (
+            <tr>
+              <td colSpan={6} className="py-12 px-6 text-center bg-white">
+                <div className="max-w-md mx-auto flex flex-col items-center justify-center text-center">
+                  <div className="h-12 w-12 rounded-xl bg-sky-50 border border-sky-200/80 flex items-center justify-center mb-3 text-sky-700">
+                    <FileSpreadsheet className="h-6 w-6" />
+                  </div>
+                  <h3 className="text-sm font-bold text-slate-800 mb-1">
+                    Struktur KPI Belum Terisi
+                  </h3>
+                  <p className="text-xs text-slate-500 leading-relaxed mb-4">
+                    Unggah file template Excel untuk langsung mengisi kategori, indikator, target, bobot, dan kriteria skor, atau susun parameter secara manual.
+                  </p>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    {onImportExcel && (
+                      <button
+                        type="button"
+                        onClick={onImportExcel}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-sky-100 hover:bg-sky-200/80 text-sky-950 border border-sky-200 px-3.5 py-1.5 text-xs font-semibold transition cursor-pointer"
                       >
-                        {/* Kolom 1: Parameter */}
-                        <td
-                          className="py-1.5 px-3 text-white align-middle border-r border-[#1e4794]"
-                          style={{ backgroundColor: "#163a7d", color: "#ffffff" }}
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <button
-                              type="button"
-                              onClick={() => onToggleCategory(cat.id)}
-                              className="p-0.5 -ml-1 text-white hover:text-white rounded hover:bg-white/10 transition cursor-pointer flex items-center shrink-0"
-                              title="Klik untuk melipat / collapse parameter"
-                            >
-                              <ChevronDown className="w-4 h-4 text-white" />
-                            </button>
+                        <Upload className="h-3.5 w-3.5" />
+                        <span>Upload Template Excel</span>
+                      </button>
+                    )}
+                    {onAddCategory && (
+                      <button
+                        type="button"
+                        onClick={onAddCategory}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 px-3.5 py-1.5 text-xs font-semibold transition cursor-pointer"
+                      >
+                        <Plus className="h-3.5 w-3.5 text-slate-500" />
+                        <span>Tambah Kategori Manual</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </td>
+            </tr>
+          ) : (
+            sortedCategories.map((cat, catIdx) => {
+              const isDirect = cat.categoryType === "DIRECT";
+              const catWeightPct = Math.round(Number(cat.weight) * 100);
+              const catParams = categoryParametersMap.get(cat.id) || [];
+              const isExpanded = expandedCategoryIds.has(cat.id);
+              const isCatHighlighted = highlightedIds?.categoryId === cat.id;
 
-                            {editingCatId === cat.id ? (
-                              <div
-                                className="flex items-center gap-2"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <input
-                                  type="text"
-                                  value={draftCatName}
-                                  onChange={(e) => setDraftCatName(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") handleSaveEditCategory(cat.id);
-                                    if (e.key === "Escape") setEditingCatId(null);
-                                  }}
-                                  autoFocus
-                                  className="h-7 px-2 text-xs font-semibold text-slate-900 bg-white rounded border border-white focus:outline-none"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => handleSaveEditCategory(cat.id)}
-                                  className="p-1 text-white bg-white/20 hover:bg-white/30 rounded cursor-pointer"
-                                  title="Simpan"
-                                >
-                                  <Check className="w-3 h-3" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingCatId(null)}
-                                  className="p-1 text-white/70 hover:text-white rounded cursor-pointer"
-                                  title="Batal"
-                                >
-                                  <X className="w-3 h-3" />
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span
-                                  onClick={() => onToggleCategory(cat.id)}
-                                  className="font-bold text-white text-xs sm:text-[13px] tracking-tight cursor-pointer truncate"
-                                >
-                                  {catIdx + 1}. {cat.name}
-                                </span>
-                                {hasIssue && (
-                                  <span title={issueTooltip} className="cursor-help shrink-0">
-                                    {issueSeverity === "ERROR" ? (
-                                      <AlertCircle className="w-3 h-3 text-rose-300" />
-                                    ) : issueSeverity === "INFO" ? (
-                                      <Info className="w-3 h-3 text-blue-200" />
-                                    ) : (
-                                      <AlertTriangle className="w-3 h-3 text-amber-300" />
-                                    )}
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </td>
+              const directParam = isDirect ? catParams[0] : null;
+              const totalIndikator = isDirect ? 1 : catParams.length;
+              const paramIds = isDirect
+                ? directParam
+                  ? [directParam.id]
+                  : []
+                : catParams.map((p) => p.id);
+              const totalKriteria = bands.filter((b) => paramIds.includes(b.parameterId)).length;
 
-                        {/* Kolom 2 & 3: Info Ringkasan (colSpan={2}) */}
-                        <td
-                          colSpan={2}
-                          className="py-1.5 px-3 text-white align-middle border-r border-[#1e4794]"
-                          style={{ backgroundColor: "#163a7d", color: "#ffffff" }}
-                        >
-                          <span className="text-white/80 text-xs font-normal">
-                            {isDirect ? `${totalKriteria} Kriteria` : `${totalIndikator} Indikator • ${totalKriteria} Kriteria`}
+              const issueEntry = categoryIssuesMap?.get(cat.id);
+              const hasIssue = Boolean(issueEntry);
+              const issueSeverity =
+                typeof issueEntry === "object" && issueEntry !== null && "severity" in issueEntry
+                  ? (issueEntry.severity as "INFO" | "WARNING" | "ERROR")
+                  : "WARNING";
+              const issueTooltip =
+                typeof issueEntry === "object" && issueEntry !== null && "message" in issueEntry
+                  ? issueEntry.message
+                  : typeof issueEntry === "string"
+                  ? issueEntry
+                  : "Terdapat perhatian validasi pada parameter ini";
+
+              // List of indicators to render inside this category (for DIRECT, use directParam as 1 item)
+              const indicatorsToRender = isDirect
+                ? directParam
+                  ? [directParam]
+                  : []
+                : catParams;
+
+              return (
+                <React.Fragment key={cat.id}>
+                  {/* ========================================================= */}
+                  {/* 1. HEADER PARAMETER: Nuansa Biru Muda Terang Sama Form KPI */}
+                  {/* ========================================================= */}
+                  <tr
+                    id={`category-row-${cat.id}`}
+                    onClick={() => onToggleCategory(cat.id)}
+                    className={`cursor-pointer select-none border-b border-sky-200/90 bg-sky-100 hover:bg-sky-200/75 transition-colors ${
+                      isCatHighlighted ? "ring-1 ring-amber-300" : ""
+                    }`}
+                  >
+                    {/* Kolom 1: Parameter Name & Status */}
+                    <td className="py-2 px-3.5 align-middle border-r border-sky-200/80">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {isExpanded ? (
+                            <ChevronDown className="w-3.5 h-3.5 text-blue-600 shrink-0 transition-transform" />
+                          ) : (
+                            <ChevronRight className="w-3.5 h-3.5 text-blue-600 shrink-0 transition-transform" />
+                          )}
+                          <span className="font-mono text-xs font-bold text-blue-600 shrink-0">
+                            {catIdx + 1}.
                           </span>
-                        </td>
 
-                        {/* Kolom 4: Skor */}
-                        <td
-                          className="py-1.5 px-2 text-white/40 text-center text-xs align-middle border-r border-[#1e4794]"
-                          style={{ backgroundColor: "#163a7d", color: "#ffffff" }}
-                        >
-                          -
-                        </td>
-
-                        {/* Kolom 5: Bobot */}
-                        <td
-                          className="py-1.5 px-2 text-white text-center align-middle border-r border-[#1e4794]"
-                          style={{ backgroundColor: "#163a7d", color: "#ffffff" }}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {quickWeightCatId === cat.id ? (
+                          {editingCatId === cat.id ? (
                             <div
-                              className="flex items-center justify-center gap-1"
+                              className="flex items-center gap-1.5"
                               onClick={(e) => e.stopPropagation()}
                             >
                               <input
-                                type="number"
-                                min="1"
-                                max="200"
-                                value={quickWeightCatValue}
-                                onChange={(e) => setQuickWeightCatValue(e.target.value)}
-                                onKeyDown={async (e) => {
-                                  if (e.key === "Enter") await handleSaveQuickWeightCat(cat.id);
-                                  if (e.key === "Escape") setQuickWeightCatId(null);
+                                type="text"
+                                value={draftCatName}
+                                onChange={(e) => setDraftCatName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") handleSaveEditCategory(cat.id);
+                                  if (e.key === "Escape") setEditingCatId(null);
                                 }}
                                 autoFocus
-                                className="w-11 h-6 text-center text-xs font-bold text-slate-900 bg-white rounded border border-white focus:outline-none"
+                                className="h-6 px-2 text-xs font-semibold text-slate-900 bg-white rounded border border-sky-300 focus:outline-hidden"
                               />
-                              <span className="text-xs font-bold text-white">%</span>
                               <button
                                 type="button"
-                                onClick={() => handleSaveQuickWeightCat(cat.id)}
-                                className="p-0.5 text-white bg-white/20 hover:bg-white/30 rounded cursor-pointer"
+                                onClick={() => handleSaveEditCategory(cat.id)}
+                                className="p-0.5 text-emerald-700 hover:bg-emerald-50 rounded cursor-pointer"
                                 title="Simpan"
                               >
-                                <Check className="w-3 h-3" />
+                                <Check className="w-3.5 h-3.5" />
                               </button>
                               <button
                                 type="button"
-                                onClick={() => setQuickWeightCatId(null)}
-                                className="p-0.5 text-white/70 hover:text-white rounded cursor-pointer"
+                                onClick={() => setEditingCatId(null)}
+                                className="p-0.5 text-slate-400 hover:text-slate-700 rounded cursor-pointer"
                                 title="Batal"
                               >
-                                <X className="w-3 h-3" />
+                                <X className="w-3.5 h-3.5" />
                               </button>
                             </div>
                           ) : (
+                            <span className="font-bold text-blue-950 text-xs tracking-tight uppercase truncate">
+                              {cat.name}
+                            </span>
+                          )}
+
+                          {hasIssue && (
+                            <span title={issueTooltip} className="cursor-help shrink-0">
+                              {issueSeverity === "ERROR" ? (
+                                <AlertCircle className="w-3.5 h-3.5 text-rose-500" />
+                              ) : issueSeverity === "INFO" ? (
+                                <Info className="w-3.5 h-3.5 text-blue-500" />
+                              ) : (
+                                <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                              )}
+                            </span>
+                          )}
+                        </div>
+
+                        <span className="inline-flex items-center gap-1.5 font-medium shrink-0 select-none text-[11px] text-emerald-700">
+                          <span className="rounded-full shrink-0 w-1.5 h-1.5 bg-emerald-500" />
+                          <span>Aktif</span>
+                        </span>
+                      </div>
+                    </td>
+
+                    {/* Kolom 2 & 3: Ringkasan Indikator & Kriteria */}
+                    <td
+                      colSpan={2}
+                      className="py-2 px-3 align-middle border-r border-sky-200/80 text-slate-700 font-medium text-xs"
+                    >
+                      {isDirect
+                        ? `1 Indikator Utama • ${totalKriteria} Kriteria`
+                        : `${totalIndikator} Indikator • ${totalKriteria} Kriteria`}
+                    </td>
+
+                    {/* Kolom 4: Skor */}
+                    <td className="py-2 px-2 text-slate-400 text-center text-xs align-middle border-r border-sky-200/80 font-mono">
+                      -
+                    </td>
+
+                    {/* Kolom 5: Bobot Parameter */}
+                    <td
+                      className="py-2 px-2 text-slate-900 text-center align-middle border-r border-sky-200/80 font-mono text-xs font-semibold"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {quickWeightCatId === cat.id ? (
+                        <div className="flex items-center justify-center gap-1">
+                          <input
+                            type="number"
+                            min="1"
+                            max="200"
+                            value={quickWeightCatValue}
+                            onChange={(e) => setQuickWeightCatValue(e.target.value)}
+                            onKeyDown={async (e) => {
+                              if (e.key === "Enter") await handleSaveQuickWeightCat(cat.id);
+                              if (e.key === "Escape") setQuickWeightCatId(null);
+                            }}
+                            autoFocus
+                            className="w-11 h-6 text-center text-xs font-bold text-slate-900 bg-white rounded border border-sky-400 focus:outline-hidden"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleSaveQuickWeightCat(cat.id)}
+                            className="p-0.5 text-emerald-700 hover:bg-emerald-50 rounded cursor-pointer"
+                            title="Simpan"
+                          >
+                            <Check className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setQuickWeightCatId(cat.id);
+                            setQuickWeightCatValue(String(catWeightPct));
+                          }}
+                          className="font-mono font-bold text-xs text-blue-600 hover:text-blue-800 cursor-pointer"
+                          title="Klik untuk ubah bobot parameter"
+                        >
+                          {catWeightPct}%
+                        </button>
+                      )}
+                    </td>
+
+                    {/* Kolom 6: Aksi Parameter */}
+                    <td
+                      className="py-2 px-2.5 text-center align-middle relative action-menu-container"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="inline-flex items-center justify-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => onToggleCategory(cat.id)}
+                          className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 transition-colors cursor-pointer"
+                        >
+                          <span>{isExpanded ? "Tutup" : "Buka"}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenActionMenuId(
+                              openActionMenuId === `cat-${cat.id}` ? null : `cat-${cat.id}`
+                            );
+                          }}
+                          className="p-1 rounded text-blue-700 hover:bg-sky-200/70 transition cursor-pointer inline-flex items-center justify-center"
+                          title="Menu Aksi Parameter"
+                        >
+                          <Settings className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      {openActionMenuId === `cat-${cat.id}` && (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          className="absolute right-1 top-full mt-1 z-30 w-44 bg-white border border-slate-200 rounded-lg shadow-lg py-1 text-left text-xs text-slate-700"
+                        >
+                          {!isDirect && onAddIndicator && (
                             <button
                               type="button"
                               onClick={() => {
-                                setQuickWeightCatId(cat.id);
-                                setQuickWeightCatValue(String(catWeightPct));
+                                setOpenActionMenuId(null);
+                                onAddIndicator(cat.id);
                               }}
-                              className="text-white font-semibold text-xs px-2 py-0.5 rounded border border-white/20 transition cursor-pointer"
-                              style={{ backgroundColor: "#102a5c" }}
-                              title="Klik untuk ubah bobot parameter"
+                              className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
                             >
-                              {catWeightPct}%
+                              <Plus className="w-3.5 h-3.5 text-blue-600" />
+                              <span>Tambah Indikator</span>
                             </button>
                           )}
-                        </td>
-
-                        {/* Kolom 6: 1 Button Actions Parameter */}
-                        <td
-                          className="py-1 px-1 text-center align-middle relative action-menu-container"
-                          style={{ backgroundColor: "#163a7d", color: "#ffffff" }}
-                          onClick={(e) => e.stopPropagation()}
-                        >
+                          {isDirect && directParam && onAddCriteriaBand && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOpenActionMenuId(null);
+                                onAddCriteriaBand(directParam.id);
+                              }}
+                              className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
+                            >
+                              <Plus className="w-3.5 h-3.5 text-blue-600" />
+                              <span>Tambah Kriteria</span>
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={(e) => {
-                              e.stopPropagation();
-                              setOpenActionMenuId(openActionMenuId === `cat-${cat.id}` ? null : `cat-${cat.id}`);
+                              setOpenActionMenuId(null);
+                              handleStartEditCategory(cat, e);
                             }}
-                            className="w-7 h-7 rounded border border-white/20 bg-white/10 hover:bg-white/20 text-white transition cursor-pointer inline-flex items-center justify-center"
-                            title="Menu Aksi Parameter"
+                            className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
                           >
-                            <Settings className="w-3.5 h-3.5" />
+                            <Pencil className="w-3.5 h-3.5 text-slate-500" />
+                            <span>Ubah Nama</span>
                           </button>
-
-                          {openActionMenuId === `cat-${cat.id}` && (
-                            <div
-                              onClick={(e) => e.stopPropagation()}
-                              className="absolute right-1 top-full mt-1 z-50 w-44 bg-white border border-slate-200 rounded-lg shadow-lg py-1 text-left text-xs text-slate-700 animate-in fade-in-50 zoom-in-95"
+                          {onDeleteCategory && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOpenActionMenuId(null);
+                                handleDeleteCategoryConfirm(cat);
+                              }}
+                              className="w-full px-3 py-1.5 text-left hover:bg-rose-50 flex items-center gap-2 cursor-pointer transition-colors text-rose-600 font-medium"
                             >
-                              {!isDirect && onAddIndicator && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setOpenActionMenuId(null);
-                                    onAddIndicator(cat.id);
-                                  }}
-                                  className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
-                                >
-                                  <Plus className="w-3.5 h-3.5 text-blue-600" />
-                                  <span>Tambah Indikator</span>
-                                </button>
-                              )}
-                              {isDirect && directParam && onAddCriteriaBand && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setOpenActionMenuId(null);
-                                    onAddCriteriaBand(directParam.id);
-                                  }}
-                                  className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
-                                >
-                                  <Plus className="w-3.5 h-3.5 text-blue-600" />
-                                  <span>Tambah Kriteria</span>
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  setOpenActionMenuId(null);
-                                  handleStartEditCategory(cat, e);
-                                }}
-                                className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
-                              >
-                                <Pencil className="w-3.5 h-3.5 text-slate-500" />
-                                <span>Ubah Nama</span>
-                              </button>
-                              {onDeleteCategory && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setOpenActionMenuId(null);
-                                    handleDeleteCategoryConfirm(cat);
-                                  }}
-                                  className="w-full px-3 py-1.5 text-left hover:bg-rose-50 flex items-center gap-2 cursor-pointer transition-colors text-rose-600 font-medium"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5 text-rose-500" />
-                                  <span>Hapus Parameter</span>
-                                </button>
-                              )}
-                            </div>
+                              <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                              <span>Hapus Parameter</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+
+                  {/* ========================================================= */}
+                  {/* 2. BARIS INDIKATOR & KRITERIA (Desain Sama dengan Form KPI) */}
+                  {/* ========================================================= */}
+                  {isExpanded &&
+                    (indicatorsToRender.length === 0 ? (
+                      <tr className="bg-white border-b border-slate-200">
+                        <td colSpan={6} className="py-6 text-center text-slate-400 italic text-xs">
+                          Belum ada indikator pada parameter ini.{" "}
+                          {onAddIndicator && (
+                            <button
+                              type="button"
+                              onClick={() => onAddIndicator(cat.id)}
+                              className="ml-1 font-semibold text-blue-600 hover:underline not-italic cursor-pointer"
+                            >
+                              + Tambah Indikator
+                            </button>
                           )}
                         </td>
                       </tr>
                     ) : (
-                      /* COLLAPSED: 6 Kolom Sempurna */
-                      <tr
-                        id={`category-row-${cat.id}`}
-                        onClick={() => onToggleCategory(cat.id)}
-                        className={`cursor-pointer select-none transition-colors border-b border-[#dbe2ea] bg-white hover:bg-[#f8fafc] group/cat h-9 ${
-                          isCatHighlighted ? "bg-amber-50/70 ring-1 ring-amber-300" : ""
-                        }`}
-                      >
-                        {/* Kolom 1: Parameter */}
-                        <td className="py-1.5 px-3 align-middle border-r border-[#dbe2ea]">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
-                              <span className="font-semibold text-slate-900 text-xs sm:text-[13px] tracking-tight truncate">
-                                {catIdx + 1}. {cat.name}
-                              </span>
-                              {hasIssue && (
-                                <span title={issueTooltip} className="cursor-help shrink-0">
-                                  {issueSeverity === "ERROR" ? (
-                                    <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
-                                  ) : issueSeverity === "INFO" ? (
-                                    <Info className="w-3 h-3 text-blue-500 shrink-0" />
-                                  ) : (
-                                    <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
-                                  )}
-                                </span>
-                              )}
-                            </div>
-                            <span
-                              className="inline-flex items-center gap-1.5 rounded-full font-medium shrink-0 select-none text-[11px] leading-none px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200"
-                            >
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-                              <span>Aktif</span>
-                            </span>
-                          </div>
-                        </td>
-
-                        {/* Kolom 2 & 3: Info Ringkasan (colSpan={2}) */}
-                        <td colSpan={2} className="py-1.5 px-3 align-middle border-r border-[#dbe2ea] text-slate-500 text-xs">
-                          <span className="text-slate-500 text-xs">
-                            {isDirect ? `${totalKriteria} Kriteria` : `${totalIndikator} Indikator • ${totalKriteria} Kriteria`}
-                          </span>
-                        </td>
-
-                        {/* Kolom 4: Skor */}
-                        <td className="py-1.5 px-2 align-middle border-r border-[#dbe2ea] text-center text-slate-400 text-xs">
-                          -
-                        </td>
-
-                        {/* Kolom 5: Bobot */}
-                        <td
-                          className="py-1.5 px-2 align-middle text-center border-r border-[#dbe2ea]"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setQuickWeightCatId(cat.id);
-                              setQuickWeightCatValue(String(catWeightPct));
-                            }}
-                            className="font-semibold text-xs sm:text-[13px] text-slate-900 tabular-nums hover:text-blue-600 px-1 py-0.5 rounded transition cursor-pointer"
-                            title="Klik untuk ubah bobot parameter"
-                          >
-                            {catWeightPct}%
-                          </button>
-                        </td>
-
-                        {/* Kolom 6: 1 Button Actions Parameter */}
-                        <td
-                          className="py-1 px-1 text-center align-middle relative action-menu-container"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setOpenActionMenuId(openActionMenuId === `cat-${cat.id}` ? null : `cat-${cat.id}`);
-                            }}
-                            className="w-7 h-7 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-500 hover:text-slate-800 transition cursor-pointer inline-flex items-center justify-center shadow-2xs"
-                            title="Menu Aksi Parameter"
-                          >
-                            <Settings className="w-3.5 h-3.5" />
-                          </button>
-
-                          {openActionMenuId === `cat-${cat.id}` && (
-                            <div
-                              onClick={(e) => e.stopPropagation()}
-                              className="absolute right-1 top-full mt-1 z-50 w-44 bg-white border border-slate-200 rounded-lg shadow-lg py-1 text-left text-xs text-slate-700 animate-in fade-in-50 zoom-in-95"
-                            >
-                              {!isDirect && onAddIndicator && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setOpenActionMenuId(null);
-                                    onAddIndicator(cat.id);
-                                  }}
-                                  className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
-                                >
-                                  <Plus className="w-3.5 h-3.5 text-blue-600" />
-                                  <span>Tambah Indikator</span>
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  setOpenActionMenuId(null);
-                                  handleStartEditCategory(cat, e);
-                                }}
-                                className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
-                              >
-                                <Pencil className="w-3.5 h-3.5 text-slate-500" />
-                                <span>Ubah Nama</span>
-                              </button>
-                              {onDeleteCategory && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setOpenActionMenuId(null);
-                                    handleDeleteCategoryConfirm(cat);
-                                  }}
-                                  className="w-full px-3 py-1.5 text-left hover:bg-rose-50 flex items-center gap-2 cursor-pointer transition-colors text-rose-600 font-medium"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5 text-rose-500" />
-                                  <span>Hapus Parameter</span>
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    )}
-
-                    {/* ========================================================= */}
-                    {/* 2. BARIS DETAIL & KRITERIA SAAT EXPANDED                  */}
-                    {/* ========================================================= */}
-                    {isExpanded && (
-                      isDirect ? (
-                        /* DIRECT MODE SAAT EXPANDED: 6 Kolom Konsisten Tanpa RowSpan */
-                        (() => {
-                          const param = directParam;
-                          const paramBands = param
-                            ? bands
-                                .filter((b) => b.parameterId === param.id)
-                                .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)
-                            : [];
-
-                          if (paramBands.length === 0) {
-                            return (
-                              <tr className="bg-white border-b border-[#dbe2ea] h-9">
-                                <td className="py-1 px-3 align-middle border-r border-[#dbe2ea] text-xs text-slate-700">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-medium text-slate-700">
-                                      Target: <strong className="text-slate-900">{param?.target ? `${param.target}${param.unit === "%" ? "%" : ` ${param.unit}`}` : "100%"}</strong>
-                                    </span>
-                                    <span className="text-slate-400">•</span>
-                                    <span className="text-slate-500">Satuan: {param?.unit || "%"}</span>
-                                  </div>
-                                </td>
-                                <td colSpan={2} className="py-1 px-3 align-middle border-r border-[#dbe2ea] text-slate-400 text-xs italic">
-                                  Belum ada kriteria penilaian
-                                </td>
-                                <td className="py-1 px-2 align-middle border-r border-[#dbe2ea] text-center text-slate-400 text-xs">
-                                  -
-                                </td>
-                                <td className="py-1 px-2 align-middle text-center font-semibold text-xs text-slate-900 border-r border-[#dbe2ea]">
-                                  {catWeightPct}%
-                                </td>
-                                <td className="py-1 px-1 text-center align-middle relative action-menu-container" onClick={(e) => e.stopPropagation()}>
-                                  {param && onAddCriteriaBand && (
-                                    <button
-                                      type="button"
-                                      onClick={() => onAddCriteriaBand(param.id)}
-                                      className="p-1 rounded text-blue-600 hover:bg-blue-50 transition cursor-pointer inline-flex items-center justify-center"
-                                      title="Tambah Kriteria"
-                                    >
-                                      <Plus className="w-3.5 h-3.5" />
-                                    </button>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          }
-
-                          return (
-                            <React.Fragment key={`direct-${cat.id}`}>
-                              {/* Sub-header info parameter langsung */}
-                              <tr className="bg-slate-50/70 border-b border-[#dbe2ea] text-xs h-8">
-                                <td colSpan={3} className="py-1 px-3 border-r border-[#dbe2ea] align-middle">
-                                  <div className="flex items-center gap-2">
-                                    {param?.name &&
-                                      param.name.trim().toLowerCase() !== "parameter langsung" &&
-                                      param.name.trim().toLowerCase() !== cat.name.trim().toLowerCase() && (
-                                        <span className="font-semibold text-slate-800 mr-1">
-                                          {param.name}
-                                        </span>
-                                    )}
-                                    <span className="text-slate-600">
-                                      Target: <strong className="text-slate-900">{param?.target ? `${param.target}${param.unit === "%" ? "%" : ` ${param.unit}`}` : "100%"}</strong>
-                                    </span>
-                                    <span className="text-slate-400">•</span>
-                                    <span className="text-slate-500">Satuan: {param?.unit || "%"}</span>
-                                  </div>
-                                </td>
-                                <td className="py-1 px-2 text-center align-middle border-r border-[#dbe2ea] text-slate-400 text-xs">
-                                  -
-                                </td>
-                                <td className="py-1 px-2 text-center align-middle font-bold text-xs text-slate-700 border-r border-[#dbe2ea]">
-                                  {catWeightPct}%
-                                </td>
-                                <td className="py-1 px-1 text-center align-middle relative action-menu-container" onClick={(e) => e.stopPropagation()}>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setOpenActionMenuId(openActionMenuId === `direct-${cat.id}` ? null : `direct-${cat.id}`);
-                                    }}
-                                    className="w-7 h-7 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-500 hover:text-slate-800 transition cursor-pointer inline-flex items-center justify-center shadow-2xs"
-                                    title="Menu Aksi Parameter"
-                                  >
-                                    <Settings className="w-3.5 h-3.5" />
-                                  </button>
-                                  {openActionMenuId === `direct-${cat.id}` && (
-                                    <div
-                                      onClick={(e) => e.stopPropagation()}
-                                      className="absolute right-1 top-full mt-1 z-50 w-44 bg-white border border-slate-200 rounded-lg shadow-lg py-1 text-left text-xs text-slate-700 animate-in fade-in-50 zoom-in-95"
-                                    >
-                                      {param && onAddCriteriaBand && (
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setOpenActionMenuId(null);
-                                            onAddCriteriaBand(param.id);
-                                          }}
-                                          className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
-                                        >
-                                          <Plus className="w-3.5 h-3.5 text-blue-600" />
-                                          <span>Tambah Kriteria</span>
-                                        </button>
-                                      )}
-                                      {param && onEditIndicator && (
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setOpenActionMenuId(null);
-                                            onEditIndicator(cat.id, param);
-                                          }}
-                                          className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
-                                        >
-                                          <Pencil className="w-3.5 h-3.5 text-slate-500" />
-                                          <span>Ubah Target</span>
-                                        </button>
-                                      )}
-                                    </div>
-                                  )}
-                                </td>
-                              </tr>
-
-                              {/* Baris Kriteria Penilaian Rapat & Bebas RowSpan */}
-                              {paramBands.map((band, bIdx) => {
-                                const { score, operatorSymbol, criteriaValue, isUnrecognizedOperator } =
-                                  formatCriteriaValues(band, param?.unit);
-
-                                return (
-                                  <tr
-                                    key={band.id}
-                                    className="bg-white border-b border-[#dbe2ea] group/band hover:bg-[#f8fafc] transition-colors h-9"
-                                  >
-                                    {/* Kolom 1: Area Indent Kosong */}
-                                    <td className="py-1 px-3 align-middle bg-white border-r border-[#dbe2ea]" />
-
-                                    {/* Kolom 2: Operator */}
-                                    <td className="py-1 px-2 align-middle bg-white border-r border-[#dbe2ea] text-center">
-                                      {isEditTemplateMode
-                                        ? renderEditableOperatorCell(
-                                            band.id,
-                                            operatorSymbol,
-                                            draftBands,
-                                            handleDraftBandChange
-                                          )
-                                        : renderOperatorBadge(operatorSymbol, isUnrecognizedOperator)}
-                                    </td>
-
-                                    {/* Kolom 3: Kriteria */}
-                                    <td className="py-1 px-3 align-middle bg-white border-r border-[#dbe2ea]">
-                                      {isEditTemplateMode ? (
-                                        renderEditableCriteriaCell(
-                                          band.id,
-                                          criteriaValue,
-                                          draftBands,
-                                          handleDraftBandChange
-                                        )
-                                      ) : (
-                                        <div className="flex items-center gap-2 flex-wrap min-w-0">
-                                          <span className="font-normal text-slate-800 text-xs sm:text-[13px]">
-                                            {criteriaValue}
-                                          </span>
-                                          {(isUnrecognizedOperator || operatorSymbol === "?") && (
-                                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-900 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-300">
-                                              <AlertTriangle className="w-2.5 h-2.5 text-amber-600 shrink-0" />
-                                              <span>Perlu periksa</span>
-                                            </span>
-                                          )}
-                                        </div>
-                                      )}
-                                    </td>
-
-                                    {/* Kolom 4: Skor */}
-                                    <td className="py-1 px-2 align-middle bg-white border-r border-[#dbe2ea] text-center">
-                                      {isEditTemplateMode ? (
-                                        renderEditableScoreCell(
-                                          band.id,
-                                          score,
-                                          draftBands,
-                                          handleDraftBandChange
-                                        )
-                                      ) : (
-                                        <span className="font-normal text-xs sm:text-[13px] text-slate-800 tabular-nums">
-                                          {score}
-                                        </span>
-                                      )}
-                                    </td>
-
-                                    {/* Kolom 5: Bobot */}
-                                    <td className="py-1 px-2 align-middle bg-white border-r border-[#dbe2ea] text-center text-slate-300 text-xs">
-                                      -
-                                    </td>
-
-                                    {/* Kolom 6: Aksi (Kosong untuk baris kriteria, aksi terpusat pada baris indikator) */}
-                                    <td className="py-1 px-1 align-middle bg-white" />
-                                  </tr>
-                                );
-                              })}
-                            </React.Fragment>
+                      indicatorsToRender.map((ind, indIdx) => {
+                        const indWeightPct = isDirect
+                          ? catWeightPct
+                          : Math.round(Number(ind.weight) * 100);
+                        const indBands = bands
+                          .filter((b) => b.parameterId === ind.id)
+                          .sort(
+                            (a, b) =>
+                              (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id
                           );
-                        })()
-                      ) : (
-                        /* SUB_ITEMS MODE SAAT EXPANDED: 6 Kolom Sempurna */
-                        catParams.length === 0 ? (
-                          /* EMPTY STATE INDIKATOR */
-                          <tr className="bg-white border-b border-[#dbe2ea] h-9">
-                            <td className="py-1.5 px-3 border-r border-[#dbe2ea] text-slate-400 text-xs italic">
-                              Belum ada indikator
+                        const isIndHighlighted = highlightedIds?.parameterId === ind.id;
+                        const indCode = `${catIdx + 1}.${indIdx + 1}`;
+                        const displayIndName =
+                          isDirect &&
+                          (!ind.name ||
+                            ind.name.trim().toLowerCase() === "parameter langsung")
+                            ? cat.name
+                            : ind.name;
+
+                        return (
+                          <tr
+                            id={`indicator-row-${ind.id}`}
+                            key={ind.id}
+                            className={`border-b border-slate-200 transition-colors ${
+                              isIndHighlighted
+                                ? "bg-amber-50/50"
+                                : "bg-white hover:bg-slate-50/50"
+                            }`}
+                          >
+                            {/* 1. Parameter / Indikator & Target */}
+                            <td className="py-2 px-3.5 pl-6 border-r border-slate-200 align-middle">
+                              <div className="flex items-start gap-2">
+                                <span className="text-xs font-mono text-slate-400 font-medium shrink-0 mt-0.5 w-6">
+                                  {indCode}
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                  <span
+                                    onClick={() =>
+                                      onEditIndicator && onEditIndicator(cat.id, ind)
+                                    }
+                                    className="font-medium text-slate-900 text-xs leading-snug hover:text-blue-600 cursor-pointer block"
+                                    title="Klik untuk edit indikator"
+                                  >
+                                    {displayIndName}
+                                  </span>
+                                  {ind.target !== null &&
+                                    ind.target !== undefined &&
+                                    String(ind.target).trim() !== "" && (
+                                      <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1 font-mono">
+                                        <span className="text-slate-400 font-sans">Target:</span>
+                                        <span className="font-semibold text-slate-700">
+                                          {ind.target}
+                                          {ind.unit === "%" ? "%" : ind.unit ? ` ${ind.unit}` : ""}
+                                        </span>
+                                      </div>
+                                    )}
+                                </div>
+                              </div>
                             </td>
-                            <td colSpan={2} className="py-1.5 px-3 border-r border-[#dbe2ea] text-slate-400 text-xs italic">
-                              {onAddIndicator && (
-                                <button
-                                  type="button"
-                                  onClick={() => onAddIndicator(cat.id)}
-                                  className="text-xs font-semibold text-blue-600 hover:text-blue-700 inline-flex items-center gap-1 cursor-pointer not-italic select-none"
-                                >
-                                  <Plus className="w-3 h-3" />
-                                  <span>Tambah Indikator</span>
-                                </button>
+
+                            {/* 2. Operator (Flat sub-rows dengan border tipis) */}
+                            <td className="p-0 border-r border-slate-200 align-middle text-center">
+                              {indBands.length > 0 ? (
+                                <div className="divide-y divide-slate-200/80">
+                                  {indBands.map((band) => {
+                                    const { operatorSymbol, isUnrecognizedOperator } =
+                                      formatCriteriaValues(band, ind.unit);
+                                    return (
+                                      <div
+                                        key={band.id}
+                                        className="h-7 flex items-center justify-center px-2 text-[11px] font-mono text-slate-600"
+                                      >
+                                        {isEditTemplateMode
+                                          ? renderEditableOperatorCell(
+                                              band.id,
+                                              operatorSymbol,
+                                              draftBands,
+                                              handleDraftBandChange
+                                            )
+                                          : renderOperatorBadge(
+                                              operatorSymbol,
+                                              isUnrecognizedOperator
+                                            )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div className="px-2 py-2 text-slate-300 font-mono text-xs">-</div>
                               )}
                             </td>
-                            <td className="py-1.5 px-2 border-r border-[#dbe2ea] text-center text-slate-400 text-xs">
-                              -
-                            </td>
-                            <td className="py-1.5 px-2 border-r border-[#dbe2ea] text-center text-slate-400 text-xs">
-                              -
-                            </td>
-                            <td className="py-1.5 px-1 text-center text-slate-400 text-xs">
-                              -
-                            </td>
-                          </tr>
-                        ) : (
-                          catParams.map((ind, indIdx) => {
-                            const indWeightPct = Math.round(Number(ind.weight) * 100);
-                            const indBands = bands
-                              .filter((b) => b.parameterId === ind.id)
-                              .sort(
-                                (a, b) =>
-                                  (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id
-                              );
-                            const isIndHighlighted = highlightedIds?.parameterId === ind.id;
 
-                            return (
-                              <React.Fragment key={ind.id}>
-                                {/* 1. GROUPED ROW INDIKATOR: 1 Button Aksi Ringkas */}
-                                <tr
-                                  id={`indicator-row-${ind.id}`}
-                                  className={`bg-slate-50/90 hover:bg-slate-100/80 border-b border-[#dbe2ea] transition-colors group/ind h-9 ${
-                                    isIndHighlighted ? "bg-amber-50/80 ring-1 ring-amber-400" : ""
-                                  }`}
-                                >
-                                  {/* Kolom 1-3: Info Indikator, Target, Satuan */}
-                                  <td colSpan={3} className="py-1 px-3 border-r border-[#dbe2ea] align-middle">
-                                    <div className="flex items-center gap-2 min-w-0">
-                                      <span
-                                        onClick={() => onEditIndicator && onEditIndicator(cat.id, ind)}
-                                        className="font-semibold text-slate-900 text-xs sm:text-[13px] tracking-tight cursor-pointer hover:text-blue-600 transition-colors truncate"
-                                        title="Klik untuk edit indikator"
-                                      >
-                                        {catIdx + 1}.{indIdx + 1} {ind.name}
-                                      </span>
-                                      {ind.target && (
-                                        <span className="text-[11px] font-medium text-slate-600 bg-white px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
-                                          Target: <strong className="text-slate-800">{ind.target}{ind.unit === "%" ? "%" : ` ${ind.unit}`}</strong>
-                                        </span>
-                                      )}
-                                      {ind.unit && ind.unit !== "%" && !ind.target && (
-                                        <span className="text-[11px] text-slate-500 bg-white px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
-                                          Satuan: {ind.unit}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </td>
-
-                                  {/* Kolom 4: Skor */}
-                                  <td className="py-1 px-2 text-center align-middle border-r border-[#dbe2ea] text-slate-400 text-xs">
-                                    -
-                                  </td>
-
-                                  {/* Kolom 5: Bobot Indikator */}
-                                  <td
-                                    className="py-1 px-2 text-center align-middle border-r border-[#dbe2ea]"
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    {quickWeightParamId === ind.id ? (
-                                      <div className="flex items-center justify-center gap-1">
-                                        <input
-                                          type="number"
-                                          min="1"
-                                          max="100"
-                                          value={quickWeightParamValue}
-                                          onChange={(e) => setQuickWeightParamValue(e.target.value)}
-                                          onKeyDown={async (e) => {
-                                            if (e.key === "Enter") await handleSaveQuickWeightParam(ind);
-                                            if (e.key === "Escape") setQuickWeightParamId(null);
-                                          }}
-                                          autoFocus
-                                          className="w-11 h-6 text-center text-xs font-semibold tabular-nums border border-blue-500 rounded bg-white focus:outline-none"
-                                        />
-                                        <span className="text-xs font-semibold text-slate-600">%</span>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleSaveQuickWeightParam(ind)}
-                                          className="p-0.5 text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer"
-                                          title="Simpan"
-                                        >
-                                          <Check className="w-3 h-3" />
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => setQuickWeightParamId(null)}
-                                          className="p-0.5 text-slate-400 hover:bg-slate-100 rounded cursor-pointer"
-                                          title="Batal"
-                                        >
-                                          <X className="w-3 h-3" />
-                                        </button>
-                                      </div>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setQuickWeightParamId(ind.id);
-                                          setQuickWeightParamValue(String(indWeightPct));
-                                        }}
-                                        className="font-bold text-xs sm:text-[13px] text-slate-900 tabular-nums hover:text-blue-600 px-1 py-0.5 rounded transition cursor-pointer"
-                                        title="Klik untuk ubah bobot indikator"
-                                      >
-                                        {indWeightPct}%
-                                      </button>
-                                    )}
-                                  </td>
-
-                                  {/* Kolom 6: 1 Button Actions Indikator */}
-                                  <td
-                                    className="py-1 px-1 text-center align-middle relative action-menu-container"
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setOpenActionMenuId(openActionMenuId === `ind-${ind.id}` ? null : `ind-${ind.id}`);
-                                      }}
-                                      className="w-7 h-7 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-500 hover:text-slate-800 transition cursor-pointer inline-flex items-center justify-center shadow-2xs"
-                                      title="Menu Aksi Indikator"
-                                    >
-                                      <Settings className="w-3.5 h-3.5" />
-                                    </button>
-
-                                    {openActionMenuId === `ind-${ind.id}` && (
-                                      <div
-                                        onClick={(e) => e.stopPropagation()}
-                                        className="absolute right-1 top-full mt-1 z-50 w-44 bg-white border border-slate-200 rounded-lg shadow-lg py-1 text-left text-xs text-slate-700 animate-in fade-in-50 zoom-in-95"
-                                      >
-                                        {onAddCriteriaBand && (
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setOpenActionMenuId(null);
-                                              onAddCriteriaBand(ind.id);
-                                            }}
-                                            className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
-                                          >
-                                            <Plus className="w-3.5 h-3.5 text-blue-600" />
-                                            <span>Tambah Kriteria</span>
-                                          </button>
-                                        )}
-                                        {onEditIndicator && (
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setOpenActionMenuId(null);
-                                              onEditIndicator(cat.id, ind);
-                                            }}
-                                            className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
-                                          >
-                                            <Pencil className="w-3.5 h-3.5 text-slate-500" />
-                                            <span>Ubah Indikator</span>
-                                          </button>
-                                        )}
-                                        {onDeleteIndicator && (
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setOpenActionMenuId(null);
-                                              handleDeleteIndicatorConfirm(ind);
-                                            }}
-                                            className="w-full px-3 py-1.5 text-left hover:bg-rose-50 flex items-center gap-2 cursor-pointer transition-colors text-rose-600 font-medium"
-                                          >
-                                            <Trash2 className="w-3.5 h-3.5 text-rose-500" />
-                                            <span>Hapus Indikator</span>
-                                          </button>
-                                        )}
-                                      </div>
-                                    )}
-                                  </td>
-                                </tr>
-
-                                {/* 2. KRITERIA SUBROWS: Rapat & Konsisten (36px, Tanpa RowSpan) */}
-                                {indBands.length === 0 ? (
-                                  <tr className="bg-white border-b border-[#dbe2ea] h-9">
-                                    <td colSpan={6} className="py-1.5 px-4 text-center text-slate-400 text-xs italic">
-                                      Belum ada kriteria penilaian untuk indikator ini.
-                                    </td>
-                                  </tr>
-                                ) : (
-                                  indBands.map((band, bIdx) => {
-                                    const { score, operatorSymbol, criteriaValue, isUnrecognizedOperator } =
-                                      formatCriteriaValues(band, ind.unit);
-
+                            {/* 3. Kriteria Penilaian (Flat sub-rows dengan border tipis) */}
+                            <td className="p-0 border-r border-slate-200 align-middle">
+                              {indBands.length > 0 ? (
+                                <div className="divide-y divide-slate-200/80">
+                                  {indBands.map((band) => {
+                                    const { criteriaValue } = formatCriteriaValues(
+                                      band,
+                                      ind.unit
+                                    );
                                     return (
-                                      <tr
+                                      <div
                                         key={band.id}
-                                        className="bg-white border-b border-[#dbe2ea] group/band hover:bg-[#f8fafc] transition-colors h-9"
+                                        className="h-7 flex items-center px-3 text-[11px] font-mono text-slate-600 truncate"
+                                        title={criteriaValue}
                                       >
-                                        {/* Kolom 1: Area Indent Kosong */}
-                                        <td className="py-1 px-3 align-middle bg-white border-r border-[#dbe2ea]" />
-
-                                        {/* Kolom 2: Operator */}
-                                        <td className="py-1 px-2 align-middle bg-white border-r border-[#dbe2ea] text-center">
-                                          {isEditTemplateMode
-                                            ? renderEditableOperatorCell(
-                                                band.id,
-                                                operatorSymbol,
-                                                draftBands,
-                                                handleDraftBandChange
-                                              )
-                                            : renderOperatorBadge(operatorSymbol, isUnrecognizedOperator)}
-                                        </td>
-
-                                        {/* Kolom 3: Kriteria */}
-                                        <td className="py-1 px-3 align-middle bg-white border-r border-[#dbe2ea]">
-                                          {isEditTemplateMode ? (
-                                            renderEditableCriteriaCell(
+                                        {isEditTemplateMode
+                                          ? renderEditableCriteriaCell(
                                               band.id,
                                               criteriaValue,
                                               draftBands,
                                               handleDraftBandChange
                                             )
-                                          ) : (
-                                            <div className="flex items-center gap-2 flex-wrap min-w-0">
-                                              <span className="font-normal text-slate-800 text-xs sm:text-[13px]">
-                                                {criteriaValue}
-                                              </span>
-                                              {(isUnrecognizedOperator || operatorSymbol === "?") && (
-                                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-900 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-300">
-                                                  <AlertTriangle className="w-2.5 h-2.5 text-amber-600 shrink-0" />
-                                                  <span>Perlu periksa</span>
-                                                </span>
-                                              )}
-                                            </div>
-                                          )}
-                                        </td>
+                                          : criteriaValue}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div className="px-3 py-2 text-slate-400 italic text-xs">
+                                  Belum ada kriteria
+                                </div>
+                              )}
+                            </td>
 
-                                        {/* Kolom 4: Skor */}
-                                        <td className="py-1 px-2 align-middle bg-white border-r border-[#dbe2ea] text-center">
-                                          {isEditTemplateMode ? (
-                                            renderEditableScoreCell(
+                            {/* 4. Skor (Flat sub-rows dengan border tipis) */}
+                            <td className="p-0 border-r border-slate-200 align-middle text-center">
+                              {indBands.length > 0 ? (
+                                <div className="divide-y divide-slate-200/80">
+                                  {indBands.map((band) => {
+                                    const { score } = formatCriteriaValues(band, ind.unit);
+                                    return (
+                                      <div
+                                        key={band.id}
+                                        className="h-7 flex items-center justify-center px-2 text-[11px] font-mono font-medium text-slate-600 tabular-nums"
+                                      >
+                                        {isEditTemplateMode
+                                          ? renderEditableScoreCell(
                                               band.id,
                                               score,
                                               draftBands,
                                               handleDraftBandChange
                                             )
-                                          ) : (
-                                            <span className="font-normal text-xs sm:text-[13px] text-slate-800 tabular-nums">
-                                              {score}
-                                            </span>
-                                          )}
-                                        </td>
-
-                                        {/* Kolom 5: Bobot */}
-                                        <td className="py-1 px-2 align-middle bg-white border-r border-[#dbe2ea] text-center text-slate-300 text-xs">
-                                          -
-                                        </td>
-
-                                        {/* Kolom 6: Aksi (Kosong untuk baris kriteria, aksi terpusat pada baris indikator) */}
-                                        <td className="py-1 px-1 align-middle bg-white" />
-                                      </tr>
+                                          : score}
+                                      </div>
                                     );
-                                  })
+                                  })}
+                                </div>
+                              ) : (
+                                <div className="px-2 py-2 text-slate-300 font-mono text-xs">-</div>
+                              )}
+                            </td>
+
+                            {/* 5. Bobot */}
+                            <td
+                              className="py-2 px-2 border-r border-slate-200 text-center align-middle font-mono text-xs font-medium text-slate-700"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {!isDirect && quickWeightParamId === ind.id ? (
+                                <div className="flex items-center justify-center gap-1">
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="100"
+                                    value={quickWeightParamValue}
+                                    onChange={(e) => setQuickWeightParamValue(e.target.value)}
+                                    onKeyDown={async (e) => {
+                                      if (e.key === "Enter")
+                                        await handleSaveQuickWeightParam(ind);
+                                      if (e.key === "Escape") setQuickWeightParamId(null);
+                                    }}
+                                    autoFocus
+                                    className="w-11 h-6 text-center text-xs font-semibold tabular-nums border border-sky-400 rounded bg-white focus:outline-hidden"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveQuickWeightParam(ind)}
+                                    className="p-0.5 text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer"
+                                    title="Simpan"
+                                  >
+                                    <Check className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (!isDirect) {
+                                      setQuickWeightParamId(ind.id);
+                                      setQuickWeightParamValue(String(indWeightPct));
+                                    }
+                                  }}
+                                  className="tabular-nums font-medium font-mono text-xs text-slate-700 hover:text-blue-700 cursor-pointer"
+                                  title={
+                                    isDirect
+                                      ? "Bobot mengikuti parameter utama"
+                                      : "Klik untuk ubah bobot indikator"
+                                  }
+                                >
+                                  {indWeightPct}%
+                                </button>
+                              )}
+                            </td>
+
+                            {/* 6. Aksi Indikator */}
+                            <td
+                              className="py-2 px-2.5 text-center align-middle relative action-menu-container"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <div className="inline-flex items-center justify-center gap-1">
+                                {onEditIndicator && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onEditIndicator(cat.id, ind)}
+                                    className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-slate-700 hover:text-blue-700 bg-white hover:bg-slate-50 border border-slate-200 transition cursor-pointer whitespace-nowrap"
+                                    title={`Edit indikator ${displayIndName}`}
+                                  >
+                                    <Pencil className="h-2.5 w-2.5 shrink-0 text-slate-400" />
+                                    <span>Edit</span>
+                                  </button>
                                 )}
-                              </React.Fragment>
-                            );
-                          })
-                        )
-                      )
-                    )}
-                  </React.Fragment>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setOpenActionMenuId(
+                                      openActionMenuId === `ind-${ind.id}`
+                                        ? null
+                                        : `ind-${ind.id}`
+                                    );
+                                  }}
+                                  className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+                                  title="Menu Aksi Indikator"
+                                >
+                                  <Settings className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+
+                              {openActionMenuId === `ind-${ind.id}` && (
+                                <div
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="absolute right-1 top-full mt-1 z-30 w-44 bg-white border border-slate-200 rounded-lg shadow-lg py-1 text-left text-xs text-slate-700"
+                                >
+                                  {onAddCriteriaBand && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setOpenActionMenuId(null);
+                                        onAddCriteriaBand(ind.id);
+                                      }}
+                                      className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
+                                    >
+                                      <Plus className="w-3.5 h-3.5 text-blue-600" />
+                                      <span>Tambah Kriteria</span>
+                                    </button>
+                                  )}
+                                  {onEditIndicator && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setOpenActionMenuId(null);
+                                        onEditIndicator(cat.id, ind);
+                                      }}
+                                      className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
+                                    >
+                                      <Pencil className="w-3.5 h-3.5 text-slate-500" />
+                                      <span>Ubah Indikator</span>
+                                    </button>
+                                  )}
+                                  {!isDirect && onDeleteIndicator && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setOpenActionMenuId(null);
+                                        handleDeleteIndicatorConfirm(ind);
+                                      }}
+                                      className="w-full px-3 py-1.5 text-left hover:bg-rose-50 flex items-center gap-2 cursor-pointer transition-colors text-rose-600 font-medium"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                                      <span>Hapus Indikator</span>
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    ))}
+                </React.Fragment>
+              );
+            })
+          )}
+
+          {/* Baris Total Bobot Parameter di Bawah Tabel Master Template (Orange Muda) */}
+          {sortedCategories.length > 0 && (
+            <tr className="border-t border-orange-200/90 bg-orange-100 font-bold text-orange-950 select-none">
+              <td
+                colSpan={4}
+                className="py-2.5 px-3.5 text-left align-middle border-r border-orange-200/80 text-xs font-bold uppercase tracking-tight text-orange-950"
+              >
+                Total Bobot Parameter KPI
+              </td>
+              <td className="py-2.5 px-2 text-center align-middle border-r border-orange-200/80 font-mono text-xs font-bold text-orange-700">
+                {totalTemplateWeightPct}%
+              </td>
+              <td className="py-2.5 px-2.5 text-center align-middle text-[11px] font-semibold text-orange-700 font-mono">
+                Target {templateTargetPct}%
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }

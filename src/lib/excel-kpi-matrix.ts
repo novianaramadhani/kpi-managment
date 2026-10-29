@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import * as XLSXStyle from "xlsx-js-style";
+import JSZip from "jszip";
 import { formatCriteriaExcel, createGuideRows, parseConditionString } from "./excel-template-kpi";
 import { cleanTemplateEmployeeName } from "./master-employee-matcher";
 
@@ -192,10 +193,69 @@ const styleScoreCell = {
 };
 
 /**
- * Constructs an Excel dynamic IF formula for achieved score (0..25)
- * based on the realization cell (e.g. H8) and the indicator's scoring rules.
- * If realization is empty, it returns empty string ("").
+ * Memeriksa apakah suatu satuan tergolong angka/numerik (% atau Rp).
+ * Pokoknya selain angka (% atau Rp), tipe datanya berarti teks!
  */
+export function isNumericUnit(unit: string | null | undefined): boolean {
+  const u = (unit || "").trim().toLowerCase();
+  return (
+    u === "%" ||
+    u === "persen" ||
+    u === "percentage" ||
+    u === "rp" ||
+    u === "idr" ||
+    u === "rupiah" ||
+    u.includes("rp/") ||
+    u.includes("rp /")
+  );
+}
+
+/**
+ * Menormalisasi satuan indikator:
+ * Pokoknya selain angka (% atau Rp), satuan dan tipe datanya adalah 'teks'!
+ */
+export function normalizeIndicatorUnit(unit: string | null | undefined): string {
+  const u = (unit || "").trim().toLowerCase();
+  if (u === "%" || u === "persen" || u === "percentage") return "%";
+  if (u === "rp" || u === "idr" || u === "rupiah") return "Rp";
+  if (u.includes("rp/") || u.includes("rp /")) return (unit || "").trim();
+  // Pokoknya selain angka, satuannya adalah 'teks'
+  return "teks";
+}
+
+/**
+ * Mengembalikan format angka Excel (format code) yang sesuai dengan satuan indikator.
+ * - Untuk persen (%): menggunakan format `#,##0.##"%"` agar jika user mengetik 95,
+ *   tampil sebagai 95% (bukan 9500%) dan nilai aslinya tetap 95 untuk evaluasi kriteria skor.
+ * - Untuk rupiah (Rp): `"Rp "#,##0;("Rp "#,##0);"-"`
+ * - Untuk Rp/Bcm: `"Rp "#,##0" /Bcm";("Rp "#,##0" /Bcm");"-"`
+ * - Pokoknya selain angka, formatnya adalah integer skor ("0").
+ */
+export function getExcelNumberFormatForUnit(unit: string | null | undefined): string {
+  const u = (unit || "").trim().toLowerCase();
+  if (u === "%" || u === "persen" || u === "percentage") {
+    return `#,##0.##"%"`;
+  }
+  if (u === "rp" || u === "idr" || u === "rupiah") {
+    return `"Rp "#,##0;("Rp "#,##0);"-"`;
+  }
+  if (u.includes("rp/bcm") || u.includes("rp / bcm")) {
+    return `"Rp "#,##0" /Bcm";("Rp "#,##0" /Bcm");"-"`;
+  }
+  if (u.includes("rp/") || u.includes("rp /")) {
+    const origU = (unit || "").trim();
+    const slashIdx =
+      origU.toLowerCase().indexOf("rp/") !== -1
+        ? origU.toLowerCase().indexOf("rp/") + 3
+        : origU.toLowerCase().indexOf("rp /") + 4;
+    const denom = origU.substring(slashIdx).trim();
+    return `"Rp "#,##0" /${denom}";("Rp "#,##0" /${denom}");"-"`;
+  }
+
+  // Pokoknya selain angka (% atau Rp), formatnya adalah integer skor (0)
+  return "0";
+}
+
 /**
  * Constructs the raw nested IF score calculation expression (0..25)
  * based on the realization cell (e.g. H8) and the indicator's scoring rules.
@@ -208,16 +268,19 @@ export function buildIndicatorScoreExpression(
     minValue?: number | string | null;
     maxValue?: number | string | null;
     label?: string | null;
+    scoreCellRef?: string;
   }>,
   unit?: string | null,
-  target?: string | number | null
+  target?: string | number | null,
+  startExcelRow?: number,
+  scoreColLetter: string = "J"
 ): string {
   if (!bands || bands.length === 0) {
-    return "25";
+    return startExcelRow ? `${scoreColLetter}${startExcelRow}` : "25";
   }
 
   // Parse and normalize bands
-  const normalized = bands.map((b) => {
+  const normalized = bands.map((b, idx) => {
     let op = String(b.operator || "").toUpperCase();
     let min =
       b.minValue !== null && b.minValue !== undefined && b.minValue !== ""
@@ -239,8 +302,13 @@ export function buildIndicatorScoreExpression(
         if (max === null) max = parsed.maxValue;
       }
     }
+
+    const scoreCell =
+      b.scoreCellRef || (startExcelRow ? `${scoreColLetter}${startExcelRow + idx}` : null);
+
     return {
       score: Number(b.score) || 0,
+      scoreRef: scoreCell || String(Number(b.score) || 0),
       op,
       min,
       max,
@@ -249,18 +317,114 @@ export function buildIndicatorScoreExpression(
   }).sort((a, b) => b.score - a.score); // DESC by score
 
   if (normalized.length === 1) {
-    return String(normalized[0].score);
+    return normalized[0].scoreRef;
   }
 
-  const isPct = (unit || "").trim() === "%";
+  const isNumeric = isNumericUnit(unit);
+  const isQualitativeOrScoreInput = !isNumeric;
+
+  if (isQualitativeOrScoreInput) {
+    // 1. Numeric score matching (descending by score: e.g. J8=20, J9=15, J10=0)
+    const fallbackScoreRef = normalized[normalized.length - 1].scoreRef;
+    let numScoreFormula = fallbackScoreRef;
+    for (let i = normalized.length - 2; i >= 0; i--) {
+      const b = normalized[i];
+      if (b.min !== null && b.min !== undefined && !isNaN(b.min)) {
+        numScoreFormula = `IF(OR(${cellRefH}>=${b.scoreRef},${cellRefH}>=${b.min}),${b.scoreRef},${numScoreFormula})`;
+      } else {
+        numScoreFormula = `IF(${cellRefH}>=${b.scoreRef},${b.scoreRef},${numScoreFormula})`;
+      }
+    }
+
+    // 2. Text keyword matching if user typed textual label in Form Actual
+    let textScoreFormula = fallbackScoreRef;
+    let hasTextCond = false;
+    for (let i = normalized.length - 2; i >= 0; i--) {
+      const b = normalized[i];
+      if (b.label) {
+        const words = b.label.match(/([a-zA-Z]{3,})/g);
+        if (words && words.length > 0) {
+          const sigWord = words.sort((w1, w2) => w2.length - w1.length)[0];
+          textScoreFormula = `IF(ISNUMBER(SEARCH("${sigWord}",${cellRefH})),${b.scoreRef},${textScoreFormula})`;
+          hasTextCond = true;
+        }
+      }
+    }
+
+    if (hasTextCond) {
+      return `IF(ISNUMBER(${cellRefH}),${numScoreFormula},${textScoreFormula})`;
+    }
+    return numScoreFormula;
+  }
+
+  const isPct = ["%", "persen", "percentage"].includes((unit || "").trim().toLowerCase());
+
+  const setHasMiliar = normalized.some((b) => /(?:miliar|milyar|[0-9]\s*m\b)/i.test(b.label || ""));
+  const setHasJuta = normalized.some((b) => /(?:juta|million|[0-9]\s*jt\b)/i.test(b.label || ""));
+  const setHasRibu = normalized.some((b) => /(?:ribu|thousand|[0-9]\s*k\b)/i.test(b.label || ""));
 
   const buildCondition = (b: (typeof normalized)[0]): string | null => {
     const { op, min, max, label } = b;
 
+    const checkMultiplier = () => {
+      const labelStr = (label || "").toLowerCase();
+      if (
+        /(?:miliar|milyar|[0-9]\s*m\b)/i.test(labelStr) ||
+        (setHasMiliar && ((min !== null && min > 0 && min <= 1000) || (max !== null && max > 0 && max <= 1000)))
+      ) {
+        return 1_000_000_000;
+      }
+      if (
+        /(?:juta|million|[0-9]\s*jt\b)/i.test(labelStr) ||
+        (setHasJuta && ((min !== null && min > 0 && min <= 1000) || (max !== null && max > 0 && max <= 1000)))
+      ) {
+        return 1_000_000;
+      }
+      if (
+        /(?:ribu|thousand|[0-9]\s*k\b)/i.test(labelStr) ||
+        (setHasRibu && ((min !== null && min > 0 && min <= 1000) || (max !== null && max > 0 && max <= 1000)))
+      ) {
+        return 1_000;
+      }
+      const u = (unit || "").trim().toLowerCase();
+      if (
+        (u === "rp" || u === "idr") &&
+        ((min !== null && min > 0 && min <= 1000) || (max !== null && max > 0 && max <= 1000))
+      ) {
+        return 1_000_000_000;
+      }
+      return 1;
+    };
+    const mult = checkMultiplier();
+    const u = (unit || "").trim().toLowerCase();
+    const isRp = u === "rp" || u === "idr" || u === "rupiah";
+
+    const getCurrencyThresholds = (rawVal: number | null) => {
+      if (rawVal === null || rawVal === undefined) return { full: null, short: null };
+      const n = Number(rawVal);
+      if (isNaN(n)) return { full: null, short: null };
+      if (n >= 1_000_000_000) return { full: n, short: n / 1_000_000_000 };
+      if (n >= 1_000_000) return { full: n, short: n / 1_000_000 };
+      if (n >= 1_000) return { full: n, short: n / 1_000 };
+      if (mult > 1) return { full: n * mult, short: n };
+      return { full: n, short: n };
+    };
+
     if (op === "GTE" || op === ">=") {
       if (min !== null) {
-        if (isPct && min > 1) {
-          return `OR(${cellRefH}>=${min},AND(${cellRefH}>=${min / 100},${cellRefH}<=1))`;
+        if (isPct) {
+          const whole = min > 1 ? min : min * 100;
+          const dec = min > 1 ? min / 100 : min;
+          return `OR(AND(${cellRefH}>1,${cellRefH}>=${whole}),AND(${cellRefH}<=1,${cellRefH}>=0,${cellRefH}>=${dec}))`;
+        }
+        if (isRp) {
+          const { full, short } = getCurrencyThresholds(min);
+          if (full !== null && short !== null && full !== short) {
+            return `OR(AND(${cellRefH}>=1000,${cellRefH}>=${full}),AND(${cellRefH}<1000,${cellRefH}>=${short}))`;
+          }
+        }
+        if (mult > 1) {
+          return `OR(AND(${cellRefH}>=1000,${cellRefH}>=${min * mult}),AND(${cellRefH}<1000,${cellRefH}>=${min}))`;
         }
         return `${cellRefH}>=${min}`;
       }
@@ -268,8 +432,19 @@ export function buildIndicatorScoreExpression(
 
     if (op === "GT" || op === ">") {
       if (min !== null) {
-        if (isPct && min > 1) {
-          return `OR(${cellRefH}>${min},AND(${cellRefH}>${min / 100},${cellRefH}<=1))`;
+        if (isPct) {
+          const whole = min > 1 ? min : min * 100;
+          const dec = min > 1 ? min / 100 : min;
+          return `OR(AND(${cellRefH}>1,${cellRefH}>${whole}),AND(${cellRefH}<=1,${cellRefH}>0,${cellRefH}>${dec}))`;
+        }
+        if (isRp) {
+          const { full, short } = getCurrencyThresholds(min);
+          if (full !== null && short !== null && full !== short) {
+            return `OR(AND(${cellRefH}>=1000,${cellRefH}>${full}),AND(${cellRefH}<1000,${cellRefH}>${short}))`;
+          }
+        }
+        if (mult > 1) {
+          return `OR(AND(${cellRefH}>=1000,${cellRefH}>${min * mult}),AND(${cellRefH}<1000,${cellRefH}>${min}))`;
         }
         return `${cellRefH}>${min}`;
       }
@@ -278,8 +453,19 @@ export function buildIndicatorScoreExpression(
     if (op === "LTE" || op === "<=") {
       const val = max ?? min;
       if (val !== null) {
-        if (isPct && val > 1) {
-          return `OR(${cellRefH}<=${val},AND(${cellRefH}<=${val / 100},${cellRefH}>0))`;
+        if (isPct) {
+          const whole = val > 1 ? val : val * 100;
+          const dec = val > 1 ? val / 100 : val;
+          return `OR(AND(${cellRefH}>1,${cellRefH}<=${whole}),AND(${cellRefH}<=1,${cellRefH}>=0,${cellRefH}<=${dec}))`;
+        }
+        if (isRp) {
+          const { full, short } = getCurrencyThresholds(val);
+          if (full !== null && short !== null && full !== short) {
+            return `OR(AND(${cellRefH}>=1000,${cellRefH}<=${full}),AND(${cellRefH}<1000,${cellRefH}>=0,${cellRefH}<=${short}))`;
+          }
+        }
+        if (mult > 1) {
+          return `OR(AND(${cellRefH}>=1000,${cellRefH}<=${val * mult}),AND(${cellRefH}<1000,${cellRefH}>=0,${cellRefH}<=${val}))`;
         }
         return `${cellRefH}<=${val}`;
       }
@@ -288,8 +474,19 @@ export function buildIndicatorScoreExpression(
     if (op === "LT" || op === "<") {
       const val = max ?? min;
       if (val !== null) {
-        if (isPct && val > 1) {
-          return `OR(${cellRefH}<${val},AND(${cellRefH}<${val / 100},${cellRefH}>0))`;
+        if (isPct) {
+          const whole = val > 1 ? val : val * 100;
+          const dec = val > 1 ? val / 100 : val;
+          return `OR(AND(${cellRefH}>1,${cellRefH}<${whole}),AND(${cellRefH}<=1,${cellRefH}>=0,${cellRefH}<${dec}))`;
+        }
+        if (isRp) {
+          const { full, short } = getCurrencyThresholds(val);
+          if (full !== null && short !== null && full !== short) {
+            return `OR(AND(${cellRefH}>=1000,${cellRefH}<${full}),AND(${cellRefH}<1000,${cellRefH}>=0,${cellRefH}<${short}))`;
+          }
+        }
+        if (mult > 1) {
+          return `OR(AND(${cellRefH}>=1000,${cellRefH}<${val * mult}),AND(${cellRefH}<1000,${cellRefH}>=0,${cellRefH}<${val}))`;
         }
         return `${cellRefH}<${val}`;
       }
@@ -299,8 +496,22 @@ export function buildIndicatorScoreExpression(
       if (min !== null && max !== null) {
         const lo = Math.min(min, max);
         const hi = Math.max(min, max);
-        if (isPct && lo > 1) {
-          return `OR(AND(${cellRefH}>=${lo},${cellRefH}<=${hi}),AND(${cellRefH}>=${lo / 100},${cellRefH}<=${hi / 100}))`;
+        if (isPct) {
+          const wholeLo = lo > 1 ? lo : lo * 100;
+          const wholeHi = hi > 1 ? hi : hi * 100;
+          const decLo = lo > 1 ? lo / 100 : lo;
+          const decHi = hi > 1 ? hi / 100 : hi;
+          return `OR(AND(${cellRefH}>1,${cellRefH}>=${wholeLo},${cellRefH}<=${wholeHi}),AND(${cellRefH}<=1,${cellRefH}>=0,${cellRefH}>=${decLo},${cellRefH}<=${decHi}))`;
+        }
+        if (isRp) {
+          const loT = getCurrencyThresholds(lo);
+          const hiT = getCurrencyThresholds(hi);
+          if (loT.full !== null && hiT.full !== null && loT.full !== loT.short) {
+            return `OR(AND(${cellRefH}>=1000,${cellRefH}>=${loT.full},${cellRefH}<=${hiT.full}),AND(${cellRefH}<1000,${cellRefH}>=0,${cellRefH}>=${loT.short},${cellRefH}<=${hiT.short}))`;
+          }
+        }
+        if (mult > 1) {
+          return `OR(AND(${cellRefH}>=1000,${cellRefH}>=${lo * mult},${cellRefH}<=${hi * mult}),AND(${cellRefH}<1000,${cellRefH}>=0,${cellRefH}>=${lo},${cellRefH}<=${hi}))`;
         }
         return `AND(${cellRefH}>=${lo},${cellRefH}<=${hi})`;
       }
@@ -308,7 +519,23 @@ export function buildIndicatorScoreExpression(
 
     if (op === "EQ" || op === "=") {
       const val = min ?? max;
-      if (val !== null) return `${cellRefH}=${val}`;
+      if (val !== null) {
+        if (isPct) {
+          const whole = val > 1 ? val : val * 100;
+          const dec = val > 1 ? val / 100 : val;
+          return `OR(AND(${cellRefH}>1,${cellRefH}=${whole}),AND(${cellRefH}<=1,ROUND(${cellRefH},4)=${dec}))`;
+        }
+        if (isRp) {
+          const { full, short } = getCurrencyThresholds(val);
+          if (full !== null && short !== null && full !== short) {
+            return `OR(AND(${cellRefH}>=1000,${cellRefH}=${full}),AND(${cellRefH}<1000,${cellRefH}=${short}))`;
+          }
+        }
+        if (mult > 1) {
+          return `OR(AND(${cellRefH}>=1000,${cellRefH}=${val * mult}),AND(${cellRefH}<1000,${cellRefH}=${val}))`;
+        }
+        return `${cellRefH}=${val}`;
+      }
     }
 
     // Text / Qualitative keywords (e.g. "Nol", "Zero", "Ringan", "Berat")
@@ -323,15 +550,15 @@ export function buildIndicatorScoreExpression(
     return null;
   };
 
-  // The last band's score serves as fallback
-  const fallbackScore = normalized[normalized.length - 1].score;
-  let formula = String(fallbackScore);
+  // The last band's score serves as fallback (cell reference or literal)
+  const fallbackScore = normalized[normalized.length - 1].scoreRef;
+  let formula = fallbackScore;
 
   for (let i = normalized.length - 2; i >= 0; i--) {
     const b = normalized[i];
     const cond = buildCondition(b);
     if (cond) {
-      formula = `IF(${cond},${b.score},${formula})`;
+      formula = `IF(${cond},${b.scoreRef},${formula})`;
     }
   }
 
@@ -351,11 +578,14 @@ export function buildIndicatorScoreFormula(
     minValue?: number | string | null;
     maxValue?: number | string | null;
     label?: string | null;
+    scoreCellRef?: string;
   }>,
   unit?: string | null,
-  target?: string | number | null
+  target?: string | number | null,
+  startExcelRow?: number,
+  scoreColLetter: string = "J"
 ): string {
-  const expr = buildIndicatorScoreExpression(cellRefH, bands, unit, target);
+  const expr = buildIndicatorScoreExpression(cellRefH, bands, unit, target, startExcelRow, scoreColLetter);
   return `IF(OR(${cellRefH}="",ISBLANK(${cellRefH})),"",${expr})`;
 }
 
@@ -475,11 +705,16 @@ function renderEmployeeIdentityHeader(
 // SHEET 2 BUILDER: FORM REALISASI ACTUAL (19 Kolom, Jan-Des Input, Agregasi)
 // =============================================================================
 
-export function buildFormRealisasiActualWorksheet(data: KpiMatrixSheetData) {
+export function buildFormRealisasiActualWorksheet(data: KpiMatrixSheetData): {
+  ws: any;
+  indicatorActualRowMap: Map<number | string, number>;
+  indicatorTargetRowMap: Map<number | string, number>;
+} {
   const ws: any = {};
   const merges: any[] = [];
   const rowsHeight: Record<number, { hpt: number }> = {};
   const indicatorActualRowMap = new Map<number | string, number>();
+  const indicatorTargetRowMap = new Map<number | string, number>();
 
   const setCell = (r: number, c: number, cell: any) => {
     const cellRef = XLSX.utils.encode_cell({ r, c });
@@ -567,14 +802,24 @@ export function buildFormRealisasiActualWorksheet(data: KpiMatrixSheetData) {
       const noStr = `${cat.number}.${indIdx + 1}`;
       const indKey = ind.id ?? `${cat.number}_${indIdx}`;
       const indWeightFrac = ind.weight > 1 ? ind.weight / 100 : ind.weight;
-      const targetVal = ind.target !== null && ind.target !== undefined ? ind.target : "100";
-      const unitVal = ind.unit || "%";
-      const numTarget = Number(targetVal);
-      const isTargetNumeric = !isNaN(numTarget);
+      const hasTarget = ind.target !== null && ind.target !== undefined && String(ind.target).trim() !== "";
+      const targetVal = hasTarget ? String(ind.target).trim() : "";
+      const unitVal = normalizeIndicatorUnit(ind.unit);
+      const isTextInd = !isNumericUnit(unitVal);
+      const bands = [...(ind.scoringRules || [])].sort(
+        (a, b) => (Number(b.score) || 0) - (Number(a.score) || 0)
+      );
+
+      const topBandScore = bands.length > 0 ? Number(bands[0].score) : 25;
+      const numTarget = hasTarget ? Number(targetVal) : isTextInd ? topBandScore : NaN;
+      const isTargetNumeric = (hasTarget && !isNaN(Number(targetVal))) || (!hasTarget && isTextInd);
+      const finalTargetVal = hasTarget ? targetVal : isTextInd ? String(topBandScore) : "";
+      const numFmt = isTextInd ? "0" : getExcelNumberFormatForUnit(unitVal);
 
       const targetRowExcel = currentR + 1; // 1-indexed
       const actualRowExcel = currentR + 2; // 1-indexed
       indicatorActualRowMap.set(indKey, actualRowExcel);
+      indicatorTargetRowMap.set(indKey, targetRowExcel);
 
       const agg = String(ind.aggregation || "AVERAGE").toUpperCase();
       const isSum = agg === "SUM";
@@ -586,53 +831,62 @@ export function buildFormRealisasiActualWorksheet(data: KpiMatrixSheetData) {
       setCell(currentR, 0, { t: "s", v: noStr, s: styleTargetRowCenter });
       setCell(currentR, 1, { t: "s", v: ind.name, s: styleTargetRowLeft });
       setCell(currentR, 2, { t: "n", v: indWeightFrac, z: "0%", s: styleTargetRowCenter });
-      setCell(currentR, 3, {
-        t: isTargetNumeric ? "n" : "s",
-        v: isTargetNumeric ? numTarget : targetVal,
-        s: styleTargetRowCenter,
-      });
+      if (hasTarget || isTextInd) {
+        setCell(currentR, 3, {
+          t: isTargetNumeric ? "n" : "s",
+          v: isTargetNumeric ? numTarget : finalTargetVal,
+          z: numFmt,
+          s: styleTargetRowCenter,
+        });
+      } else {
+        setCell(currentR, 3, { t: "s", v: "", z: numFmt, s: styleTargetRowCenter });
+      }
       setCell(currentR, 4, { t: "s", v: unitVal, s: styleTargetRowCenter });
       setCell(currentR, 5, { t: "s", v: "Target", s: styleTargetRowBoldCenter });
 
-      // Monthly Targets (Cols G..R)
+      // Monthly Targets (Cols G..R) - Sel Input Target Bulanan dengan format sesuai satuan
       for (let m = 0; m < 12; m++) {
         let mTargetVal: any = "";
-        if (ind.monthlyTargets && ind.monthlyTargets[m] !== null && ind.monthlyTargets[m] !== undefined) {
+        if (
+          ind.monthlyTargets &&
+          ind.monthlyTargets[m] !== null &&
+          ind.monthlyTargets[m] !== undefined &&
+          String(ind.monthlyTargets[m]).trim() !== ""
+        ) {
           mTargetVal = ind.monthlyTargets[m];
-        } else if (isTargetNumeric) {
+        } else if ((hasTarget || isTextInd) && isTargetNumeric) {
           mTargetVal = isSum ? Math.round((numTarget / 12) * 100) / 100 : numTarget;
+        } else if (hasTarget || isTextInd) {
+          mTargetVal = finalTargetVal;
         } else {
-          mTargetVal = targetVal;
+          mTargetVal = "";
         }
 
         const isMTargetNum = typeof mTargetVal === "number";
         setCell(currentR, 6 + m, {
           t: isMTargetNum ? "n" : "s",
           v: mTargetVal,
+          z: numFmt,
           s: styleTargetRowCenter,
         });
       }
 
-      // Realisasi Tahunan Target (Col S)
+      // Realisasi Tahunan Target (Col S / 18) Formula
+      let targetAnnualFormula = "";
       if (isSum) {
-        setCell(currentR, 18, {
-          t: "n",
-          f: `SUM(G${targetRowExcel}:R${targetRowExcel})`,
-          s: styleTargetRowBoldCenter,
-        });
-      } else if (isAverage && isTargetNumeric) {
-        setCell(currentR, 18, {
-          t: "n",
-          f: `IFERROR(AVERAGE(G${targetRowExcel}:R${targetRowExcel}), D${targetRowExcel})`,
-          s: styleTargetRowBoldCenter,
-        });
+        targetAnnualFormula = `IF(COUNT(G${targetRowExcel}:R${targetRowExcel})>0,SUM(G${targetRowExcel}:R${targetRowExcel}),IF(D${targetRowExcel}<>"",D${targetRowExcel},""))`;
       } else {
-        setCell(currentR, 18, {
-          t: isTargetNumeric ? "n" : "s",
-          f: `D${targetRowExcel}`,
-          s: styleTargetRowBoldCenter,
-        });
+        targetAnnualFormula = `IF(COUNT(G${targetRowExcel}:R${targetRowExcel})>0,AVERAGE(G${targetRowExcel}:R${targetRowExcel}),IF(D${targetRowExcel}<>"",D${targetRowExcel},""))`;
       }
+
+      setCell(currentR, 18, {
+        t: isTargetNumeric ? "n" : "s",
+        f: targetAnnualFormula,
+        v: isTargetNumeric ? numTarget : hasTarget || isTextInd ? finalTargetVal : "",
+        z: numFmt,
+        s: styleTargetRowBoldCenter,
+      });
+
       rowsHeight[currentR] = { hpt: 20 };
       currentR++;
 
@@ -644,10 +898,12 @@ export function buildFormRealisasiActualWorksheet(data: KpiMatrixSheetData) {
       setCell(currentR, 4, { t: "s", v: "", s: styleActualRowCenter });
       setCell(currentR, 5, { t: "s", v: "Actual", s: styleActualRowBoldCenter });
 
-      // Monthly Actuals (Cols G..R) - Sel Input
+      // Monthly Actuals (Cols G..R) - Sel Input Realisasi Bulanan dengan format sesuai satuan
       for (let m = 0; m < 12; m++) {
         const actVal =
-          ind.monthlyActuals && ind.monthlyActuals[m] !== null && ind.monthlyActuals[m] !== undefined
+          ind.monthlyActuals &&
+          ind.monthlyActuals[m] !== null &&
+          ind.monthlyActuals[m] !== undefined
             ? ind.monthlyActuals[m]
             : "";
         const isActNum = typeof actVal === "number";
@@ -655,6 +911,7 @@ export function buildFormRealisasiActualWorksheet(data: KpiMatrixSheetData) {
         setCell(currentR, 6 + m, {
           t: isActNum ? "n" : "s",
           v: actVal,
+          z: numFmt,
           s: styleActualRowCenter,
         });
       }
@@ -666,16 +923,23 @@ export function buildFormRealisasiActualWorksheet(data: KpiMatrixSheetData) {
       } else if (isLastValue) {
         actualFormula = `IFERROR(LOOKUP(2, 1/(G${actualRowExcel}:R${actualRowExcel}<>""), G${actualRowExcel}:R${actualRowExcel}), "")`;
       } else if (isRatio) {
-        actualFormula = `IF(SUM(G${targetRowExcel}:R${targetRowExcel})>0, SUM(G${actualRowExcel}:R${actualRowExcel})/SUM(G${targetRowExcel}:R${targetRowExcel}), "")`;
+        if ((unitVal || "").trim() === "%") {
+          actualFormula = `IF(SUM(G${targetRowExcel}:R${targetRowExcel})>0, (SUM(G${actualRowExcel}:R${actualRowExcel})/SUM(G${targetRowExcel}:R${targetRowExcel}))*100, "")`;
+        } else {
+          actualFormula = `IF(SUM(G${targetRowExcel}:R${targetRowExcel})>0, SUM(G${actualRowExcel}:R${actualRowExcel})/SUM(G${targetRowExcel}:R${targetRowExcel}), "")`;
+        }
       } else {
         // Default AVERAGE (only calculate if at least 1 month is filled)
-        actualFormula = `IF(COUNT(G${actualRowExcel}:R${actualRowExcel})>0, AVERAGE(G${actualRowExcel}:R${actualRowExcel}), "")`;
+        actualFormula = isTextInd
+          ? `IF(COUNT(G${actualRowExcel}:R${actualRowExcel})>0, ROUND(AVERAGE(G${actualRowExcel}:R${actualRowExcel}), 0), "")`
+          : `IF(COUNT(G${actualRowExcel}:R${actualRowExcel})>0, AVERAGE(G${actualRowExcel}:R${actualRowExcel}), "")`;
       }
 
       setCell(currentR, 18, {
         t: ind.realization !== null && ind.realization !== undefined ? (typeof ind.realization === "number" ? "n" : "s") : "s",
         f: actualFormula,
         v: ind.realization !== null && ind.realization !== undefined ? ind.realization : "",
+        z: numFmt,
         s: styleActualHighlightCenter,
       });
 
@@ -722,7 +986,7 @@ export function buildFormRealisasiActualWorksheet(data: KpiMatrixSheetData) {
     { wch: 18 }, // S: Realisasi Tahunan
   ];
 
-  return { ws, indicatorActualRowMap };
+  return { ws, indicatorActualRowMap, indicatorTargetRowMap };
 }
 
 // =============================================================================
@@ -732,7 +996,8 @@ export function buildFormRealisasiActualWorksheet(data: KpiMatrixSheetData) {
 export function buildFormPenilaianWorksheet(
   data: KpiMatrixSheetData,
   actualSheetName: string,
-  indicatorActualRowMap: Map<number | string, number>
+  indicatorActualRowMap: Map<number | string, number>,
+  indicatorTargetRowMap?: Map<number | string, number>
 ) {
   const ws: any = {};
   const merges: any[] = [];
@@ -808,13 +1073,14 @@ export function buildFormPenilaianWorksheet(
       const noStr = `${cat.number}.${indIdx + 1}`;
       const indKey = ind.id ?? `${cat.number}_${indIdx}`;
       const indWeightFrac = ind.weight > 1 ? ind.weight / 100 : ind.weight;
-      const targetVal = ind.target !== null && ind.target !== undefined ? ind.target : "100";
-      const unitVal = ind.unit || "%";
-      const numTarget = Number(targetVal);
-      const isTargetNumeric = !isNaN(numTarget);
+      const hasTarget = ind.target !== null && ind.target !== undefined && String(ind.target).trim() !== "";
+      const targetVal = hasTarget ? String(ind.target).trim() : "";
+      const unitVal = normalizeIndicatorUnit(ind.unit);
+      const isTextInd = !isNumericUnit(unitVal);
 
-      // Find the row number of this indicator's Actual row in Form Realisasi Actual
+      // Find the row number of this indicator's Target & Actual row in Form Realisasi Actual
       const actRowExcel = indicatorActualRowMap.get(indKey) || currentR + 1;
+      const targetRowExcel = indicatorTargetRowMap?.get(indKey) || (actRowExcel > 1 ? actRowExcel - 1 : currentR + 1);
       const indStartRow = currentR;
 
       // Bands sorted descending by score (25, 15, 5, 0)
@@ -829,9 +1095,32 @@ export function buildFormPenilaianWorksheet(
         );
       }
 
+      const topBandScore = bands.length > 0 ? Number(bands[0].score) : 25;
+      const numTarget = hasTarget ? Number(targetVal) : isTextInd ? topBandScore : NaN;
+      const isTargetNumeric = (hasTarget && !isNaN(Number(targetVal))) || (!hasTarget && isTextInd);
+      const finalTargetVal = hasTarget ? targetVal : isTextInd ? String(topBandScore) : "";
+      const numFmt = isTextInd ? "0" : getExcelNumberFormatForUnit(unitVal);
+
       const b1 = bands[0];
       const maxScoreVal = ind.maxScore || 25;
-      const scoreVal = ind.score !== null && ind.score !== undefined ? Number(ind.score) : Number(b1.score);
+      const hasInitialScore = typeof ind.score === "number" && !isNaN(ind.score);
+
+      const excelR1 = currentR + 1; // 1-indexed row number
+      const escapedSheetName = actualSheetName.includes(" ") ? `'${actualSheetName}'` : actualSheetName;
+      const actualCellRef = `${escapedSheetName}!S${actRowExcel}`;
+
+      // Expression untuk menghitung skor achieved berdasarkan data actual di Form Realisasi Actual,
+      // merujuk langsung ke sel Skor di Kolom J (misal J8, J9, J10) agar ketika user mengubah angka skor
+      // di kolom J, kolom realisasi otomatis ikut berubah menyesuaikan!
+      const rawScoreExpr = buildIndicatorScoreExpression(
+        actualCellRef,
+        bands,
+        unitVal,
+        targetVal,
+        excelR1,
+        "J"
+      );
+      const realScoreFormula = `IF(OR(${actualCellRef}="",ISBLANK(${actualCellRef})),"",${rawScoreExpr})`;
 
       // --- ROW 1 (Band 1) ---
       setCell(currentR, 0, { t: "s", v: noStr, s: styleCellCenter });
@@ -839,40 +1128,38 @@ export function buildFormPenilaianWorksheet(
       setCell(currentR, 2, { t: "n", v: catWeightFrac, z: "0%", s: styleCellBoldCenter });
       setCell(currentR, 3, { t: "s", v: ind.name, s: styleCellLeft });
       setCell(currentR, 4, { t: "n", v: indWeightFrac, z: "0%", s: styleCellBoldCenter });
+
+      // Col F (5): Target Tahunan (FORMULA LINK KE SHEET FORM REALISASI ACTUAL!)
+      const targetFormula = `IF(${escapedSheetName}!D${targetRowExcel}<>"",${escapedSheetName}!D${targetRowExcel},IF(${escapedSheetName}!S${targetRowExcel}<>"",${escapedSheetName}!S${targetRowExcel},""))`;
       setCell(currentR, 5, {
         t: isTargetNumeric ? "n" : "s",
-        v: isTargetNumeric ? numTarget : targetVal,
+        f: targetFormula,
+        v: isTargetNumeric ? numTarget : hasTarget || isTextInd ? finalTargetVal : "",
+        z: numFmt,
         s: styleCellCenter,
       });
+
+      // Col G (6): Satuan
       setCell(currentR, 6, { t: "s", v: unitVal, s: styleCellCenter });
 
-      const excelR1 = currentR + 1; // 1-indexed row number
-      const rawScoreExpr = buildIndicatorScoreExpression(
-        `H${excelR1}`,
-        bands,
-        unitVal,
-        targetVal
-      );
-
-      // Col H: Realisasi Tahunan (FORMULA LINK KE SHEET FORM REALISASI ACTUAL!)
-      const escapedSheetName = actualSheetName.includes(" ") ? `'${actualSheetName}'` : actualSheetName;
+      // Col H (7): Realisasi Tahunan (MENGISI SKOR YANG DISESUAIKAN DENGAN KRITERIA, BUKAN DATA MENTAH ACTUAL!)
       setCell(currentR, 7, {
-        t: ind.realization !== null && ind.realization !== undefined ? (typeof ind.realization === "number" ? "n" : "s") : "s",
-        f: `IF(${escapedSheetName}!S${actRowExcel}="","",${escapedSheetName}!S${actRowExcel})`,
-        v: ind.realization !== null && ind.realization !== undefined ? ind.realization : "",
+        t: hasInitialScore ? "n" : "s",
+        f: realScoreFormula,
+        v: hasInitialScore ? Number(ind.score) : "",
+        z: "0",
         s: styleActualHighlightCenter,
       });
 
-      // Col I: Kriteria Penilaian Band 1
+      // Col I (8): Kriteria Penilaian Band 1
       const b1Text = formatCriteriaExcel(b1.label, b1.operator || "TEXT", b1.minValue, b1.maxValue, unitVal);
-      const b1Display = b1Text.toLowerCase().includes("skor") ? b1Text : `${b1Text} (Skor: ${b1.score})`;
       setCell(currentR, 8, {
         t: "s",
-        v: b1Display,
+        v: b1Text,
         s: styleCellLeft,
       });
 
-      // Col J: Skor Band 1 (Format Integer Number 0, sejajar dengan kriteria baris 1)
+      // Col J (9): Skor Band 1 (Format Integer Number 0, per-line sejajar kriteria)
       setCell(currentR, 9, {
         t: "n",
         v: Number(b1.score),
@@ -880,9 +1167,8 @@ export function buildFormPenilaianWorksheet(
         s: styleScoreCell,
       });
 
-      // Col K: Nilai Akhir = (Skor / MaxScore) * BobotIndikator * BobotParameter (Merged vertikal)
+      // Col K (10): Nilai Akhir = (Realisasi Skor / MaxScore) * BobotIndikator * BobotParameter (Dihitung dari Skor Col H)
       nilaiAkhirCellRefs.push(`K${excelR1}`);
-      const hasInitialScore = typeof ind.score === "number" && !isNaN(ind.score);
       const precalcNilaiAkhir =
         hasInitialScore
           ? (Number(ind.score) / maxScoreVal) * indWeightFrac * catWeightFrac
@@ -890,13 +1176,13 @@ export function buildFormPenilaianWorksheet(
 
       setCell(currentR, 10, {
         t: hasInitialScore && precalcNilaiAkhir !== "" ? "n" : "s",
-        f: `IF(OR(H${excelR1}="",ISBLANK(H${excelR1})),"",(${rawScoreExpr}/${maxScoreVal})*E${excelR1}*C${excelR1})`,
+        f: `IF(OR(H${excelR1}="",ISBLANK(H${excelR1})),"",(H${excelR1}/${maxScoreVal})*E${excelR1}*C${excelR1})`,
         v: hasInitialScore ? precalcNilaiAkhir : "",
         z: "0.0%",
         s: styleCellBoldCenter,
       });
 
-      // Col L: Deskripsi
+      // Col L (11): Deskripsi
       setCell(currentR, 11, {
         t: "s",
         v: ind.description || "",
@@ -918,16 +1204,15 @@ export function buildFormPenilaianWorksheet(
         setCell(currentR, 6, { t: "s", v: "", s: styleCellCenter });
         setCell(currentR, 7, { t: "s", v: "", s: styleCellCenter });
 
-        // Criteria Label & Score Description
+        // Criteria Label per line (bersih tanpa redundansi teks skor)
         const bText = formatCriteriaExcel(b.label, b.operator || "TEXT", b.minValue, b.maxValue, unitVal);
-        const bDisplay = bText.toLowerCase().includes("skor") ? bText : `${bText} (Skor: ${b.score})`;
         setCell(currentR, 8, {
           t: "s",
-          v: bDisplay,
+          v: bText,
           s: styleCellLeft,
         });
 
-        // Col J: Skor Band masing-masing baris (Format Integer Number 0, sejajar dengan kriteria, TIDAK dimerge)
+        // Col J (9): Skor Band per line (sejajar dengan kriteria baris ini, TIDAK dimerge)
         setCell(currentR, 9, {
           t: "n",
           v: Number(b.score),
@@ -944,7 +1229,8 @@ export function buildFormPenilaianWorksheet(
 
       // Vertical Merging for indicator rows across bands (Cols 0..7, 10, 11)
       // Catatan: Col 8 (Kriteria Penilaian) dan Col 9 (Skor) sengaja TIDAK digabung secara vertikal
-      // agar setiap baris kriteria menampilkan skor masing-masing secara sejajar.
+      // agar setiap baris kriteria menampilkan skor masing-masing secara sejajar per line.
+      // Col 7 (Realisasi Tahunan) dan Col 10 (Nilai Akhir) DIGABUNG secara vertikal mewakili hasil indikator.
       if (bands.length > 1) {
         const endRow = currentR - 1;
         const mergeCols = [0, 1, 2, 3, 4, 5, 6, 7, 10, 11];
@@ -1136,8 +1422,8 @@ export function buildSystemMappingRows(data: KpiMatrixSheetData) {
 
 // Backward compatibility helper if needed
 export function buildCorporateKpiMatrixWorksheet(data: KpiMatrixSheetData) {
-  const { ws: wsActual, indicatorActualRowMap } = buildFormRealisasiActualWorksheet(data);
-  return buildFormPenilaianWorksheet(data, "Form Realisasi Actual", indicatorActualRowMap);
+  const { ws: wsActual, indicatorActualRowMap, indicatorTargetRowMap } = buildFormRealisasiActualWorksheet(data);
+  return buildFormPenilaianWorksheet(data, "Form Realisasi Actual", indicatorActualRowMap, indicatorTargetRowMap);
 }
 
 // =============================================================================
@@ -1233,13 +1519,14 @@ export function convertTemplateToMatrixData({
         .filter((b) => b.parameterId === p.id)
         .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0)); // DESC
 
+      const rawTarget = p.target !== null && p.target !== undefined && String(p.target).trim() !== "" ? String(p.target).trim() : null;
       return {
         id: p.id,
         code: p.code || undefined,
         name: p.name,
         description: p.description || "",
-        target: p.target || "100",
-        unit: p.unit || "%",
+        target: rawTarget,
+        unit: normalizeIndicatorUnit(p.unit),
         weight: Number(p.weight) || 1,
         maxScore: Number(p.maxScore) || 25,
         realization: null,
@@ -1253,7 +1540,7 @@ export function convertTemplateToMatrixData({
           maxValue: b.maxValue !== null && b.maxValue !== undefined ? Number(b.maxValue) : null,
           score: Number(b.score) || 0,
         })),
-        monthlyTargets: p.monthlyTargets || Array(12).fill(Number(p.target) || 100),
+        monthlyTargets: p.monthlyTargets || (rawTarget !== null ? Array(12).fill(Number(rawTarget) || rawTarget) : Array(12).fill(null)),
         monthlyActuals: p.monthlyActuals || Array(12).fill(null),
       };
     });
@@ -1335,7 +1622,7 @@ export function convertEvaluationToMatrixData(params: {
         }
         return ind.target !== null && ind.target !== undefined && ind.target !== ""
           ? Number(ind.target)
-          : 100;
+          : null;
       });
 
       const monthlyActuals = Array.from({ length: 12 }, (_, i) => {
@@ -1354,8 +1641,8 @@ export function convertEvaluationToMatrixData(params: {
         code: ind.code || undefined,
         name: ind.indicatorName || ind.name,
         description: ind.description || "",
-        target: ind.target !== undefined && ind.target !== null ? ind.target : 100,
-        unit: ind.unit || "%",
+        target: ind.target !== undefined && ind.target !== null && ind.target !== "" ? ind.target : null,
+        unit: normalizeIndicatorUnit(ind.unit),
         weight: finalWeightFrac,
         maxScore: Number(ind.maxScore) || 25,
         realization: ind.annualActual !== undefined && ind.annualActual !== null ? ind.annualActual : null,
@@ -1396,7 +1683,7 @@ export function convertEvaluationToMatrixData(params: {
 // EXPORT SINGLE EMPLOYEE / TEMPLATE WORKBOOK (2 FORMS: Form Penilaian & Form Realisasi Actual)
 // =============================================================================
 
-export function exportCorporateKpiMatrixExcel(
+export async function exportCorporateKpiMatrixExcel(
   data: KpiMatrixSheetData,
   customFilename?: string
 ) {
@@ -1405,11 +1692,11 @@ export function exportCorporateKpiMatrixExcel(
   const sheet1Name = "Form Penilaian";
   const sheet2Name = "Form Realisasi Actual";
 
-  // 1. Build Sheet 2 first to capture row indices for Actual rows
-  const { ws: wsActual, indicatorActualRowMap } = buildFormRealisasiActualWorksheet(data);
+  // 1. Build Sheet 2 first to capture row indices for Actual and Target rows
+  const { ws: wsActual, indicatorActualRowMap, indicatorTargetRowMap } = buildFormRealisasiActualWorksheet(data);
 
   // 2. Build Sheet 1 with dynamic formula references to Sheet 2
-  const wsPenilaian = buildFormPenilaianWorksheet(data, sheet2Name, indicatorActualRowMap);
+  const wsPenilaian = buildFormPenilaianWorksheet(data, sheet2Name, indicatorActualRowMap, indicatorTargetRowMap);
 
   // 3. Append Sheet 1 and Sheet 2 as primary visible sheets
   XLSXStyle.utils.book_append_sheet(wb, wsPenilaian, sheet1Name);
@@ -1434,6 +1721,7 @@ export function exportCorporateKpiMatrixExcel(
 
   if (!wb.Workbook) wb.Workbook = {};
   if (!wb.Workbook.Sheets) wb.Workbook.Sheets = [];
+  (wb.Workbook as any).calcPr = { fullCalcOnLoad: 1, forceFullCalculation: 1 };
   const mapIdx = wb.SheetNames.indexOf("_SYSTEM_MAPPING");
   if (mapIdx >= 0) {
     wb.Workbook.Sheets[mapIdx] = { Hidden: 1 };
@@ -1455,7 +1743,8 @@ export function exportCorporateKpiMatrixExcel(
   const safeName = (data.employee.name || "KPI").replace(/[^a-zA-Z0-9_-]/g, "_");
   const filename = customFilename || `Template_KPI_${safeName}_${data.periodYear}.xlsx`;
 
-  saveStyledWorkbook(wb, filename);
+  await saveStyledWorkbook(wb, filename);
+  return wb;
 }
 
 // =============================================================================
@@ -1473,6 +1762,9 @@ export function exportBatchCorporateKpiMatrixExcel(
     exportCorporateKpiMatrixExcel(items[0], filename);
     return;
   }
+
+  if (!wb.Workbook) wb.Workbook = {};
+  (wb.Workbook as any).calcPr = { fullCalcOnLoad: 1, forceFullCalculation: 1 };
 
   const usedSheetNames = new Set<string>();
 
@@ -1494,8 +1786,8 @@ export function exportBatchCorporateKpiMatrixExcel(
     }
     usedSheetNames.add(actName.toLowerCase());
 
-    const { ws: wsActual, indicatorActualRowMap } = buildFormRealisasiActualWorksheet(item);
-    const wsPenilaian = buildFormPenilaianWorksheet(item, actName, indicatorActualRowMap);
+    const { ws: wsActual, indicatorActualRowMap, indicatorTargetRowMap } = buildFormRealisasiActualWorksheet(item);
+    const wsPenilaian = buildFormPenilaianWorksheet(item, actName, indicatorActualRowMap, indicatorTargetRowMap);
 
     XLSXStyle.utils.book_append_sheet(wb, wsPenilaian, penName);
     XLSXStyle.utils.book_append_sheet(wb, wsActual, actName);
@@ -1508,14 +1800,35 @@ export function exportBatchCorporateKpiMatrixExcel(
 }
 
 // =============================================================================
-// UNIVERSAL BROWSER & SERVER SAFE WORKBOOK DOWNLOAD (xlsx-js-style)
+// UNIVERSAL BROWSER & SERVER SAFE WORKBOOK DOWNLOAD (xlsx-js-style + JSZip calcPr)
 // =============================================================================
 
-export function saveStyledWorkbook(wb: any, filename: string) {
+export async function saveStyledWorkbook(wb: any, filename: string): Promise<void> {
   try {
+    const rawOut = XLSXStyle.write(wb, { bookType: "xlsx", type: "array" });
+    let finalData: any = rawOut;
+    try {
+      const zip = await JSZip.loadAsync(rawOut);
+      let wbXml = await zip.file("xl/workbook.xml")?.async("text");
+      if (wbXml && !wbXml.includes("<calcPr")) {
+        if (wbXml.includes("</workbook>")) {
+          wbXml = wbXml.replace(
+            "</workbook>",
+            '<calcPr calcId="191029" fullCalcOnLoad="1" forceFullCalculation="1"/></workbook>'
+          );
+          zip.file("xl/workbook.xml", wbXml);
+          finalData = await zip.generateAsync({
+            type: typeof window !== "undefined" ? "uint8array" : "nodebuffer",
+            compression: "DEFLATE",
+          });
+        }
+      }
+    } catch (zipErr) {
+      console.warn("Could not inject calcPr into workbook:", zipErr);
+    }
+
     if (typeof window !== "undefined" && typeof document !== "undefined") {
-      const wbout = XLSXStyle.write(wb, { bookType: "xlsx", type: "array" });
-      const blob = new Blob([wbout], {
+      const blob = new Blob([finalData], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=UTF-8",
       });
       const url = URL.createObjectURL(blob);
@@ -1533,6 +1846,10 @@ export function saveStyledWorkbook(wb: any, filename: string) {
     }
   } catch (err) {
     console.warn("Styled workbook write fallback:", err);
-    XLSXStyle.writeFile(wb, filename);
+    try {
+      XLSXStyle.writeFile(wb, filename);
+    } catch (e) {
+      console.error("XLSXStyle.writeFile failed:", e);
+    }
   }
 }

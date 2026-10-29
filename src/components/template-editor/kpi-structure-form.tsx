@@ -78,6 +78,7 @@ interface KpiStructureFormProps {
   addBandAction: (fd: FormData) => Promise<void>;
   updateBandAction?: (fd: FormData) => Promise<void>;
   deleteBandAction: (fd: FormData) => Promise<void>;
+  onImportExcel?: () => void;
 }
 
 export function KpiStructureForm({
@@ -100,6 +101,7 @@ export function KpiStructureForm({
   addBandAction,
   updateBandAction,
   deleteBandAction,
+  onImportExcel,
 }: KpiStructureFormProps) {
   // Modal Indikator & Skala Nilai State
   const [indicatorModalState, setIndicatorModalState] = useState<{
@@ -1319,7 +1321,7 @@ export function KpiStructureForm({
       {/* ========================================================= */}
       <div
         ref={issuesContainerRef}
-        className="relative z-20 pb-0.5 transition-all duration-200"
+        className="relative z-10 pb-0.5 transition-all duration-200"
       >
         <div className="relative">
           <div
@@ -1408,7 +1410,7 @@ export function KpiStructureForm({
                 </button>
 
                 {isGuideOpen && (
-                  <div className="absolute right-0 top-full mt-1.5 z-50 w-72 rounded-xl bg-slate-900 text-white p-3.5 shadow-xl border border-slate-700 text-xs animate-in fade-in zoom-in-95 duration-150">
+                  <div className="absolute right-0 top-full mt-1.5 z-30 w-72 rounded-xl bg-slate-900 text-white p-3.5 shadow-xl border border-slate-700 text-xs animate-in fade-in zoom-in-95 duration-150">
                     <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2.5">
                       <span className="font-bold text-[11px] uppercase tracking-wider text-slate-300">
                         Struktur Template KPI
@@ -2084,6 +2086,8 @@ export function KpiStructureForm({
         isEditTemplateMode={isEditTemplateMode}
         onToggleEditTemplateMode={handleToggleEditTemplateMode}
         templateId={templateId}
+        onImportExcel={onImportExcel}
+        onAddCategory={() => setIsAddingCategory(true)}
       />
 
       {/* ========================================================= */}

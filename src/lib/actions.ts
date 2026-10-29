@@ -30,12 +30,18 @@ import {
 import { and, eq, inArray, or, ilike, isNull, sql, asc, desc, ne } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { scoreItem, tenureMonths, type ItemInput } from "./scoring";
+import { scoreItem, tenureMonths, resolveKpiDirection, type ItemInput } from "./scoring";
 import { recalculateAppraisal as recalculateAppraisalUnified } from "./monthly-assessment-service";
 import { seedDemoData } from "@/db/seed-data";
 import { syncAllFromOdoo, ODOO_CONFIG } from "@/lib/odoo";
 import { matchesSite, matchesDeptName } from "./department-mapping-utils";
-import { parseConditionString } from "./excel-template-kpi";
+import {
+  parseConditionString,
+  normalizeMasterParamInputType,
+  normalizeMasterParamAggregation,
+  normalizeMasterParamCompareBasis,
+  normalizeMasterParamPicRole,
+} from "./excel-template-kpi";
 import bcrypt from "bcryptjs";
 import { requireAuth, requireRole, requireAdmin, requireAdminOrHr } from "@/lib/auth-guard";
 
@@ -1649,7 +1655,26 @@ export async function createTemplate(fd: FormData) {
     })
     .returning();
 
-  await audit("template", row.id, "CREATE", { name: row.name, code: generatedCode, status: "Draft", version: "v1.0" });
+  // Jika ada struktur kategori dari file Excel yang diupload saat pembuatan template
+  const categoriesJson = fd.get("categoriesJson");
+  if (categoriesJson && typeof categoriesJson === "string") {
+    try {
+      const parsedCats = JSON.parse(categoriesJson);
+      if (Array.isArray(parsedCats) && parsedCats.length > 0) {
+        await importTemplateStructure(row.id, parsedCats as any, "REPLACE", { skipRevalidate: true });
+      }
+    } catch (e) {
+      console.warn("Failed to parse categoriesJson in createTemplate:", e);
+    }
+  }
+
+  await audit("template", row.id, "CREATE", {
+    name: row.name,
+    code: generatedCode,
+    status: "Draft",
+    version: "v1.0",
+    hasExcelUpload: Boolean(categoriesJson),
+  });
   revalidateAll();
   redirect(`/setup/templates/${row.id}`);
 }
@@ -1658,12 +1683,20 @@ export async function duplicateTemplate(fd: FormData) {
   const srcId = i(fd, "id");
   const [src] = await db.select().from(kpiTemplates).where(eq(kpiTemplates.id, srcId));
   if (!src) return;
+
+  // Guard: 1 karyawan tidak boleh punya 2 template personal
+  if (src.isCustom && src.employeeId) {
+    throw new Error(
+      "Template personal tidak dapat diduplikat untuk karyawan yang sama. Setiap karyawan hanya boleh memiliki 1 template personal."
+    );
+  }
+
   const [tpl] = await db
     .insert(kpiTemplates)
     .values({
       name: s(fd, "name") || `${src.name} (copy)`,
-      departmentId: i(fd, "departmentId"),
-      jobLevelId: i(fd, "jobLevelId"),
+      departmentId: i(fd, "departmentId") || src.departmentId,
+      jobLevelId: i(fd, "jobLevelId") || src.jobLevelId,
       site: src.site,
       pitId: src.pitId,
       departmentMappingId: src.departmentMappingId,
@@ -1842,41 +1875,16 @@ export async function deleteTemplate(fd: FormData) {
   const [tpl] = await db.select().from(kpiTemplates).where(eq(kpiTemplates.id, id));
   if (!tpl) throw new Error("Template tidak ditemukan.");
 
-  // Guard 1: Cek apakah template sudah di-assign ke penilaian karyawan
-  const linkedAppraisals = await db
-    .select({
-      id: appraisals.id,
-      employeeName: employees.name,
-      employeeNik: employees.nik,
-    })
-    .from(appraisals)
-    .innerJoin(employees, eq(appraisals.employeeId, employees.id))
-    .where(eq(appraisals.templateId, id));
+  // Hapus seluruh penilaian (appraisals) yang terhubung ke template ini agar tidak tertinggal di Penilaian KPI
+  await db.delete(appraisals).where(eq(appraisals.templateId, id));
 
-  if (linkedAppraisals.length > 0) {
-    const sampleNames = linkedAppraisals
-      .slice(0, 3)
-      .map((a) => `${a.employeeName} (${a.employeeNik})`)
-      .join(", ");
-    const moreSuffix = linkedAppraisals.length > 3 ? ` dan ${linkedAppraisals.length - 3} lainnya` : "";
-    throw new Error(
-      `Template "${tpl.name}" tidak dapat dihapus karena sudah di-assign ke ${linkedAppraisals.length} penilaian karyawan (${sampleNames}${moreSuffix}). Silakan nonaktifkan template ini jika sudah tidak berlaku.`
-    );
-  }
+  // Unlink referensi template turunan (baseTemplateId)
+  await db
+    .update(kpiTemplates)
+    .set({ baseTemplateId: null })
+    .where(eq(kpiTemplates.baseTemplateId, id));
 
-  // Guard 2: Cek apakah template memiliki konfigurasi penilai (assessor assignments)
-  const linkedAssignments = await db
-    .select({ id: kpiAssessorAssignments.id })
-    .from(kpiAssessorAssignments)
-    .innerJoin(kpiCategories, eq(kpiAssessorAssignments.categoryId, kpiCategories.id))
-    .where(eq(kpiCategories.templateId, id));
-
-  if (linkedAssignments.length > 0) {
-    throw new Error(
-      `Template "${tpl.name}" tidak dapat dihapus karena sudah memiliki ${linkedAssignments.length} konfigurasi penugasan penilai. Silakan batalkan penugasan penilai terlebih dahulu atau nonaktifkan template ini.`
-    );
-  }
-
+  // Hapus langsung dari DB (kategori, parameter, band, assessor assignments akan di-cascade otomatis oleh Postgres)
   await db.delete(kpiTemplates).where(eq(kpiTemplates.id, id));
   await audit("template", id, "DELETE");
   safeRevalidate("/setup");
@@ -1884,65 +1892,24 @@ export async function deleteTemplate(fd: FormData) {
   safeRevalidate("/setup/assignments");
   safeRevalidate("/review");
   safeRevalidate("/dashboard");
+  safeRevalidate("/input-kpi");
+  safeRevalidate("/kpi/assessments/monthly");
   revalidateAll();
 }
 
 export async function deleteTemplatesBulk(ids: number[]) {
   if (!ids || ids.length === 0) return;
 
-  // Guard 1: Cek appraisals
-  const inUseByAppraisals = await db
-    .select({
-      id: kpiTemplates.id,
-      name: kpiTemplates.name,
-      count: sql<number>`count(distinct ${appraisals.id})::int`,
-    })
-    .from(kpiTemplates)
-    .innerJoin(appraisals, eq(appraisals.templateId, kpiTemplates.id))
-    .where(inArray(kpiTemplates.id, ids))
-    .groupBy(kpiTemplates.id, kpiTemplates.name);
+  // Hapus seluruh penilaian (appraisals) yang terhubung ke template-template ini
+  await db.delete(appraisals).where(inArray(appraisals.templateId, ids));
 
-  // Guard 2: Cek assessor assignments
-  const inUseByAssignments = await db
-    .select({
-      id: kpiTemplates.id,
-      name: kpiTemplates.name,
-      count: sql<number>`count(distinct ${kpiAssessorAssignments.id})::int`,
-    })
-    .from(kpiTemplates)
-    .innerJoin(kpiCategories, eq(kpiCategories.templateId, kpiTemplates.id))
-    .innerJoin(kpiAssessorAssignments, eq(kpiAssessorAssignments.categoryId, kpiCategories.id))
-    .where(inArray(kpiTemplates.id, ids))
-    .groupBy(kpiTemplates.id, kpiTemplates.name);
+  // Unlink referensi template turunan (baseTemplateId)
+  await db
+    .update(kpiTemplates)
+    .set({ baseTemplateId: null })
+    .where(inArray(kpiTemplates.baseTemplateId, ids));
 
-  const blockedMap = new Map<number, { name: string; reasons: string[] }>();
-  for (const item of inUseByAppraisals) {
-    blockedMap.set(item.id, {
-      name: item.name,
-      reasons: [`${item.count} penilaian karyawan`],
-    });
-  }
-  for (const item of inUseByAssignments) {
-    const existing = blockedMap.get(item.id);
-    if (existing) {
-      existing.reasons.push(`${item.count} assignment penilai`);
-    } else {
-      blockedMap.set(item.id, {
-        name: item.name,
-        reasons: [`${item.count} assignment penilai`],
-      });
-    }
-  }
-
-  if (blockedMap.size > 0) {
-    const details = Array.from(blockedMap.values())
-      .map((b) => `"${b.name}" (${b.reasons.join(", ")})`)
-      .join("; ");
-    throw new Error(
-      `Sebagian atau seluruh template tidak dapat dihapus karena sudah digunakan: ${details}. Silakan batalkan pilihan template tersebut atau nonaktifkan statusnya.`
-    );
-  }
-
+  // Hapus langsung dari database permanen
   await db.delete(kpiTemplates).where(inArray(kpiTemplates.id, ids));
   for (const id of ids) {
     await audit("template", id, "DELETE_BULK");
@@ -1952,6 +1919,8 @@ export async function deleteTemplatesBulk(ids: number[]) {
   safeRevalidate("/setup/assignments");
   safeRevalidate("/review");
   safeRevalidate("/dashboard");
+  safeRevalidate("/input-kpi");
+  safeRevalidate("/kpi/assessments/monthly");
   revalidateAll();
 }
 
@@ -2930,17 +2899,14 @@ export async function importTemplateStructure(
         newMasterCount++;
       }
 
-      const isInverse =
-        lowerName.includes("sp") ||
-        lowerName.includes("surat peringatan") ||
-        lowerName.includes("pelanggaran") ||
-        lowerName.includes("insiden") ||
-        lowerName.includes("accident") ||
-        lowerName.includes("kepatuhan") ||
-        lowerName.includes("absensi") ||
-        lowerName.includes("terlambat") ||
-        c.name.toLowerCase().includes("sp") ||
-        c.name.toLowerCase().includes("kepatuhan");
+      const resolvedDirection = resolveKpiDirection(
+        (p.bands as any) || null,
+        null,
+        p.name,
+        null,
+        p.unit
+      );
+      const isInverse = resolvedDirection === "LOWER_IS_BETTER";
 
       const calcRuleId = isInverse ? (inverseRule?.id ?? null) : (normalRule?.id ?? null);
       paramCount++;
@@ -2965,6 +2931,7 @@ export async function importTemplateStructure(
             sortOrder: p.sortOrder ?? paramCount,
             masterParameterId: matchedMasterId,
             calculationRuleId: calcRuleId,
+            direction: resolvedDirection,
           })
           .where(eq(kpiParameters.id, p.id));
         targetParamId = p.id;
@@ -2988,6 +2955,7 @@ export async function importTemplateStructure(
             sortOrder: p.sortOrder ?? paramCount,
             masterParameterId: matchedMasterId,
             calculationRuleId: calcRuleId,
+            direction: resolvedDirection,
           })
           .returning();
         targetParamId = insertedParam.id;
@@ -3102,6 +3070,19 @@ export async function importTemplateStructure(
   }, client);
 
   if (!options?.skipRevalidate) {
+    // Otomatis sinkronkan kriteria dan indikator baru ke form penilaian karyawan (jika template personal atau sudah ditugaskan)
+    try {
+      const [t] = await client
+        .select({ employeeId: kpiTemplates.employeeId })
+        .from(kpiTemplates)
+        .where(eq(kpiTemplates.id, templateId));
+      if (t?.employeeId) {
+        await syncTemplateToEmployeeAppraisalsAction(templateId);
+      }
+    } catch (syncErr) {
+      console.warn("Auto-sync to employee appraisals after import:", syncErr);
+    }
+
     safeRevalidate("/setup/templates");
     safeRevalidate(`/setup/templates/${templateId}`);
   }
@@ -4443,7 +4424,7 @@ export async function getFiveMainParametersForWizard(
       code: p.code,
       name: p.name,
       unit: p.unit || "%",
-      target: "100",
+      target: "",
       weight: internalWeight,
       weightPct: internalWeightPct,
       effectiveWeightPct: effectivePct,
@@ -4464,7 +4445,7 @@ export async function getFiveMainParametersForWizard(
       code: "TGT-01",
       name: "Pencapaian Target Kerja Departemen",
       unit: "%",
-      target: "100",
+      target: "",
       weight: 1.0,
       weightPct: 100,
       effectiveWeightPct: targetKerjaWeightPct,
@@ -4593,7 +4574,7 @@ export async function getFiveMainParametersForWizard(
       parameterCode: kdSource.code || "GEN-KD-01",
       parameterName: kdSource.name,
       unit: kdSource.unit || "%",
-      target: "100",
+      target: "",
       inputType: (kdSource.inputType as any) || "PERCENTAGE",
       description: kdSource.description,
       defaultBands: (kdSource.defaultBands as any) || [
@@ -4613,7 +4594,7 @@ export async function getFiveMainParametersForWizard(
       parameterCode: k3Source.code || "GEN-K3-01",
       parameterName: k3Source.name,
       unit: k3Source.unit || "Insiden",
-      target: "0",
+      target: "",
       inputType: (k3Source.inputType as any) || "NUMBER",
       description: k3Source.description,
       defaultBands: (k3Source.defaultBands as any) || [
@@ -4633,7 +4614,7 @@ export async function getFiveMainParametersForWizard(
       parameterCode: spSource.code || "GEN-SP-01",
       parameterName: spSource.name,
       unit: spSource.unit || "SP",
-      target: "0",
+      target: "",
       inputType: (spSource.inputType as any) || "NUMBER",
       description: spSource.description,
       defaultBands: (spSource.defaultBands as any) || [
@@ -4653,7 +4634,7 @@ export async function getFiveMainParametersForWizard(
       parameterCode: invSource.code || "GEN-INV-01",
       parameterName: invSource.name,
       unit: invSource.unit || "Ide",
-      target: "1",
+      target: "",
       inputType: (invSource.inputType as any) || "NUMBER",
       description: invSource.description,
       defaultBands: (invSource.defaultBands as any) || [
@@ -4874,60 +4855,157 @@ export async function importMasterParametersBulk(
     aggregation?: string;
     compareBasis?: string;
     picRole?: string;
-  }>
+  }>,
+  options?: {
+    duplicateMode?: "UPDATE" | "SKIP" | "RENAME";
+  }
 ) {
+  const duplicateMode = options?.duplicateMode || "UPDATE";
   let createdCount = 0;
   let updatedCount = 0;
+  let skippedCount = 0;
+
+  // Set pelacak kode yang diproses dalam batch impor saat ini
+  const usedCodesInBatch = new Set<string>();
 
   for (const it of items) {
     const trimmedName = it.name?.trim();
     if (!trimmedName) continue;
     const targetDeptId = it.departmentId ?? null;
 
-    const [existing] = await db
-      .select()
-      .from(masterParameters)
-      .where(
-        and(
-          ilike(masterParameters.name, trimmedName),
-          targetDeptId !== null
-            ? eq(masterParameters.departmentId, targetDeptId)
-            : isNull(masterParameters.departmentId)
+    // Normalisasi enum agar selalu valid sesuai skema database
+    const normalizedInputType = normalizeMasterParamInputType(it.inputType, it.unit);
+    const normalizedAggregation = normalizeMasterParamAggregation(it.aggregation);
+    const normalizedCompareBasis = normalizeMasterParamCompareBasis(it.compareBasis);
+    const normalizedPicRole = normalizeMasterParamPicRole(it.picRole);
+
+    const trimmedCode = it.code?.trim().toUpperCase();
+
+    // 1. Prioritaskan pengecekan data eksisting berdasarkan kode (jika ada), lalu nama + departemen
+    let existing: typeof masterParameters.$inferSelect | undefined;
+
+    if (trimmedCode) {
+      const [byCode] = await db
+        .select()
+        .from(masterParameters)
+        .where(eq(masterParameters.code, trimmedCode))
+        .limit(1);
+      if (byCode) {
+        existing = byCode;
+      }
+    }
+
+    if (!existing) {
+      const [byName] = await db
+        .select()
+        .from(masterParameters)
+        .where(
+          and(
+            ilike(masterParameters.name, trimmedName),
+            targetDeptId !== null
+              ? eq(masterParameters.departmentId, targetDeptId)
+              : isNull(masterParameters.departmentId)
+          )
         )
-      );
+        .limit(1);
+      if (byName) {
+        existing = byName;
+      }
+    }
 
     if (existing) {
+      if (duplicateMode === "SKIP") {
+        skippedCount++;
+        continue;
+      }
+
+      if (duplicateMode === "RENAME" && trimmedCode && existing.code === trimmedCode) {
+        // Mode RENAME: Buat parameter baru dengan kode baru terpisah
+        const newCode = await generateMasterParamCode(targetDeptId);
+        await db.insert(masterParameters).values({
+          code: newCode,
+          name: trimmedName,
+          description: it.description || null,
+          departmentId: targetDeptId,
+          categoryName: it.categoryName || null,
+          unit: it.unit || "%",
+          inputType: normalizedInputType,
+          aggregation: normalizedAggregation,
+          compareBasis: normalizedCompareBasis,
+          picRole: normalizedPicRole,
+          isActive: true,
+        });
+        usedCodesInBatch.add(newCode);
+        createdCount++;
+        continue;
+      }
+
+      // Mode UPDATE (default): Perbarui data master parameter eksisting
       await db
         .update(masterParameters)
         .set({
+          name: trimmedName,
           departmentId: targetDeptId,
           description: it.description ?? existing.description,
           categoryName: it.categoryName ?? existing.categoryName,
           unit: it.unit ?? existing.unit,
-          inputType: (it.inputType as any) ?? existing.inputType,
-          aggregation: (it.aggregation as any) ?? existing.aggregation,
-          compareBasis: (it.compareBasis as any) ?? existing.compareBasis,
-          picRole: (it.picRole as any) ?? existing.picRole,
+          inputType: normalizedInputType,
+          aggregation: normalizedAggregation,
+          compareBasis: normalizedCompareBasis,
+          picRole: normalizedPicRole,
           updatedAt: new Date(),
         })
         .where(eq(masterParameters.id, existing.id));
+
+      if (existing.code) {
+        usedCodesInBatch.add(existing.code);
+      }
       updatedCount++;
     } else {
-      const code = it.code?.trim() || (await generateMasterParamCode(targetDeptId));
+      // Data baru: Tentukan kode akhir dengan validasi keunikan
+      let finalCode = trimmedCode;
+
+      if (!finalCode) {
+        finalCode = await generateMasterParamCode(targetDeptId);
+      } else {
+        // Jika kode ini sudah digunakan sebelumnya pada baris lain di berkas Excel
+        if (usedCodesInBatch.has(finalCode)) {
+          let suffix = 2;
+          let candidate = `${finalCode}-${suffix}`;
+          while (usedCodesInBatch.has(candidate)) {
+            suffix++;
+            candidate = `${finalCode}-${suffix}`;
+          }
+          finalCode = candidate;
+        }
+
+        // Pastikan tidak ada konflik kode unik di tabel database
+        const [conflictCode] = await db
+          .select({ id: masterParameters.id })
+          .from(masterParameters)
+          .where(eq(masterParameters.code, finalCode))
+          .limit(1);
+
+        if (conflictCode) {
+          finalCode = await generateMasterParamCode(targetDeptId);
+        }
+      }
 
       await db.insert(masterParameters).values({
-        code,
+        code: finalCode,
         name: trimmedName,
         description: it.description || null,
         departmentId: targetDeptId,
         categoryName: it.categoryName || null,
         unit: it.unit || "%",
-        inputType: (it.inputType as any) || "PERCENTAGE",
-        aggregation: (it.aggregation as any) || "AVERAGE",
-        compareBasis: (it.compareBasis as any) || "ACTUAL",
-        picRole: (it.picRole as any) || "HEAD_DEPT",
+        inputType: normalizedInputType,
+        aggregation: normalizedAggregation,
+        compareBasis: normalizedCompareBasis,
+        picRole: normalizedPicRole,
         isActive: true,
       });
+
+      usedCodesInBatch.add(finalCode);
       createdCount++;
     }
   }
@@ -4935,7 +5013,7 @@ export async function importMasterParametersBulk(
   safeRevalidate("/setup");
   safeRevalidate("/setup/templates");
   safeRevalidate("/setup/templates/import");
-  return { createdCount, updatedCount };
+  return { createdCount, updatedCount, skippedCount };
 }
 
 /**
@@ -6041,7 +6119,7 @@ export async function createCustomKpiAction(data: {
             aggregation: param.aggregation || "AVERAGE",
             compareBasis: param.compareBasis || "ACTUAL",
             unit: param.unit || null,
-            target: param.target !== null && param.target !== undefined ? String(param.target) : null,
+            target: param.target !== null && param.target !== undefined && String(param.target).trim() !== "" ? String(param.target).trim() : null,
             picRole: param.picRole || "HEAD_DEPT",
             isMonthly: param.inputType === "MONTHLY_ACTUAL",
             sortOrder: param.sortOrder ?? pIdx,
@@ -6184,7 +6262,7 @@ export async function updateCustomKpiAction(data: {
             aggregation: param.aggregation || "AVERAGE",
             compareBasis: param.compareBasis || "ACTUAL",
             unit: param.unit || null,
-            target: param.target !== null && param.target !== undefined ? String(param.target) : null,
+            target: param.target !== null && param.target !== undefined && String(param.target).trim() !== "" ? String(param.target).trim() : null,
             picRole: param.picRole || "HEAD_DEPT",
             isMonthly: param.inputType === "MONTHLY_ACTUAL",
             sortOrder: param.sortOrder ?? pIdx,
@@ -6489,7 +6567,94 @@ export async function syncTemplateToEmployeeAppraisalsAction(templateId: number)
       .innerJoin(employees, eq(appraisals.employeeId, employees.id))
       .where(eq(appraisals.templateId, templateId));
 
-    if (linkedAppraisals.length === 0) {
+    let activeAppraisals = [...linkedAppraisals];
+
+    // Jika belum ada appraisal terhubung tetapi template adalah template personal (memiliki employeeId)
+    if (activeAppraisals.length === 0 && tpl.employeeId) {
+      const [emp] = await db
+        .select()
+        .from(employees)
+        .where(eq(employees.id, tpl.employeeId))
+        .limit(1);
+
+      if (emp) {
+        let periodId = tpl.periodId;
+        if (!periodId) {
+          const [activeP] = await db
+            .select({ id: kpiPeriods.id })
+            .from(kpiPeriods)
+            .where(eq(kpiPeriods.status, "ACTIVE"))
+            .limit(1);
+          periodId = activeP?.id ?? null;
+        }
+
+        if (periodId) {
+          const [period] = await db
+            .select()
+            .from(kpiPeriods)
+            .where(eq(kpiPeriods.id, periodId))
+            .limit(1);
+
+          const tenure = tenureMonths(emp.dateOfHire, period?.evaluationDate ?? new Date());
+          const eligible = period ? tenure >= (period.minTenureMonths ?? 0) : true;
+
+          const [existingAppr] = await db
+            .select()
+            .from(appraisals)
+            .where(
+              and(
+                eq(appraisals.employeeId, emp.id),
+                eq(appraisals.periodId, periodId)
+              )
+            )
+            .limit(1);
+
+          if (existingAppr) {
+            await db
+              .update(appraisals)
+              .set({
+                templateId: tpl.id,
+                tenureMonths: tenure,
+                isEligible: eligible,
+                updatedAt: new Date(),
+              })
+              .where(eq(appraisals.id, existingAppr.id));
+
+            activeAppraisals.push({
+              id: existingAppr.id,
+              employeeId: emp.id,
+              employeeName: emp.name,
+              employeeNik: emp.nik,
+              status: existingAppr.status,
+            });
+          } else {
+            const [newAppr] = await db
+              .insert(appraisals)
+              .values({
+                periodId,
+                employeeId: emp.id,
+                templateId: tpl.id,
+                appraiserId: emp.appraiserId ?? null,
+                tenureMonths: tenure,
+                isEligible: eligible,
+                status: "DRAFT",
+                currentStage: "PENILAI",
+              })
+              .returning();
+
+            activeAppraisals.push({
+              id: newAppr.id,
+              employeeId: emp.id,
+              employeeName: emp.name,
+              employeeNik: emp.nik,
+              status: newAppr.status,
+            });
+          }
+        }
+      }
+    }
+
+    if (activeAppraisals.length === 0) {
       return {
         success: false,
         error: `Belum ada penilaian karyawan yang ditugaskan ke template "${tpl.name}". Silakan lakukan penugasan karyawan terlebih dahulu pada menu Penugasan Template.`,
@@ -6499,7 +6664,7 @@ export async function syncTemplateToEmployeeAppraisalsAction(templateId: number)
     const templateParamIdsSet = new Set(paramIds);
 
     // 3. Update setiap appraisal karyawan
-    for (const appr of linkedAppraisals) {
+    for (const appr of activeAppraisals) {
       const existingItems = await db
         .select()
         .from(appraisalItems)
@@ -6580,8 +6745,8 @@ export async function syncTemplateToEmployeeAppraisalsAction(templateId: number)
     // 4. Catat Audit Trail
     await audit("template", templateId, "SYNC_TO_EMPLOYEE_APPRAISALS", {
       templateName: tpl.name,
-      totalAppraisalsUpdated: linkedAppraisals.length,
-      employees: linkedAppraisals.map((a) => `${a.employeeName} (${a.employeeNik})`),
+      totalAppraisalsUpdated: activeAppraisals.length,
+      employees: activeAppraisals.map((a) => `${a.employeeName} (${a.employeeNik})`),
     });
 
     safeRevalidate(`/setup/templates/${templateId}`);
@@ -6591,12 +6756,12 @@ export async function syncTemplateToEmployeeAppraisalsAction(templateId: number)
     safeRevalidate("/dashboard");
     revalidateAll();
 
-    const empListStr = linkedAppraisals.map((a) => a.employeeName).join(", ");
+    const empListStr = activeAppraisals.map((a) => a.employeeName).join(", ");
     return {
       success: true,
-      count: linkedAppraisals.length,
-      employeeNames: linkedAppraisals.map((a) => a.employeeName),
-      message: `Berhasil memperbarui skor kriteria & struktur template ke ${linkedAppraisals.length} karyawan (${empListStr}). Form penilaian karyawan kini telah menggunakan kriteria Master Template terbaru.`,
+      count: activeAppraisals.length,
+      employeeNames: activeAppraisals.map((a) => a.employeeName),
+      message: `Berhasil memperbarui skor kriteria & struktur template ke ${activeAppraisals.length} karyawan (${empListStr}). Form penilaian karyawan kini telah menggunakan kriteria Master Template terbaru.`,
     };
   } catch (err: any) {
     return {

@@ -50,7 +50,10 @@ interface TemplateHubClientProps {
   updateMasterParamAction: (fd: FormData) => Promise<any>;
   deleteMasterParamAction: (fd: FormData) => Promise<any>;
   deleteMasterParamBulkAction?: (ids: number[]) => Promise<any>;
-  importBulkMasterParamAction: (items: any[]) => Promise<{ createdCount: number; updatedCount: number }>;
+  importBulkMasterParamAction: (
+    items: any[],
+    options?: { duplicateMode?: "UPDATE" | "SKIP" | "RENAME" }
+  ) => Promise<{ createdCount: number; updatedCount: number; skippedCount?: number }>;
   resetAndSyncFromTemplatesAction?: () => Promise<{ success: boolean; count: number }>;
   // Initial options
   initialView?: string;

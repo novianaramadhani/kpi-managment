@@ -181,6 +181,8 @@ export async function saveBatchExcelAssessmentAction(params: {
     monthlyTargets?: (number | null)[];
     hasMonthlyData?: boolean;
     rawTitle?: string;
+    score?: number | null;
+    bandLabel?: string | null;
   }>;
 }) {
   try {

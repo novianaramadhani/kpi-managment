@@ -17,23 +17,23 @@ export function PageHeader({
   backLabel?: string;
 }) {
   return (
-    <div className="mb-6 space-y-2">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex items-start gap-3">
+    <div className="mb-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
           {onBack ? (
             <button
               type="button"
               onClick={onBack}
-              className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-2xs hover:border-slate-400 hover:bg-slate-50 hover:text-slate-900 transition-all active:scale-95 group cursor-pointer"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:border-sky-300 hover:bg-sky-50/60 hover:text-sky-900 transition cursor-pointer"
               title={backLabel || "Kembali"}
               aria-label={backLabel || "Kembali"}
             >
               <svg
-                className="h-4 w-4 transition-transform group-hover:-translate-x-0.5"
+                className="h-4 w-4"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
-                strokeWidth="2.5"
+                strokeWidth="2"
               >
                 <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
               </svg>
@@ -41,24 +41,24 @@ export function PageHeader({
           ) : backHref ? (
             <Link
               href={backHref}
-              className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-2xs hover:border-slate-400 hover:bg-slate-50 hover:text-slate-900 transition-all active:scale-95 group cursor-pointer"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:border-sky-300 hover:bg-sky-50/60 hover:text-sky-900 transition cursor-pointer"
               title={backLabel || "Kembali"}
               aria-label={backLabel || "Kembali"}
             >
               <svg
-                className="h-4 w-4 transition-transform group-hover:-translate-x-0.5"
+                className="h-4 w-4"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
-                strokeWidth="2.5"
+                strokeWidth="2"
               >
                 <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
               </svg>
             </Link>
           ) : null}
           <div>
-            <h1 className="text-2xl font-black text-slate-900">{title}</h1>
-            {subtitle && <p className="mt-1 text-sm text-slate-600">{subtitle}</p>}
+            <h1 className="text-lg font-bold text-slate-900 leading-tight">{title}</h1>
+            {subtitle && <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>}
           </div>
         </div>
         {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}

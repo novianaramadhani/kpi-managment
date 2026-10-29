@@ -84,6 +84,12 @@ export interface ParseResult {
   hasSystemMapping: boolean;
   errors: string[];
   warnings: string[];
+  summary?: {
+    totalCategories: number;
+    totalIndicators: number;
+    totalWeight: number;
+    totalBands: number;
+  };
 }
 
 // =============================================================================
@@ -96,29 +102,110 @@ export function formatCriteriaExcel(
   maxValue: number | string | null | undefined,
   unit?: string | null
 ): string {
-  const min =
+  const u = (unit || "").trim().toLowerCase();
+  const isRp = u === "rp" || u === "idr" || u === "rupiah";
+
+  const rawLabel = (label || "").trim();
+  let op = String(operator || "").toUpperCase().trim();
+  let minNum =
     minValue !== null && minValue !== undefined && minValue !== ""
-      ? String(minValue).replace(/\.0000$/, "").replace(/\.00$/, "")
-      : "";
-  const max =
+      ? Number(String(minValue).replace(/\.0000$/, "").replace(/\.00$/, ""))
+      : null;
+  let maxNum =
     maxValue !== null && maxValue !== undefined && maxValue !== ""
-      ? String(maxValue).replace(/\.0000$/, "").replace(/\.00$/, "")
-      : "";
-  const u = (unit || "").trim();
+      ? Number(String(maxValue).replace(/\.0000$/, "").replace(/\.00$/, ""))
+      : null;
+
+  if (isNaN(minNum as number)) minNum = null;
+  if (isNaN(maxNum as number)) maxNum = null;
+
+  if ((!op || op === "TEXT" || (minNum === null && maxNum === null)) && rawLabel) {
+    const parsed = parseConditionString(rawLabel);
+    if (parsed.operator !== "TEXT") {
+      op = parsed.operator;
+      if (minNum === null) minNum = parsed.minValue;
+      if (maxNum === null) maxNum = parsed.maxValue;
+    }
+  }
+
+  // --- 1. KHUSUS SATUAN RUPIAH (Format Numerik Rupiah Penuh Konsisten) ---
+  if (isRp) {
+    let mult = 1;
+    if (/(?:miliar|milyar|[0-9]\s*m\b)/i.test(rawLabel)) {
+      mult = 1_000_000_000;
+    } else if (/(?:juta|million|[0-9]\s*jt\b)/i.test(rawLabel)) {
+      mult = 1_000_000;
+    } else if (/(?:ribu|thousand|[0-9]\s*k\b)/i.test(rawLabel)) {
+      mult = 1_000;
+    } else if (
+      (minNum !== null && minNum > 0 && minNum <= 1000) ||
+      (maxNum !== null && maxNum > 0 && maxNum <= 1000)
+    ) {
+      mult = 1_000_000_000;
+    }
+
+    const effMin = minNum !== null ? (minNum <= 1000 && mult > 1 ? minNum * mult : minNum) : null;
+    const effMax = maxNum !== null ? (maxNum <= 1000 && mult > 1 ? maxNum * mult : maxNum) : null;
+    const formatRp = (n: number) => `Rp ${Math.round(n).toLocaleString("id-ID")}`;
+
+    switch (op) {
+      case "LT":
+      case "<": {
+        const v = effMax ?? effMin;
+        if (v !== null) return `< ${formatRp(v)}`;
+        break;
+      }
+      case "LTE":
+      case "<=":
+      case "≤": {
+        const v = effMax ?? effMin;
+        if (v !== null) return `≤ ${formatRp(v)}`;
+        break;
+      }
+      case "GT":
+      case ">": {
+        const v = effMin ?? effMax;
+        if (v !== null) return `> ${formatRp(v)}`;
+        break;
+      }
+      case "GTE":
+      case ">=":
+      case "≥": {
+        const v = effMin ?? effMax;
+        if (v !== null) return `≥ ${formatRp(v)}`;
+        break;
+      }
+      case "EQ":
+      case "=": {
+        const v = effMin ?? effMax;
+        if (v !== null) return `= ${formatRp(v)}`;
+        break;
+      }
+      case "BETWEEN":
+      case "RANGE": {
+        if (effMin !== null && effMax !== null) {
+          const lo = Math.min(effMin, effMax);
+          const hi = Math.max(effMin, effMax);
+          return `${formatRp(lo)} - ${formatRp(hi)}`;
+        }
+        break;
+      }
+    }
+  }
+
+  // --- 2. FORMAT UMUM UNTUK PERSEN (%) & SATUAN LAINNYA ---
+  const min = minNum !== null ? String(minNum) : "";
+  const max = maxNum !== null ? String(maxNum) : "";
 
   const formatVal = (v: string) => {
     if (!v) return "";
-    if (u === "%") return `${v}%`;
-    if (u.toLowerCase() === "rp") {
-      const n = Number(v);
-      return !isNaN(n) ? `Rp ${n.toLocaleString("id-ID")}` : `Rp ${v}`;
-    }
-    if (u) return `${v} ${u}`;
+    if (u === "%" || u === "persen" || u === "percentage") return `${v}%`;
+    if (u) return `${v} ${unit}`;
     return v;
   };
 
   let cond = "";
-  switch (operator) {
+  switch (op) {
     case "GT":
       cond = min ? `> ${formatVal(min)}` : "";
       break;
@@ -220,6 +307,24 @@ export function formatCriteriaString(operatorSymbol: string, criteriaValue: stri
   }
 }
 
+function extractNumericFromCondition(str: string): number | null {
+  const clean = str.trim();
+  // Strip currency prefixes like "Rp", "Rp.", "IDR"
+  const withoutCurrency = clean.replace(/^(?:rp|idr)\.?\s*/i, "");
+  // Check if it's formatted Indonesian number like 25.000.000.000 or 1.000.000
+  if (/\b\d{1,3}(?:\.\d{3})+\b/.test(withoutCurrency)) {
+    const digitsOnly = withoutCurrency.replace(/\./g, "").match(/\d+/);
+    if (digitsOnly) return parseFloat(digitsOnly[0]);
+  }
+  const match = withoutCurrency.match(/([0-9]+(?:[.,][0-9]+)?)/);
+  if (match) {
+    const norm = match[1].replace(/,/g, ".");
+    const val = parseFloat(norm);
+    return isNaN(val) ? null : val;
+  }
+  return null;
+}
+
 export function parseConditionString(raw: string): ParsedConditionResult {
   const trimmed = (raw || "").trim();
   if (!trimmed) {
@@ -276,11 +381,11 @@ export function parseConditionString(raw: string): ParsedConditionResult {
   const gteMatch = targetStr.match(/^(?:>=|≥|=>)\s*(.+)$/);
   if (gteMatch) {
     const rest = gteMatch[1].trim();
-    const numM = rest.match(/^([0-9.]+)/);
-    if (numM) {
+    const num = extractNumericFromCondition(rest);
+    if (num !== null) {
       return {
         operator: "GTE",
-        minValue: parseFloat(numM[1]),
+        minValue: num,
         maxValue: null,
         cleanLabel: labelFallback,
         operatorSymbol: ">=",
@@ -294,11 +399,11 @@ export function parseConditionString(raw: string): ParsedConditionResult {
   const gtMatch = targetStr.match(/^>\s*(.+)$/);
   if (gtMatch) {
     const rest = gtMatch[1].trim();
-    const numM = rest.match(/^([0-9.]+)/);
-    if (numM) {
+    const num = extractNumericFromCondition(rest);
+    if (num !== null) {
       return {
         operator: "GT",
-        minValue: parseFloat(numM[1]),
+        minValue: num,
         maxValue: null,
         cleanLabel: labelFallback,
         operatorSymbol: ">",
@@ -312,12 +417,12 @@ export function parseConditionString(raw: string): ParsedConditionResult {
   const lteMatch = targetStr.match(/^(?:<=|≤|=<)\s*(.+)$/);
   if (lteMatch) {
     const rest = lteMatch[1].trim();
-    const numM = rest.match(/^([0-9.]+)/);
-    if (numM) {
+    const num = extractNumericFromCondition(rest);
+    if (num !== null) {
       return {
         operator: "LTE",
         minValue: null,
-        maxValue: parseFloat(numM[1]),
+        maxValue: num,
         cleanLabel: labelFallback,
         operatorSymbol: "<=",
         criteriaValue: rest,
@@ -326,16 +431,16 @@ export function parseConditionString(raw: string): ParsedConditionResult {
     }
   }
 
-  // 5. LT: "< 95%", "<95", "<25 M"
+  // 5. LT: "< 95%", "<95", "<25 M", "< Rp 25.000.000.000"
   const ltMatch = targetStr.match(/^<\s*(.+)$/);
   if (ltMatch) {
     const rest = ltMatch[1].trim();
-    const numM = rest.match(/^([0-9.]+)/);
-    if (numM) {
+    const num = extractNumericFromCondition(rest);
+    if (num !== null) {
       return {
         operator: "LT",
         minValue: null,
-        maxValue: parseFloat(numM[1]),
+        maxValue: num,
         cleanLabel: labelFallback,
         operatorSymbol: "<",
         criteriaValue: rest,
@@ -344,15 +449,15 @@ export function parseConditionString(raw: string): ParsedConditionResult {
     }
   }
 
-  // 6. EQ: "= 95", "== 95"
+  // 6. EQ: "= 95", "== 95", "= Rp 25.000.000.000"
   const eqMatch = targetStr.match(/^(?:=|==)\s*(.+)$/);
   if (eqMatch) {
     const rest = eqMatch[1].trim();
-    const numM = rest.match(/^([0-9.]+)/);
-    if (numM) {
+    const num = extractNumericFromCondition(rest);
+    if (num !== null) {
       return {
         operator: "EQ",
-        minValue: parseFloat(numM[1]),
+        minValue: num,
         maxValue: null,
         cleanLabel: labelFallback,
         operatorSymbol: "=",
@@ -362,12 +467,12 @@ export function parseConditionString(raw: string): ParsedConditionResult {
     }
   }
 
-  // 7. Standalone number without operator symbol: "95", "100%", "25"
-  const numOnlyMatch = targetStr.match(/^([0-9.]+)\s*(%|[a-zA-Z]+)?$/);
-  if (numOnlyMatch) {
+  // 7. Standalone number without operator symbol: "95", "100%", "25", "1 Improvement"
+  const numOnlyVal = extractNumericFromCondition(targetStr);
+  if (numOnlyVal !== null && /^([0-9.,]+|\d+\s+[a-zA-Z]+)/.test(targetStr) && !targetStr.toLowerCase().startsWith("tidak")) {
     return {
       operator: "EQ",
-      minValue: parseFloat(numOnlyMatch[1]),
+      minValue: numOnlyVal,
       maxValue: null,
       cleanLabel: labelFallback,
       operatorSymbol: "=",
@@ -599,7 +704,8 @@ export function buildKpiTemplateSheetRows({
             Number(b.score ?? 0) - Number(a.score ?? 0)
         );
 
-      const targetVal = p.target || "100";
+      const hasTarget = p.target !== null && p.target !== undefined && String(p.target).trim() !== "" && String(p.target).trim() !== "100";
+      const targetVal = hasTarget ? String(p.target).trim() : "";
       const unitVal = p.unit || "%";
       const b1 = pBands[0];
       const b2 = pBands[1];
@@ -607,9 +713,12 @@ export function buildKpiTemplateSheetRows({
       // Baris 1: Target
       globalRowCounter++;
       const monthlyTargetCols = MONTH_NAMES.map(() => {
+        if (!hasTarget) return "";
         const num = Number(targetVal);
         return isNaN(num) ? targetVal : num;
       });
+
+      const displayTarget = hasTarget ? (isNaN(Number(targetVal)) ? targetVal : Number(targetVal)) : "";
 
       rows.push([
         noLabel,
@@ -617,11 +726,11 @@ export function buildKpiTemplateSheetRows({
         catWeightPct,
         paramDisplayName,
         displayIndWeight,
-        isNaN(Number(targetVal)) ? targetVal : Number(targetVal),
+        displayTarget,
         unitVal,
         "Target",
         ...monthlyTargetCols,
-        isNaN(Number(targetVal)) ? targetVal : Number(targetVal),
+        displayTarget,
         b1
           ? formatCriteriaExcel(b1.label, b1.operator, b1.minValue, b1.maxValue, unitVal)
           : "-",
@@ -1195,11 +1304,20 @@ export function downloadDepartmentJobLevelKpiTemplate({
 // 4. SMART EXCEL PARSER (Mendukung Format Master Template & Hidden Mapping)
 // =============================================================================
 export async function parseKpiTemplateExcel(
-  file: File,
+  file: File | Blob | ArrayBuffer | Uint8Array,
   expectedTotalWeightPct: number = 115,
   dbParameters?: DepartmentJobLevelParameter[]
 ): Promise<ParseResult> {
-  const buffer = await file.arrayBuffer();
+  let buffer: ArrayBuffer | Uint8Array;
+  if (file && typeof (file as any).arrayBuffer === "function") {
+    buffer = await (file as any).arrayBuffer();
+  } else if (file instanceof Uint8Array || file instanceof ArrayBuffer) {
+    buffer = file;
+  } else if (typeof Buffer !== "undefined" && Buffer.isBuffer(file)) {
+    buffer = new Uint8Array(file);
+  } else {
+    buffer = file as any;
+  }
   const wb = XLSX.read(buffer, { type: "array" });
 
   // 1. Baca Sheet _SYSTEM_MAPPING jika tersedia
@@ -1359,10 +1477,11 @@ export async function parseKpiTemplateExcel(
     const firstCellText = String(row[0] || "").trim();
 
     // -------------------------------------------------------------------------
-    // DETEKSI 1: Section Header Row (e.g. "1. Target Kerja (65% dari 115%)")
+    // -------------------------------------------------------------------------
+    // DETEKSI 1: Section Header Row (e.g. "1. Target Kerja (65%)", "1. Target Kerja (65% dari 115%)")
     // -------------------------------------------------------------------------
     const sectionMatch = firstCellText.match(
-      /^(?:[0-9]+[.)]\s*)?([^(]+)\s*\(([0-9.]+)\s*%\s*(?:dari|of)?\s*[0-9.]*%\)/i
+      /^(?:[0-9]+[.)]\s*)?([^(]+)\s*\(([0-9.]+)\s*%(?:\s*(?:dari|of)?\s*[0-9.]*%)?\)/i
     );
 
     const isLevel1Header =
@@ -1420,7 +1539,7 @@ export async function parseKpiTemplateExcel(
       catWeightRaw = getCol(row, "bobotparameter", "bobotkategori", "bobotkategoripct", "bobotk");
       catTypeRaw = getCol(row, "tipeparameter", "tipekategori", "categorytype", "tipe");
 
-      paramNameCol = getCol(row, "indikator", "subpoin", "namaindikator", "subindikator");
+      paramNameCol = getCol(row, "indikator", "subpoin", "namaindikator", "subindikator", "parameter");
       paramWeightRaw = getCol(row, "bobotindikator", "bobotinternal", "bobot");
     } else {
       catNameCol = getCol(row, "kategori", "category", "namakategori");
@@ -1431,7 +1550,7 @@ export async function parseKpiTemplateExcel(
       paramWeightRaw = getCol(row, "bobotparameter", "bobot", "bobotinternal");
     }
 
-    const targetCol = getCol(row, "target", "nilaitarget", "sasaran", "targetkerja");
+    const targetCol = getCol(row, "target", "nilaitarget", "sasaran", "targetkerja", "targettahunan");
     const unitCol = getCol(row, "satuan", "unit");
     const paramDescCol = getCol(row, "deskripsi", "description", "keterangan", "deskripsitarget");
     const criteriaCol = getCol(
@@ -1446,8 +1565,16 @@ export async function parseKpiTemplateExcel(
     const inputTypeCol = getCol(row, "tipeinput", "inputtype", "tipe");
     const picCol = getCol(row, "rolepenilai", "penilai", "pic", "picinput", "picrole");
 
+    // Cek apakah kategori yang disebutkan sama dengan currentCat yang aktif
+    const isSameCat =
+      currentCat &&
+      catNameCol &&
+      (currentCat.name.toLowerCase().trim() === catNameCol.toLowerCase().trim() ||
+        currentCat.name.toLowerCase().replace(/[^a-z0-9]/g, "") ===
+          catNameCol.toLowerCase().replace(/[^a-z0-9]/g, ""));
+
     // Jika ada nama parameter (Level 1) baru di baris ini
-    if (catNameCol && (!currentCat || currentCat.name !== catNameCol)) {
+    if (catNameCol && !isSameCat) {
       let matchedDbParam: DepartmentJobLevelParameter | undefined;
       if (dbParameters && dbParameters.length > 0) {
         if (mapInfo?.parameterId) {
@@ -1485,6 +1612,12 @@ export async function parseKpiTemplateExcel(
       };
       catList.push(currentCat);
       currentParam = null;
+    } else if (isSameCat && currentCat) {
+      const numWeight = parseFloat(catWeightRaw) || 0;
+      const parsedWeight = numWeight > 1 ? numWeight / 100 : numWeight;
+      if (parsedWeight > 0 && (currentCat.weight === 0.2 || currentCat.weight === 0)) {
+        currentCat.weight = parsedWeight;
+      }
     }
 
     // Jika belum ada parameter aktif, buat parameter default
@@ -1551,7 +1684,7 @@ export async function parseKpiTemplateExcel(
     if (level3Match) {
       // INI ADALAH SUB PARAMETER (Level 3)
       const subNum = level3Match[1];
-      const subName = level3Match[2].trim() || firstCellText;
+      const subName = (paramNameCol || level3Match[2] || "").trim() || firstCellText;
 
       if (currentIndicator && parsedPWeight > 0 && currentIndicator.weight === 0) {
         currentIndicator.weight = parsedPWeight;
@@ -1573,7 +1706,7 @@ export async function parseKpiTemplateExcel(
         weight: parsedPWeight || (currentIndicator && currentIndicator.weight > 0 ? currentIndicator.weight : 0.2),
         maxScore: 25,
         inputType,
-        aggregation: "AVERAGE",
+        aggregation: subName.toLowerCase().includes("kehadiran") ? "SUM" : "AVERAGE",
         compareBasis: "ACTUAL",
         picRole,
         sortOrder: currentCat.params.length,
@@ -1587,7 +1720,7 @@ export async function parseKpiTemplateExcel(
     } else if (level2Match) {
       // INI ADALAH INDIKATOR (Level 2)
       const indNum = level2Match[1];
-      const indName = level2Match[2].trim() || firstCellText;
+      const indName = (paramNameCol || level2Match[2] || "").trim() || firstCellText;
 
       currentIndicator = {
         number: indNum,
@@ -1597,6 +1730,7 @@ export async function parseKpiTemplateExcel(
 
       if (criteriaCol) {
         const matchedDbParam = dbParameters?.find((p) => p.name.toLowerCase().trim() === indName.toLowerCase().trim());
+        const isAttendance = indName.toLowerCase().includes("kehadiran");
         currentParam = {
           id: mapInfo?.indicatorId ?? null,
           masterParameterId: matchedDbParam?.id ?? currentCat.masterParameterId ?? null,
@@ -1608,7 +1742,7 @@ export async function parseKpiTemplateExcel(
           weight: parsedPWeight || 0.2,
           maxScore: 25,
           inputType,
-          aggregation: "AVERAGE",
+          aggregation: isAttendance ? "SUM" : "AVERAGE",
           compareBasis: "ACTUAL",
           picRole,
           sortOrder: currentCat.params.length,
@@ -1627,6 +1761,7 @@ export async function parseKpiTemplateExcel(
       }
 
       const matchedDbParam = dbParameters?.find((p) => p.name.toLowerCase().trim() === currentIndicator!.name.toLowerCase().trim());
+      const isAttendance = currentIndicator.name.toLowerCase().includes("kehadiran");
       currentParam = {
         id: mapInfo?.indicatorId ?? null,
         masterParameterId: matchedDbParam?.id ?? currentCat.masterParameterId ?? null,
@@ -1638,7 +1773,7 @@ export async function parseKpiTemplateExcel(
         weight: currentIndicator.weight || parsedPWeight || 0.2,
         maxScore: 25,
         inputType,
-        aggregation: "AVERAGE",
+        aggregation: isAttendance ? "SUM" : "AVERAGE",
         compareBasis: "ACTUAL",
         picRole,
         sortOrder: currentCat.params.length,
@@ -1798,7 +1933,7 @@ export async function parseKpiTemplateExcel(
               action: "CREATE",
               name: dp.name,
               description: dp.description || "Penilaian langsung parameter",
-              target: "100",
+              target: "",
               unit: dp.unit || "%",
               weight: 1.0,
               maxScore: 25,
@@ -1862,7 +1997,7 @@ export async function parseKpiTemplateExcel(
       cat.params.push({
         name: cat.name,
         description: "Penilaian langsung parameter",
-        target: "100",
+        target: "",
         unit: "%",
         weight: 1.0,
         maxScore: 25,
@@ -1953,6 +2088,12 @@ export async function parseKpiTemplateExcel(
     hasSystemMapping,
     errors,
     warnings,
+    summary: {
+      totalCategories: catList.length,
+      totalIndicators: totalParams,
+      totalWeight,
+      totalBands,
+    },
   };
 }
 
@@ -2124,6 +2265,142 @@ export function exportMasterParametersToExcel(masterParams: MasterParamItem[], f
   XLSX.writeFile(wb, filename || "Kamus_Master_Parameter_KPI.xlsx");
 }
 
+export function normalizeMasterParamInputType(
+  val?: string | null,
+  unit?: string | null
+): "PERCENTAGE" | "NUMBER" | "CURRENCY" | "QUALITATIVE" | "MONTHLY_ACTUAL" {
+  if (val) {
+    const clean = val.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "");
+    if (
+      clean.includes("CURRENCY") ||
+      clean === "RP" ||
+      clean === "IDR" ||
+      clean.includes("RUPIAH") ||
+      clean.includes("NOMINAL") ||
+      clean.includes("UANG") ||
+      clean.includes("BIAYA")
+    ) {
+      return "CURRENCY";
+    }
+    if (
+      clean.includes("PERCENT") ||
+      clean.includes("PERSEN") ||
+      clean === "PCT"
+    ) {
+      return "PERCENTAGE";
+    }
+    if (
+      clean.includes("QUALITAT") ||
+      clean.includes("KUALITAT") ||
+      clean.includes("TEXT") ||
+      clean.includes("TEKS")
+    ) {
+      return "QUALITATIVE";
+    }
+    if (
+      clean.includes("MONTH") ||
+      clean.includes("BULAN") ||
+      clean.includes("ACTUAL")
+    ) {
+      return "MONTHLY_ACTUAL";
+    }
+    if (
+      clean.includes("NUMBER") ||
+      clean.includes("ANGKA") ||
+      clean.includes("NUMERIK") ||
+      clean.includes("COUNT") ||
+      clean.includes("QTY") ||
+      clean.includes("JUMLAH") ||
+      clean.includes("HARI") ||
+      clean.includes("DAYS") ||
+      clean.includes("JAM") ||
+      clean.includes("HOURS")
+    ) {
+      return "NUMBER";
+    }
+  }
+
+  // Fallback checking unit
+  const u = (unit || "").toLowerCase();
+  if (
+    u.includes("rp") ||
+    u.includes("idr") ||
+    u.includes("rupiah") ||
+    u.includes("/bcm") ||
+    u.includes("bcm")
+  ) {
+    return "CURRENCY";
+  }
+  if (u.includes("%") || u.includes("persen")) {
+    return "PERCENTAGE";
+  }
+  return "NUMBER";
+}
+
+export function normalizeMasterParamAggregation(
+  val?: string | null
+): "AVERAGE" | "SUM" | "LAST_VALUE" | "RATIO" {
+  if (!val) return "AVERAGE";
+  const clean = val.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "");
+  if (
+    clean.includes("SUM") ||
+    clean.includes("TOTAL") ||
+    clean.includes("JUMLAH") ||
+    clean.includes("PENJUMLAHAN")
+  ) {
+    return "SUM";
+  }
+  if (clean.includes("LAST") || clean.includes("TERAKHIR") || clean.includes("AKHIR")) {
+    return "LAST_VALUE";
+  }
+  if (clean.includes("RATIO") || clean.includes("RASIO")) {
+    return "RATIO";
+  }
+  return "AVERAGE";
+}
+
+export function normalizeMasterParamCompareBasis(
+  val?: string | null
+): "ACTUAL" | "ACHIEVEMENT" {
+  if (!val) return "ACTUAL";
+  const clean = val.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "");
+  if (
+    clean.includes("ACHIEV") ||
+    clean.includes("CAPAI") ||
+    clean.includes("PENCAPAIAN")
+  ) {
+    return "ACHIEVEMENT";
+  }
+  return "ACTUAL";
+}
+
+export function normalizeMasterParamPicRole(
+  val?: string | null
+): "HEAD_DEPT" | "HR" | "HSE" | "SUPERINTENDENT" {
+  if (!val) return "HEAD_DEPT";
+  const clean = val.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "");
+  if (clean === "HR" || clean.includes("HRD") || clean === "HC") {
+    return "HR";
+  }
+  if (
+    clean.includes("HSE") ||
+    clean.includes("K3") ||
+    clean.includes("SHE") ||
+    clean.includes("SAFETY")
+  ) {
+    return "HSE";
+  }
+  if (
+    clean.includes("SUPERINTENDENT") ||
+    clean.includes("SPV") ||
+    clean.includes("SUPERVISOR") ||
+    clean === "SI"
+  ) {
+    return "SUPERINTENDENT";
+  }
+  return "HEAD_DEPT";
+}
+
 export interface ParsedMasterParamImportItem {
   code?: string;
   name: string;
@@ -2133,31 +2410,51 @@ export interface ParsedMasterParamImportItem {
   isUnmapped?: boolean;
   categoryName?: string;
   unit?: string;
-  inputType?: string;
-  aggregation?: string;
-  compareBasis?: string;
-  picRole?: string;
+  inputType?: "PERCENTAGE" | "NUMBER" | "CURRENCY" | "QUALITATIVE" | "MONTHLY_ACTUAL";
+  aggregation?: "AVERAGE" | "SUM" | "LAST_VALUE" | "RATIO";
+  compareBasis?: "ACTUAL" | "ACHIEVEMENT";
+  picRole?: "HEAD_DEPT" | "HR" | "HSE" | "SUPERINTENDENT";
+  duplicateInFile?: boolean;
+  duplicateInDb?: boolean;
+  existingParamName?: string;
 }
 
 export async function parseMasterParametersFromExcel(
   file: File,
-  departments: Array<{ id: number; name: string; code: string }>
+  departments: Array<{ id: number; name: string; code: string }>,
+  existingParameters?: MasterParamItem[]
 ): Promise<{
   items: ParsedMasterParamImportItem[];
   errors: string[];
+  duplicateCodesInFileCount: number;
+  duplicateCodesInDbCount: number;
 }> {
   const data = await file.arrayBuffer();
   const wb = XLSX.read(data, { type: "array" });
   const sheetName = wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
-  if (!ws) return { items: [], errors: ["File Excel kosong atau tidak terbaca."] };
+  if (!ws) {
+    return {
+      items: [],
+      errors: ["File Excel kosong atau tidak terbaca."],
+      duplicateCodesInFileCount: 0,
+      duplicateCodesInDbCount: 0,
+    };
+  }
 
   const rows: (string | number | null | undefined)[][] = XLSX.utils.sheet_to_json(ws, {
     header: 1,
     defval: "",
   });
 
-  if (rows.length <= 1) return { items: [], errors: ["Sheet tidak memiliki baris data."] };
+  if (rows.length <= 1) {
+    return {
+      items: [],
+      errors: ["Sheet tidak memiliki baris data."],
+      duplicateCodesInFileCount: 0,
+      duplicateCodesInDbCount: 0,
+    };
+  }
 
   const items: ParsedMasterParamImportItem[] = [];
   const errors: string[] = [];
@@ -2289,6 +2586,12 @@ export async function parseMasterParametersFromExcel(
       }
     }
 
+    const unit = unitIdx !== -1 && row[unitIdx] ? String(row[unitIdx]).trim() : "%";
+    const rawInputType = inputTypeIdx !== -1 && row[inputTypeIdx] ? String(row[inputTypeIdx]).trim() : undefined;
+    const rawAggregation = aggIdx !== -1 && row[aggIdx] ? String(row[aggIdx]).trim() : undefined;
+    const rawCompareBasis = basisIdx !== -1 && row[basisIdx] ? String(row[basisIdx]).trim() : undefined;
+    const rawPicRole = picIdx !== -1 && row[picIdx] ? String(row[picIdx]).trim() : undefined;
+
     items.push({
       code: rowCode,
       name,
@@ -2297,15 +2600,63 @@ export async function parseMasterParametersFromExcel(
       rawDepartmentName: rawDeptStr || undefined,
       isUnmapped,
       categoryName: catIdx !== -1 && row[catIdx] ? String(row[catIdx]).trim() : undefined,
-      unit: unitIdx !== -1 && row[unitIdx] ? String(row[unitIdx]).trim() : "%",
-      inputType: inputTypeIdx !== -1 && row[inputTypeIdx] ? String(row[inputTypeIdx]).trim() : "PERCENTAGE",
-      aggregation: aggIdx !== -1 && row[aggIdx] ? String(row[aggIdx]).trim() : "AVERAGE",
-      compareBasis: basisIdx !== -1 && row[basisIdx] ? String(row[basisIdx]).trim() : "ACTUAL",
-      picRole: picIdx !== -1 && row[picIdx] ? String(row[picIdx]).trim() : "HEAD_DEPT",
+      unit,
+      inputType: normalizeMasterParamInputType(rawInputType, unit),
+      aggregation: normalizeMasterParamAggregation(rawAggregation),
+      compareBasis: normalizeMasterParamCompareBasis(rawCompareBasis),
+      picRole: normalizeMasterParamPicRole(rawPicRole),
     });
   }
 
-  return { items, errors };
+  // 1. Detect duplicates within Excel file
+  const fileCodeCounts = new Map<string, number>();
+  for (const it of items) {
+    if (it.code) {
+      const c = it.code.trim().toUpperCase();
+      fileCodeCounts.set(c, (fileCodeCounts.get(c) || 0) + 1);
+    }
+  }
+
+  // 2. Detect duplicates against existing database parameters
+  const dbCodeMap = new Map<string, string>();
+  if (existingParameters && existingParameters.length > 0) {
+    for (const ep of existingParameters) {
+      if (ep.code) {
+        dbCodeMap.set(ep.code.trim().toUpperCase(), ep.name);
+      }
+    }
+  }
+
+  let duplicateCodesInFileCount = 0;
+  let duplicateCodesInDbCount = 0;
+
+  for (const it of items) {
+    if (it.code) {
+      const c = it.code.trim().toUpperCase();
+      if ((fileCodeCounts.get(c) || 0) > 1) {
+        it.duplicateInFile = true;
+        duplicateCodesInFileCount++;
+      }
+      if (dbCodeMap.has(c)) {
+        it.duplicateInDb = true;
+        it.existingParamName = dbCodeMap.get(c);
+        duplicateCodesInDbCount++;
+      }
+    }
+  }
+
+  if (duplicateCodesInFileCount > 0) {
+    errors.push(
+      `Perhatian: Terdapat ${duplicateCodesInFileCount} baris dengan kode yang duplikat di dalam file Excel. Sistem akan memberikan penomoran unik otomatis jika diperlukan saat diimpor.`
+    );
+  }
+
+  return {
+    items,
+    errors,
+    duplicateCodesInFileCount,
+    duplicateCodesInDbCount,
+  };
 }
 
 // -----------------------------------------------------------------------------
@@ -4444,7 +4795,7 @@ export async function parseMasterTemplateExcelSheet(
       name: "Kehadiran & Disiplin",
       code: "GEN-KD-01",
       weight: 0.20,
-      target: "100",
+      target: "",
       unit: "%",
       inputType: "PERCENTAGE" as const,
       description: "Persentase tingkat kehadiran fisik dan ketepatan presensi kerja harian tanpa mangkir.",
@@ -4458,7 +4809,7 @@ export async function parseMasterTemplateExcelSheet(
       name: "Keselamatan Kerja",
       code: "GEN-K3-01",
       weight: 0.10,
-      target: "0",
+      target: "",
       unit: "Insiden",
       inputType: "NUMBER" as const,
       description: "Tingkat keselamatan kerja dan ketiadaan insiden kecelakaan kerja di area operasional.",
@@ -4472,7 +4823,7 @@ export async function parseMasterTemplateExcelSheet(
       name: "Kepatuhan & SP",
       code: "GEN-SP-01",
       weight: 0.10,
-      target: "0",
+      target: "",
       unit: "SP",
       inputType: "NUMBER" as const,
       description: "Tingkat kepatuhan terhadap peraturan perusahaan dan ketiadaan sanksi Surat Peringatan.",
@@ -4486,7 +4837,7 @@ export async function parseMasterTemplateExcelSheet(
       name: "Inovasi & Improvement",
       code: "GEN-INV-01",
       weight: 0.10,
-      target: "0",
+      target: "",
       unit: "Ide",
       inputType: "NUMBER" as const,
       description: "Inisiatif perbaikan proses, efisiensi kerja, atau inovasi yang terimplementasi.",

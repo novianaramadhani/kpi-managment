@@ -142,19 +142,8 @@ export default async function AssignmentsPage({
   const currentTab = tabsConfig.find((t) => t.id === activeTab) || tabsConfig[0];
 
   return (
-    <div className="space-y-6">
-      {/* Breadcrumb Header */}
-      <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-        <Link href="/admin" className="hover:text-slate-900 transition">
-          WORKSPACE
-        </Link>
-        <span className="text-slate-300">/</span>
-        <span className="text-slate-500">Penugasan &amp; Delegasi</span>
-        <span className="text-slate-300">/</span>
-        <span className="text-slate-900 font-bold">{currentTab.title}</span>
-      </nav>
-
-      {/* Header Halaman */}
+    <div className="space-y-4">
+      {/* Header Halaman (Single Back Navigation) */}
       <PageHeader
         title={currentTab.title}
         subtitle={currentTab.subtitle}
@@ -162,8 +151,8 @@ export default async function AssignmentsPage({
         backLabel="Kembali ke Workspace"
       />
 
-      {/* Navigation Tabs (3 Sub-Menu) */}
-      <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-2xs max-w-fit">
+      {/* Navigation Tabs (Soft Light-Blue Active State) */}
+      <div className="flex flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 max-w-fit">
         {tabsConfig.map((t) => {
           const Icon = t.icon;
           const isActive = activeTab === t.id;
@@ -172,13 +161,13 @@ export default async function AssignmentsPage({
               key={t.id}
               href={`/setup/assignments?tab=${t.id}`}
               prefetch={false}
-              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs transition ${
+              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs transition ${
                 isActive
-                  ? "bg-slate-900 text-white font-bold shadow-xs"
-                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium"
+                  ? "bg-sky-100/90 text-sky-950 font-semibold border border-sky-200/80"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium"
               }`}
             >
-              <Icon className={`h-3.5 w-3.5 ${isActive ? "text-white" : "text-slate-500"}`} />
+              <Icon className={`h-3.5 w-3.5 ${isActive ? "text-sky-800" : "text-slate-400"}`} />
               <span>{t.label}</span>
             </Link>
           );

@@ -13,6 +13,11 @@ import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { HakAksesTableClient } from "@/components/hak-akses-table-client";
 import { ApprovalTableClient } from "@/components/master-tables-client";
+import { StagingApprovalRbacClient } from "@/components/staging-approval-rbac-client";
+import {
+  getApprovalWorkflowState,
+  loadMasterResolutionContext,
+} from "@/lib/approval-workflow-service";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -32,45 +37,41 @@ export default async function AccessSetupPage({
   const { tab = "hak-akses" } = await searchParams;
   const activeTab = tab;
 
-  const [deps, lvls, emps, permissions] = await Promise.all([
+  const [deps, lvls, emps, permissions, workflowState, masterContext] = await Promise.all([
     db.select().from(departments).orderBy(asc(departments.code)),
     db.select().from(jobLevels).orderBy(asc(jobLevels.rank)),
     db.select().from(employees).orderBy(asc(employees.nik)),
     db.select().from(jobLevelPermissions),
+    getApprovalWorkflowState(),
+    loadMasterResolutionContext(),
   ]);
 
   const tabs = [
     ["hak-akses", "Matriks Hak Akses"],
     ["approval", "Hirarki Penilai"],
+    ["staging-approval", "Staging Approval"],
   ];
 
   const tabTitles: Record<string, { title: string; subtitle: string }> = {
     "hak-akses": {
-      title: "Matriks Hak Akses & Otoritas",
-      subtitle: "Kelola matriks wewenang modul, role default sistem, dan pembatasan scope jangkauan data per Job Level.",
+      title: "Matriks Hak Akses",
+      subtitle: "Pengaturan wewenang modul dan cakupan akses per Job Level.",
     },
     approval: {
-      title: "Hirarki Penilai Karyawan",
-      subtitle: "Atur hubungan Job Level karyawan dengan atasan penilai langsung dalam proses evaluasi KPI.",
+      title: "Hirarki Penilai",
+      subtitle: "Pengaturan relasi Job Level karyawan dengan atasan penilai.",
+    },
+    "staging-approval": {
+      title: "Staging Approval",
+      subtitle: "Pengaturan alur persetujuan penilaian KPI.",
     },
   };
 
   const currentInfo = tabTitles[activeTab] || tabTitles["hak-akses"];
 
   return (
-    <div className="space-y-6">
-      {/* Breadcrumb Header */}
-      <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-        <Link href="/admin" className="hover:text-slate-900 transition">
-          WORKSPACE
-        </Link>
-        <span className="text-slate-300">/</span>
-        <span className="text-slate-500">Sistem & Keamanan</span>
-        <span className="text-slate-300">/</span>
-        <span className="text-slate-900 font-bold">{currentInfo.title}</span>
-      </nav>
-
-      {/* Header Halaman */}
+    <div className="space-y-4">
+      {/* Header Halaman (Single Back Navigation) */}
       <PageHeader
         title={currentInfo.title}
         subtitle={currentInfo.subtitle}
@@ -78,17 +79,17 @@ export default async function AccessSetupPage({
         backLabel="Kembali ke Workspace"
       />
 
-      {/* Navigation Tabs */}
-      <div className="flex flex-wrap items-center gap-1 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-2xs">
+      {/* Navigation Tabs (Minimalis Tanpa Kotak Luar) */}
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 pb-2">
         {tabs.map(([k, l]) => (
           <Link
             key={k}
             href={`/setup/access?tab=${k}`}
             prefetch={false}
-            className={`rounded-xl px-3.5 py-2 text-xs transition ${
+            className={`rounded-md px-3 py-1.5 text-xs transition ${
               activeTab === k
-                ? "bg-slate-900 text-white font-bold shadow-xs"
-                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium"
+                ? "bg-sky-100/90 text-sky-950 font-semibold"
+                : "text-slate-500 hover:bg-slate-100/60 hover:text-slate-800 font-medium"
             }`}
           >
             {l}
@@ -115,6 +116,14 @@ export default async function AccessSetupPage({
           jobLevels={lvls}
           updateHierarchyAction={updateJobLevelHierarchy}
           createHierarchyAction={createJobLevelHierarchy}
+        />
+      )}
+
+      {/* Tab 3: Pengaturan Staging Approval */}
+      {activeTab === "staging-approval" && (
+        <StagingApprovalRbacClient
+          initialState={workflowState}
+          masterContext={masterContext}
         />
       )}
     </div>

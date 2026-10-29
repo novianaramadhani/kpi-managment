@@ -12,24 +12,13 @@ export default async function PeriodeSetupPage() {
   const periods = await db.select().from(kpiPeriods).orderBy(desc(kpiPeriods.year));
 
   return (
-    <div className="space-y-6">
-      {/* Breadcrumb Header */}
-      <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-        <Link href="/admin" className="hover:text-slate-900 transition">
-          KPI SYSTEM
-        </Link>
-        <span className="text-slate-300">/</span>
-        <span className="text-slate-500">Configuration</span>
-        <span className="text-slate-300">/</span>
-        <span className="text-slate-900 font-bold">Periode KPI</span>
-      </nav>
-
-      {/* Header Halaman */}
+    <div className="space-y-4">
+      {/* Header Halaman (Single Back Navigation) */}
       <PageHeader
         title="Master Periode KPI"
         subtitle="Jadwal evaluasi tahunan, batas waktu penilaian, jendela input, dan syarat eligibilitas."
         backHref="/admin"
-        backLabel="Kembali"
+        backLabel="Kembali ke Workspace"
       />
 
       {/* Tabel Master Periode KPI */}

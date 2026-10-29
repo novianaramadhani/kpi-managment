@@ -35,6 +35,7 @@ import {
   type IndicatorMatchingTarget,
 } from "@/lib/excel-batch-assessment";
 import { saveBatchExcelAssessmentAction } from "@/lib/monthly-assessment-actions";
+import { normalizeWeight } from "@/lib/scoring";
 import { EvidenceViewerModal } from "./evidence-viewer-modal";
 import type { AppraisalEvidenceItem } from "@/types/monthly-assessment";
 
@@ -68,6 +69,7 @@ export function BatchExcelUploadModal({
   const [isSaving, setIsSaving] = useState(false);
   const [multiSheetData, setMultiSheetData] = useState<MultiSheetBatchResult | null>(null);
   const [activeSheetIndex, setActiveSheetIndex] = useState<number>(0);
+  const [modalStep, setModalStep] = useState<"mapping" | "review">("mapping");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -270,6 +272,7 @@ export function BatchExcelUploadModal({
       setFile(null);
       setMultiSheetData(null);
       setActiveSheetIndex(0);
+      setModalStep("mapping");
       setErrorMsg(null);
       setIsParsing(false);
       setIsSaving(false);
@@ -434,6 +437,44 @@ export function BatchExcelUploadModal({
     });
   };
 
+  // Validasi dan navigasi ke langkah Review sebelum simpan
+  const handleProceedToReview = () => {
+    if (!activeSheet) return;
+    const selected = activeSheet.items.filter((it) => it.isSelected);
+    if (selected.length === 0) {
+      void Swal.fire({
+        icon: "warning",
+        title: "Belum Ada Parameter Terpilih",
+        text: "Pilih minimal 1 parameter yang ingin disimpan ke form penilaian.",
+        confirmButtonColor: "#0284c7",
+      });
+      return;
+    }
+
+    const unmapped = selected.filter((it) => !it.selectedAppraisalItemId);
+    if (unmapped.length > 0) {
+      void Swal.fire({
+        icon: "warning",
+        title: "Parameter Belum Terpetakan",
+        html: `
+          <div class="text-left text-xs text-slate-700 space-y-2">
+            <p>Ada <b>${unmapped.length} parameter terpilih</b> yang belum dipetakan ke Master KPI:</p>
+            <ul class="list-disc pl-5 text-rose-700 space-y-0.5">
+              ${unmapped.map((u) => `<li>${u.rawTitle}</li>`).join("")}
+            </ul>
+            <p class="text-slate-600 mt-2">
+              Silakan tentukan mapping terlebih dahulu menggunakan dropdown atau hilangkan tanda centang jika tidak ingin diikutsertakan.
+            </p>
+          </div>
+        `,
+        confirmButtonColor: "#0284c7",
+      });
+      return;
+    }
+
+    setModalStep("review");
+  };
+
   // Execute Save for active sheet
   const handleSaveBatch = async () => {
     if (!activeSheet || !file) return;
@@ -496,6 +537,8 @@ export function BatchExcelUploadModal({
         monthlyTargets: it.excelMonthlyTargets,
         hasMonthlyData: it.hasMonthlyData,
         rawTitle: it.rawTitle,
+        score: it.score,
+        bandLabel: it.bandLabel ?? undefined,
       }));
 
       const res = await saveBatchExcelAssessmentAction({
@@ -534,9 +577,16 @@ export function BatchExcelUploadModal({
     }
   };
 
+  const selectedItems = currentItems.filter(
+    (it) => it.isSelected && it.selectedAppraisalItemId
+  );
   const selectedCount = currentItems.filter((it) => it.isSelected).length;
   const allSelectableCount = currentItems.filter((it) => it.selectedAppraisalItemId).length;
   const isAllSelected = allSelectableCount > 0 && selectedCount === allSelectableCount;
+  const totalEstimatedWeightedPct = selectedItems.reduce(
+    (acc, it) => acc + (it.weightedScorePct || 0),
+    0
+  );
 
   return (
     <div
@@ -547,31 +597,61 @@ export function BatchExcelUploadModal({
     >
       <div className="relative w-full max-w-6xl max-h-[92vh] flex flex-col bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in-50 zoom-in-95 duration-200">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-slate-50 via-white to-slate-50">
+        <div className="flex items-center justify-between px-6 py-3.5 border-b border-slate-200 bg-white">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-sky-100 flex items-center justify-center text-sky-700 border border-sky-200 shadow-xs">
+            <div className="w-10 h-10 rounded-xl bg-sky-100 flex items-center justify-center text-sky-700 border border-sky-200 shadow-xs shrink-0">
               <FileSpreadsheet className="w-5 h-5" />
             </div>
             <div>
-              <h2 id="modal-title" className="text-base font-bold text-slate-900 flex items-center gap-2">
-                Upload Penilaian KPI dari Excel
-                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-sky-100 text-sky-800 border border-sky-200">
-                  Multi-Sheet per Karyawan
-                </span>
+              <h2 id="modal-title" className="text-base font-bold text-slate-900">
+                {modalStep === "mapping" ? "Upload Penilaian KPI" : "Review Penilaian KPI"}
               </h2>
-              <p className="text-xs text-slate-500">
-                Target Form: <span className="font-semibold text-slate-700">{employeeName}</span> ({employeeNik}) · {departmentName} · Tahun {periodYear}
+              <p className="text-xs text-slate-500 mt-0.5">
+                <span className="font-semibold text-slate-800">{employeeName}</span> ({employeeNik}) • {departmentName} • Tahun {periodYear}
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            disabled={isSaving}
-            className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors disabled:opacity-50 cursor-pointer"
-            title="Tutup (Esc)"
-          >
-            <X className="w-5 h-5" />
-          </button>
+
+          <div className="flex items-center gap-3">
+            {multiSheetData && (
+              <div className="inline-flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setModalStep("mapping")}
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition ${
+                    modalStep === "mapping"
+                      ? "bg-white text-sky-800 shadow-2xs border border-slate-200/80 font-bold"
+                      : "text-slate-600 hover:text-slate-900 cursor-pointer"
+                  }`}
+                >
+                  1. Pemetaan
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedCount > 0) handleProceedToReview();
+                  }}
+                  disabled={selectedCount === 0}
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed ${
+                    modalStep === "review"
+                      ? "bg-white text-sky-800 shadow-2xs border border-slate-200/80 font-bold"
+                      : "text-slate-600 hover:text-slate-900 cursor-pointer"
+                  }`}
+                >
+                  2. Review ({selectedCount})
+                </button>
+              </div>
+            )}
+
+            <button
+              onClick={onClose}
+              disabled={isSaving}
+              className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors disabled:opacity-50 cursor-pointer"
+              title="Tutup (Esc)"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Content Body */}
@@ -707,8 +787,8 @@ export function BatchExcelUploadModal({
             </div>
           )}
 
-          {/* STEP 2: Multi-Sheet Navigation & Table (Area Tabel Luas Tanpa Summary Cards) */}
-          {multiSheetData && activeSheet && (
+          {/* STEP 2: Multi-Sheet Navigation & Mapping Table */}
+          {multiSheetData && activeSheet && modalStep === "mapping" && (
             <div className="space-y-3.5">
               {/* Sheet Selector & Employee Identity Header (Ringkas & Informatif) */}
               <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3.5 space-y-3">
@@ -778,33 +858,16 @@ export function BatchExcelUploadModal({
                   </div>
                 </div>
 
-                {/* Strip Identitas Karyawan Terdeteksi di Sheet */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2.5 border-t border-slate-200/80 text-xs">
-                  <div className="flex flex-col">
-                    <span className="text-[10px] uppercase font-bold text-slate-400">NIK di Sheet</span>
-                    <span className="font-semibold text-slate-800 font-mono">
-                      {activeSheet.employeeInfo.nik || "-"}
+                {/* Peringatan hanya jika sheet bukan milik karyawan aktif */}
+                {!activeSheet.employeeInfo.isCurrentEmployeeMatch && (
+                  <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-center justify-between gap-2 pt-2 border-t">
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      Sheet ini terdeteksi untuk: <b>{activeSheet.employeeInfo.name || activeSheet.sheetName}</b> ({activeSheet.employeeInfo.nik || "-"})
                     </span>
+                    <span className="text-[11px] text-amber-700">Periksa kembali sebelum melanjutkan</span>
                   </div>
-                  <div className="flex flex-col">
-                    <span className="text-[10px] uppercase font-bold text-slate-400">Nama di Sheet</span>
-                    <span className="font-semibold text-slate-800 truncate" title={activeSheet.employeeInfo.name || activeSheet.sheetName}>
-                      {activeSheet.employeeInfo.name || activeSheet.sheetName}
-                    </span>
-                  </div>
-                  <div className="flex flex-col">
-                    <span className="text-[10px] uppercase font-bold text-slate-400">Departemen</span>
-                    <span className="font-semibold text-slate-800 truncate">
-                      {activeSheet.employeeInfo.department || departmentName || "-"}
-                    </span>
-                  </div>
-                  <div className="flex flex-col">
-                    <span className="text-[10px] uppercase font-bold text-slate-400">Periode / Parameter</span>
-                    <span className="font-semibold text-slate-800">
-                      Tahun {activeSheet.employeeInfo.periodYear || periodYear} • {activeSheet.totalParsedBlocks} Parameter
-                    </span>
-                  </div>
-                </div>
+                )}
               </div>
 
               {/* Table (Area Luas & Rapi) */}
@@ -1055,12 +1118,163 @@ export function BatchExcelUploadModal({
               </div>
             </div>
           )}
+
+          {/* STEP 3: Review Sebelum Simpan */}
+          {multiSheetData && activeSheet && modalStep === "review" && (
+            <div className="space-y-4">
+              {/* Clean Summary Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50/80">
+                <div className="flex items-center gap-2 text-xs text-slate-600">
+                  <span className="text-slate-400">Sheet:</span>
+                  <span className="font-semibold text-slate-800 bg-white px-2 py-0.5 rounded border border-slate-200 shadow-2xs">
+                    {activeSheet.sheetName}
+                  </span>
+                  <span className="text-slate-300">•</span>
+                  <span className="text-slate-500 font-mono text-[11px] truncate max-w-sm" title={file?.name}>
+                    {file?.name}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-3 text-xs">
+                  <span className="text-slate-500">
+                    Parameter: <b className="text-slate-800 font-mono">{selectedItems.length}</b>/{currentItems.length}
+                  </span>
+                  <span className="text-slate-300">•</span>
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-sky-100/70 border border-sky-200 text-sky-900 font-semibold shadow-2xs">
+                    <span className="text-[11px] text-sky-700 font-medium">Estimasi Skor Akhir:</span>
+                    <span className="font-mono text-sm font-bold text-sky-800">{totalEstimatedWeightedPct.toFixed(2)}%</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Review Table */}
+              <div className="rounded-xl border border-slate-200 overflow-hidden shadow-xs bg-white">
+                <div className="px-4 py-2.5 bg-slate-100/90 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-slate-800">
+                    Rincian Nilai & Skor dari Excel ({selectedItems.length} Indikator)
+                  </span>
+                  <span className="text-[11px] text-slate-500">
+                    Target, realisasi, dan skor otomatis sesuai lembar kerja Excel
+                  </span>
+                </div>
+
+                <div className="max-h-[58vh] overflow-y-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-slate-50 text-slate-700 font-semibold sticky top-0 z-10 border-b border-slate-200 shadow-xs">
+                      <tr>
+                        <th className="p-3 w-10 text-center text-slate-400">No</th>
+                        <th className="p-3 min-w-[200px]">Indikator Master KPI</th>
+                        <th className="p-3 min-w-[160px] text-slate-500">Parameter di Excel</th>
+                        <th className="p-3 text-center">Satuan</th>
+                        <th className="p-3 text-right">Target Excel</th>
+                        <th className="p-3 text-right">Realisasi Excel</th>
+                        <th className="p-3 text-right">% Capaian</th>
+                        <th className="p-3 min-w-[140px]">Kriteria / Band</th>
+                        <th className="p-3 text-center">Skor</th>
+                        <th className="p-3 text-right">Nilai Akhir (%)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-sans">
+                      {selectedItems.map((item, idx) => {
+                        const ind = item.matchedIndicator;
+                        const unit = item.excelUnit || ind?.unit || "-";
+
+                        return (
+                          <tr key={item.key} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="p-3 text-center font-mono text-slate-400 text-[11px]">
+                              {idx + 1}
+                            </td>
+                            <td className="p-3">
+                              <div className="flex flex-col">
+                                <span className="font-bold text-slate-900">
+                                  {ind?.name || item.rawTitle}
+                                </span>
+                                <div className="flex items-center gap-1.5 mt-0.5">
+                                  {ind?.categoryName && (
+                                    <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 border border-slate-200">
+                                      {ind.categoryName}
+                                    </span>
+                                  )}
+                                  {ind?.indicatorWeight && (
+                                    <span className="text-[10.5px] text-slate-400 font-mono">
+                                      Bobot: {(normalizeWeight(ind.indicatorWeight) * 100).toFixed(0)}%
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="p-3 text-slate-600 font-medium">
+                              {item.rawTitle}
+                            </td>
+                            <td className="p-3 text-center">
+                              <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                                {unit}
+                              </span>
+                            </td>
+                            <td className="p-3 text-right font-mono text-slate-800">
+                              {item.targetDisplay || (item.effectiveTarget !== null ? item.effectiveTarget : "-")}
+                            </td>
+                            <td className="p-3 text-right font-mono font-bold text-slate-900">
+                              {item.realizationDisplay || (item.effectiveRealization !== null ? item.effectiveRealization : "-")}
+                            </td>
+                            <td className="p-3 text-right font-mono font-semibold text-slate-700">
+                              {item.realizationPctDisplay || "-"}
+                            </td>
+                            <td className="p-3">
+                              {item.bandLabel ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-800 border border-slate-200">
+                                  {item.bandLabel}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 text-[11px]">-</span>
+                              )}
+                            </td>
+                            <td className="p-3 text-center">
+                              {item.score !== null ? (
+                                <span className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-lg font-bold text-xs bg-sky-100 text-sky-800 border border-sky-200 font-mono">
+                                  {item.score}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 font-mono">-</span>
+                              )}
+                            </td>
+                            <td className="p-3 text-right font-mono font-bold text-sky-900">
+                              {item.weightedScoreDisplay || `${item.weightedScorePct.toFixed(2)}%`}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot className="bg-slate-100 text-slate-800 font-bold border-t border-slate-200">
+                      <tr>
+                        <td colSpan={9} className="p-3 text-right text-xs uppercase tracking-wider">
+                          Total Estimasi Nilai Akhir:
+                        </td>
+                        <td className="p-3 text-right font-mono text-sm text-sky-700">
+                          {totalEstimatedWeightedPct.toFixed(2)}%
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Modal Footer Actions */}
         <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 bg-slate-50">
           <div>
-            {multiSheetData && (
+            {modalStep === "review" ? (
+              <button
+                type="button"
+                onClick={() => setModalStep("mapping")}
+                disabled={isSaving}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-100 rounded-xl transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                <span>← Kembali ke Pemetaan</span>
+              </button>
+            ) : multiSheetData ? (
               <button
                 type="button"
                 onClick={() => {
@@ -1068,13 +1282,14 @@ export function BatchExcelUploadModal({
                   setActiveSheetIndex(0);
                   setFile(null);
                   setErrorMsg(null);
+                  setModalStep("mapping");
                 }}
                 disabled={isSaving}
                 className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-xl transition-colors disabled:opacity-50 cursor-pointer"
               >
                 Ganti Berkas Excel
               </button>
-            )}
+            ) : null}
           </div>
 
           <div className="flex items-center gap-2">
@@ -1088,24 +1303,36 @@ export function BatchExcelUploadModal({
             </button>
 
             {multiSheetData && activeSheet && (
-              <button
-                type="button"
-                onClick={handleSaveBatch}
-                disabled={isSaving || selectedCount === 0}
-                className="inline-flex items-center gap-2 px-5 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-700 rounded-xl shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-              >
-                {isSaving ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Menyimpan & Menghitung Skor...
-                  </>
-                ) : (
-                  <>
-                    <span>Terapkan & Simpan ({selectedCount})</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </>
-                )}
-              </button>
+              modalStep === "mapping" ? (
+                <button
+                  type="button"
+                  onClick={handleProceedToReview}
+                  disabled={selectedCount === 0}
+                  className="inline-flex items-center gap-2 px-5 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-700 rounded-xl shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  <span>Lanjut ke Review ({selectedCount})</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleSaveBatch}
+                  disabled={isSaving || selectedItems.length === 0}
+                  className="inline-flex items-center gap-2 px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Menyimpan & Menghitung Skor...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>Konfirmasi & Terapkan Penilaian ({selectedItems.length})</span>
+                    </>
+                  )}
+                </button>
+              )
             )}
           </div>
         </div>

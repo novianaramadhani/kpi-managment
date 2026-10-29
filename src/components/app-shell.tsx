@@ -607,7 +607,7 @@ export function AppShell({ children, initialUser }: AppShellProps) {
       {/* Main Content Area */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Top Header Bar across all internal pages (Desktop - Clean & Minimal) */}
-        <header className="sticky top-0 z-10 hidden md:flex items-center justify-between border-b border-slate-200 bg-white/95 px-6 py-3.5 backdrop-blur-md shadow-2xs">
+        <header className="sticky top-0 z-40 hidden md:flex items-center justify-between border-b border-slate-200 bg-white/95 px-6 py-3.5 backdrop-blur-md shadow-2xs">
           <div className="flex items-center gap-3">
             <button
               type="button"
@@ -806,7 +806,7 @@ export function AppShell({ children, initialUser }: AppShellProps) {
         </header>
 
         {/* Mobile Header dengan Tombol Menu Burger & Profile */}
-        <header className="border-b border-sky-200/80 bg-sky-50 px-4 py-3 md:hidden flex items-center justify-between">
+        <header className="sticky top-0 z-40 border-b border-sky-200/80 bg-sky-50 px-4 py-3 md:hidden flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             {/* Tombol Burger Mobile */}
             <button

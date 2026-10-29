@@ -19,15 +19,20 @@ import {
   kpiAssessorDelegations,
   appraisalEvidence,
 } from "@/db/schema";
-import { and, eq, inArray, sql, asc, desc, or, isNull } from "drizzle-orm";
+import { and, eq, inArray, sql, asc, desc, or, isNull, isNotNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { getEmployeeApprovalLine } from "./employee-hierarchy";
+import {
+  resolveWorkflowForEmployee,
+  mapStageKeyToDbStatus,
+} from "./approval-workflow-service";
 import {
   calculateKpiScore,
   calculateParameterScore,
   calculateOverallKpiScore,
   normalizeWeight,
   aggregateMonthly,
+  resolveKpiDirection,
   type GenericScoringRule,
   type KpiScoreResult,
 } from "./scoring";
@@ -235,6 +240,13 @@ export async function getMonthlyAssessmentDetail(params: {
       ? "HEAD_DEPT"
       : "PENILAI");
 
+  const workflowResolved = await resolveWorkflowForEmployee({
+    employeeId: apprRow.employee.id,
+    appraisalStatus: apprRow.appraisal.status,
+    currentStageKey: currentStage,
+    currentUser: currentUser ?? null,
+  });
+
   if (items.length === 0) {
     return {
       period: { id: period.id, name: period.name, year: period.year, status: period.status },
@@ -249,6 +261,7 @@ export async function getMonthlyAssessmentDetail(params: {
         templateName: resolvedTemplateName ?? "-",
       },
       approvalLine,
+      workflowResolved,
       appraisalId: apprRow.appraisal.id,
       appraisalStatus: apprRow.appraisal.status,
       currentStage,
@@ -486,10 +499,16 @@ export async function getMonthlyAssessmentDetail(params: {
     const maxScore = Number(row.parameter?.maxScore) || 25;
     const indName = it.indicatorNameSnapshot || row.parameter?.name || "Indikator";
     const compareBasis = row.parameter?.compareBasis || "ACTUAL";
-    const isInverse = isInverseKpi(rules, indName);
-    const indDirection = row.parameter?.direction || (isInverse ? "LOWER_IS_BETTER" : "HIGHER_IS_BETTER");
+    const indUnit = it.unitSnapshot || row.parameter?.unit || "";
     const indMeasurementType = row.parameter?.measurementType || null;
     const indScoringMethod = row.parameter?.scoringMethod || null;
+    const indDirection = resolveKpiDirection(
+      rules,
+      row.parameter?.direction,
+      indName,
+      indMeasurementType,
+      indUnit
+    );
     const indTarget =
       it.target !== null && it.target !== undefined && !isNaN(Number(it.target))
         ? Number(it.target)
@@ -498,7 +517,6 @@ export async function getMonthlyAssessmentDetail(params: {
         : row.parameter?.target !== null && row.parameter?.target !== undefined && !isNaN(Number(row.parameter.target))
         ? Number(row.parameter.target)
         : null;
-    const indUnit = it.unitSnapshot || row.parameter?.unit || "";
 
     const effectiveParamId = row.parameter?.id ?? it.parameterId ?? null;
     const paramEvidence = effectiveParamId ? (evidenceByParamId.get(effectiveParamId) || []) : [];
@@ -576,13 +594,13 @@ export async function getMonthlyAssessmentDetail(params: {
     let annualActual: number | null = null;
     let annualInputMode: "MONTHLY" | "ANNUAL_DIRECT" = "MONTHLY";
 
-    if (filledMonthsCount > 0) {
-      annualActual = aggAnnualActual;
-      annualInputMode = "MONTHLY";
-    } else if (it.annualActual !== null && it.annualActual !== undefined) {
+    if (it.annualActual !== null && it.annualActual !== undefined && !isNaN(Number(it.annualActual))) {
       annualActual = Number(it.annualActual);
       annualInputMode = "ANNUAL_DIRECT";
-    } else if (it.actual !== null && it.actual !== undefined) {
+    } else if (filledMonthsCount > 0) {
+      annualActual = aggAnnualActual;
+      annualInputMode = "MONTHLY";
+    } else if (it.actual !== null && it.actual !== undefined && !isNaN(Number(it.actual))) {
       annualActual = Number(it.actual);
       annualInputMode = "ANNUAL_DIRECT";
     }
@@ -598,6 +616,27 @@ export async function getMonthlyAssessmentDetail(params: {
       unit: indUnit,
     });
     const annualAchievement = annualScoreRes.realizationPct;
+    let effectiveAnnualScore = annualScoreRes.score;
+    let effectiveAnnualBandLabel = annualScoreRes.bandLabel;
+    let effectiveAnnualFraction = annualScoreRes.finalScoreFraction;
+    let effectiveAnnualPct = annualScoreRes.finalScorePercentage;
+    let effectiveAnnualDisplay = annualScoreRes.finalScoreDisplay;
+
+    // Fallback jika rules tidak cocok namun item memiliki skor tersimpan (misal kualitatif/Excel)
+    if (
+      (effectiveAnnualScore === null || effectiveAnnualScore === 0) &&
+      it.score !== null &&
+      it.score !== undefined &&
+      !isNaN(Number(it.score)) &&
+      Number(it.score) > 0
+    ) {
+      effectiveAnnualScore = Number(it.score);
+      effectiveAnnualFraction = maxScore > 0 ? (effectiveAnnualScore / maxScore) * indWeightNorm * catWeightNorm : 0;
+      effectiveAnnualPct = parseFloat((effectiveAnnualFraction * 100).toFixed(2));
+      effectiveAnnualDisplay = `${effectiveAnnualPct.toFixed(1)}%`;
+      if (!effectiveAnnualBandLabel && it.bandLabel) effectiveAnnualBandLabel = it.bandLabel;
+    }
+
     const annualStatus: "Completed" | "In Progress" | "Not Started" =
       annualInputMode === "MONTHLY"
         ? (filledMonthsCount === 12 ? "Completed" : filledMonthsCount > 0 ? "In Progress" : "Not Started")
@@ -657,12 +696,14 @@ export async function getMonthlyAssessmentDetail(params: {
           apprStatus === "REVIEWED" ||
           apprStatus.startsWith("PENDING_")
         ) {
-          // Locked in In Review / Final
-          isEditable = false;
+          // Terkunci di tahap Review/Final kecuali tahap workflow aktif memberi hak koreksi nilai (canEditScore)
+          isEditable = Boolean(workflowResolved.canCurrentUserEditScore && apprStatus !== "FINAL");
         } else if (apprStatus.startsWith("REVISED_")) {
-          // In Revision: ONLY flagged parameter items can be edited by authorized assessor
+          // Dalam Revisi: parameter yang ditandai revisi dapat diedit oleh penilai, atau dikoreksi oleh reviewer berwenang
           const isFlagged = it.isRevisionFlagged ?? false;
-          isEditable = (currentUser.role === "ADMIN" || isAssessor) && isFlagged;
+          isEditable =
+            Boolean(workflowResolved.canCurrentUserEditScore && currentStage !== "PENILAI") ||
+            ((currentUser.role === "ADMIN" || isAssessor) && (isFlagged || currentStage !== "PENILAI"));
         } else {
           // In Draft: Only authorized assessor (or admin) can edit
           if (currentUser.role === "ADMIN") {
@@ -715,8 +756,11 @@ export async function getMonthlyAssessmentDetail(params: {
       annualTarget: indTarget,
       annualActual,
       annualAchievement,
-      annualScore: annualActual !== null ? annualScoreRes.score : null,
-      annualBandLabel: annualScoreRes.bandLabel,
+      annualScore: annualActual !== null ? effectiveAnnualScore : null,
+      annualBandLabel: effectiveAnnualBandLabel,
+      annualFinalScoreFraction: effectiveAnnualFraction,
+      annualFinalScorePercentage: effectiveAnnualPct,
+      annualFinalScoreDisplay: effectiveAnnualDisplay,
       annualProgress: `${filledMonthsCount}/12`,
       annualStatus,
       annualInputMode,
@@ -746,22 +790,12 @@ export async function getMonthlyAssessmentDetail(params: {
     const paramScore = calculateParameterScore(group.indicators);
     paramScoreSummaries.push(paramScore);
 
-
-    // Hitung skor tahunan per kategori
-    const annualIndicators = group.indicators.map((ind) => {
-      const annRes = calculateKpiScore(ind.annualActual, ind.scoringRules, {
-        indicatorWeight: ind.indicatorWeight,
-        parameterWeight: ind.parameterWeight,
-        maxScore: ind.maxScore,
-        compareBasis: ind.compareBasis,
-        target: ind.annualTarget,
-        direction: ind.direction,
-        measurementType: ind.measurementType,
-        unit: ind.unit,
-      });
-      return { finalScoreFraction: annRes.finalScoreFraction };
-    });
-    annualParamScoreSummaries.push(calculateParameterScore(annualIndicators));
+    // Hitung skor tahunan per kategori dari nilai tahunan indikator yang telah dievaluasi
+    const annualIndicators = group.indicators.map((ind) => ({
+      finalScoreFraction: ind.annualFinalScoreFraction ?? 0,
+    }));
+    const annParamScore = calculateParameterScore(annualIndicators);
+    annualParamScoreSummaries.push(annParamScore);
 
     // Hitung rata-rata progress bulan untuk kategori ini
     const filledAvg =
@@ -780,6 +814,7 @@ export async function getMonthlyAssessmentDetail(params: {
       indicatorCount: group.indicators.length,
       progressMonths: `${filledAvg}/12`,
       scorePercentage: paramScore.totalPercentage,
+      annualScorePercentage: annParamScore.totalPercentage,
       parameterScore: paramScore,
     });
   }
@@ -897,6 +932,7 @@ export async function getMonthlyAssessmentDetail(params: {
       templateName: resolvedTemplateName ?? "-",
     },
     approvalLine,
+    workflowResolved,
     appraisalId: apprRow.appraisal.id,
     appraisalStatus: apprRow.appraisal.status,
     currentStage,
@@ -966,8 +1002,12 @@ export async function getMonthlyAssessmentEmployees(params: {
   const appraiser = alias(employees, "appraiser");
   const appraisalAppraiser = alias(employees, "appraisal_appraiser");
 
-  // Filter kondisi dasar periode (Hanya karyawan aktif)
-  const conditions = [eq(appraisals.periodId, period.id), eq(employees.isActive, true)];
+  // Filter kondisi dasar periode (Hanya karyawan aktif dan yang memiliki template valid)
+  const conditions = [
+    eq(appraisals.periodId, period.id),
+    eq(employees.isActive, true),
+    isNotNull(appraisals.templateId),
+  ];
 
   if (departmentId) {
     conditions.push(eq(employees.departmentId, departmentId));
@@ -1121,6 +1161,10 @@ export async function getMonthlyAssessmentEmployees(params: {
         parameterWeightSnapshot: appraisalItems.parameterWeightSnapshot,
         scoringRulesSnapshot: appraisalItems.scoringRulesSnapshot,
         monthlyActuals: appraisalItems.monthlyActuals,
+        annualActual: appraisalItems.annualActual,
+        actual: appraisalItems.actual,
+        score: appraisalItems.score,
+        bandLabel: appraisalItems.bandLabel,
       })
       .from(appraisalItems)
       .leftJoin(kpiParameters, eq(appraisalItems.parameterId, kpiParameters.id))
@@ -1128,6 +1172,7 @@ export async function getMonthlyAssessmentEmployees(params: {
 
     const totalIndicators = items.length;
     let filledParameters = 0;
+    let filledIndicatorsCount = 0;
     let totalParameters = 5;
     let monthStatus: "NOT_STARTED" | "DRAFT" | "SUBMITTED" | "APPROVED" = "NOT_STARTED";
 
@@ -1149,26 +1194,56 @@ export async function getMonthlyAssessmentEmployees(params: {
 
       const filledItemIds = new Set<number>();
       for (const mr of mRows) {
-        if (mr.actualValue !== null && mr.actualValue !== undefined && mr.actualValue !== "") {
+        if (mr.actualValue !== null && mr.actualValue !== undefined && String(mr.actualValue).trim() !== "") {
           filledItemIds.add(mr.appraisalItemId);
         }
       }
 
-      // Periksa fallback monthlyActuals legacy
+      // Periksa nilai tahunan langsung (annualActual / actual / score / bandLabel) serta monthlyActuals legacy
       for (const it of items) {
-        if (!filledItemIds.has(it.id) && it.monthlyActuals) {
+        if (filledItemIds.has(it.id)) continue;
+
+        const hasAnnualActual =
+          it.annualActual !== null &&
+          it.annualActual !== undefined &&
+          String(it.annualActual).trim() !== "" &&
+          !isNaN(Number(it.annualActual));
+        const hasDirectActual =
+          it.actual !== null &&
+          it.actual !== undefined &&
+          String(it.actual).trim() !== "" &&
+          !isNaN(Number(it.actual));
+        const hasDirectScore =
+          it.score !== null &&
+          it.score !== undefined &&
+          String(it.score).trim() !== "" &&
+          !isNaN(Number(it.score)) &&
+          Number(it.score) > 0;
+        const hasBandLabel =
+          it.bandLabel !== null &&
+          it.bandLabel !== undefined &&
+          String(it.bandLabel).trim() !== "";
+
+        if (hasAnnualActual || hasDirectActual || hasDirectScore || hasBandLabel) {
+          filledItemIds.add(it.id);
+          continue;
+        }
+
+        if (it.monthlyActuals) {
           const arr = Array.isArray(it.monthlyActuals)
             ? it.monthlyActuals
             : Object.values(it.monthlyActuals);
-          if (arr.some((v) => v !== null && v !== undefined && v !== "")) {
+          if (arr.some((v) => v !== null && v !== undefined && String(v).trim() !== "")) {
             filledItemIds.add(it.id);
           }
         }
       }
 
-      // Parameter terhitung terisi jika indikator di dalamnya memiliki nilai
+      filledIndicatorsCount = filledItemIds.size;
+
+      // Parameter terhitung selesai jika seluruh indikator di dalamnya telah diisi
       for (const pItems of paramMap.values()) {
-        const isParamFilled = pItems.some((it) => filledItemIds.has(it.id));
+        const isParamFilled = pItems.length > 0 && pItems.every((it) => filledItemIds.has(it.id));
         if (isParamFilled) filledParameters++;
       }
 
@@ -1176,7 +1251,7 @@ export async function getMonthlyAssessmentEmployees(params: {
       const hasDft = mRows.some((r) => r.status === "DRAFT");
       if (hasSub || row.appraisalStatus === "FINAL" || row.appraisalStatus === "REVIEWED" || row.appraisalStatus.startsWith("PENDING_")) {
         monthStatus = "SUBMITTED";
-      } else if (hasDft || filledParameters > 0) {
+      } else if (hasDft || filledIndicatorsCount > 0) {
         monthStatus = "DRAFT";
       }
     }
@@ -1221,10 +1296,12 @@ export async function getMonthlyAssessmentEmployees(params: {
       totalIndicators,
       totalParameters,
       filledParameters,
-      filledCount: filledParameters,
-      unfilledCount: totalParameters - filledParameters,
+      filledCount: filledIndicatorsCount,
+      unfilledCount: totalIndicators - filledIndicatorsCount,
       completionRate:
-        totalParameters > 0 ? parseFloat(((filledParameters / totalParameters) * 100).toFixed(1)) : 0,
+        totalIndicators > 0
+          ? parseFloat(((filledIndicatorsCount / totalIndicators) * 100).toFixed(1))
+          : 0,
       monthlyStatus: monthStatus,
     });
   }
@@ -1258,24 +1335,31 @@ export async function saveMonthlyAssessmentValues(params: {
   const periodYear = period?.year ?? new Date().getFullYear();
 
   const currentApprStatus = String(appr.status);
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    throw new Error("Akses ditolak: Sesi login diperlukan untuk menyimpan nilai penilaian.");
+  }
 
-  // 1. Validasi status lock appraisal
+  const wfCheck = await resolveWorkflowForEmployee({
+    employeeId: appr.employeeId,
+    appraisalStatus: appr.status,
+    currentStageKey: appr.currentStage,
+    currentUser,
+  });
+
+  // 1. Validasi status lock appraisal (izinkan jika tahap workflow aktif mengizinkan koreksi nilai bagi reviewer)
   if (
     currentApprStatus === "FINAL" ||
-    currentApprStatus === "REVIEWED" ||
-    currentApprStatus.startsWith("PENDING_")
+    ((currentApprStatus === "REVIEWED" || currentApprStatus.startsWith("PENDING_")) &&
+      !wfCheck.canCurrentUserEditScore)
   ) {
     throw new Error(
       `Penilaian ini sedang berada pada tahap "${appr.status}" (terkunci). Nilai tidak dapat diubah.`
     );
   }
 
-  // 2. Validasi multi-layer kewenangan asesor sebelum menyimpan nilai
-  const currentUser = await getCurrentUser();
-  if (!currentUser) {
-    throw new Error("Akses ditolak: Sesi login diperlukan untuk menyimpan nilai penilaian.");
-  }
-  if (currentUser.role !== "ADMIN") {
+  // 2. Validasi multi-layer kewenangan asesor sebelum menyimpan nilai (kecuali ADMIN atau reviewer dengan hak koreksi nilai)
+  if (currentUser.role !== "ADMIN" && !(wfCheck.canCurrentUserApprove && wfCheck.canCurrentUserEditScore)) {
     const [targetEmp] = await db
       .select({ departmentId: employees.departmentId })
       .from(employees)
@@ -1392,15 +1476,25 @@ export async function saveMonthlyAssessmentValues(params: {
         ? Number(item.parameter.target)
         : null;
 
+    const indName = item.item.indicatorNameSnapshot || item.parameter?.name || "Indikator";
+    const resolvedDir = resolveKpiDirection(
+      rules,
+      item.parameter?.direction,
+      indName,
+      item.parameter?.measurementType,
+      item.parameter?.unit
+    );
+
     const scoreRes = calculateKpiScore(itemInput.actualValue, rules, {
       indicatorWeight: indWeight,
       parameterWeight: catWeight,
       maxScore,
       compareBasis,
       target: currentTarget,
-      direction: item.parameter?.direction,
+      direction: resolvedDir,
       measurementType: item.parameter?.measurementType,
       unit: item.parameter?.unit,
+      indicatorName: indName,
     });
 
     // 1. Simpan ke appraisal_monthly_values
@@ -1457,15 +1551,9 @@ export async function saveMonthlyAssessmentValues(params: {
     // 1.1 Tulis Calculation Audit Log (Formula Engine Phase 2)
     try {
       const calcRuleId = item.calcRule?.id ?? item.parameter?.calculationRuleId ?? null;
+      const directionCode = resolvedDir;
       const calcRuleCode =
-        item.calcRule?.code ??
-        (item.parameter?.unit === "SP" || item.parameter?.unit === "Insiden"
-          ? "ACH-INVERSE-V1"
-          : "ACH-NORMAL-V1");
-      const directionCode =
-        item.parameter?.direction ||
-        item.calcRule?.direction ||
-        (calcRuleCode === "ACH-INVERSE-V1" ? "LOWER_IS_BETTER" : "HIGHER_IS_BETTER");
+        directionCode === "LOWER_IS_BETTER" ? "ACH-INVERSE-V1" : (item.calcRule?.code ?? "ACH-NORMAL-V1");
 
       const achievementPct = scoreRes.realizationPct;
       const formulaDescription =
@@ -1872,12 +1960,25 @@ export async function submitMyAssessorAssessment(params: {
   let isAllSubmitted = false;
   const isResubmit = String(appr.appraisal.status).startsWith("REVISED_");
 
+  const workflow = await resolveWorkflowForEmployee({
+    employeeId: appr.employee.id,
+    appraisalStatus: "DRAFT",
+    currentStageKey: "PENILAI",
+    currentUser: actor,
+  });
+  const nextStep = workflow.nextStep || workflow.steps[workflow.steps.length - 1];
+  const isDirectFinal =
+    workflow.mode === "DIRECT_TO_REPORT" || !nextStep || nextStep.stageKey === "FINAL";
+  const targetStageKey = isDirectFinal ? "FINAL" : nextStep.stageKey;
+  const targetStageLabel = isDirectFinal ? "Final (Report)" : nextStep.label;
+  const targetDbStatus = isDirectFinal ? "FINAL" : mapStageKeyToDbStatus(targetStageKey, false);
+
   // Catat riwayat pengiriman bagian penilai ini
   await db.insert(appraisalApprovalLogs).values({
     appraisalId,
     action: isResubmit ? "RESUBMIT_REVISION_PORTION" : "SUBMIT_MY_ASSESSMENT",
     fromStatus: appr.appraisal.status,
-    toStatus: allSubmitted ? "PENDING_HEAD_DEPT" : appr.appraisal.status,
+    toStatus: allSubmitted ? targetDbStatus : appr.appraisal.status,
     stage: "PENILAI",
     actorId: actor.id > 0 ? actor.id : null,
     actorName: actor.name,
@@ -1886,15 +1987,16 @@ export async function submitMyAssessorAssessment(params: {
     createdAt: now,
   });
 
-  // Jika semua penilai telah submit: otomatis teruskan ke reviewer berikutnya (Head Dept)
+  // Jika semua penilai telah submit: sesuaikan dengan mode workflow aktif (Langsung ke Report / Validasi HR / Berjenjang)
   if (allSubmitted) {
     isAllSubmitted = true;
     await db
       .update(appraisals)
       .set({
-        status: "PENDING_HEAD_DEPT",
-        currentStage: "HEAD_DEPT",
+        status: targetDbStatus,
+        currentStage: targetStageKey,
         submittedAt: now,
+        finalizedAt: isDirectFinal ? now : appr.appraisal.finalizedAt,
         rejectionReason: null,
         notes: notes || appr.appraisal.notes,
         updatedAt: now,
@@ -1903,14 +2005,16 @@ export async function submitMyAssessorAssessment(params: {
 
     await db.insert(appraisalApprovalLogs).values({
       appraisalId,
-      action: "FORWARD_TO_REVIEW",
+      action: isDirectFinal ? "FORWARD_DIRECT_FINAL" : "FORWARD_TO_REVIEW",
       fromStatus: appr.appraisal.status,
-      toStatus: "PENDING_HEAD_DEPT",
-      stage: "HEAD_DEPT",
+      toStatus: targetDbStatus,
+      stage: targetStageKey,
       actorId: actor.id > 0 ? actor.id : null,
       actorName: "Sistem KPI",
       actorRole: "SYSTEM",
-      notes: "Seluruh penilai telah menyelesaikan dan menyerahkan penilaian. Berkas otomatis diteruskan ke Head Dept untuk review.",
+      notes: isDirectFinal
+        ? "Seluruh penilai telah menyelesaikan penilaian. Data langsung masuk ke Report sesuai mode workflow Langsung ke Report."
+        : `Seluruh penilai telah menyelesaikan dan menyerahkan penilaian. Berkas otomatis diteruskan ke tahap ${targetStageLabel} untuk review.`,
       createdAt: new Date(now.getTime() + 100),
     });
   }
@@ -1921,6 +2025,7 @@ export async function submitMyAssessorAssessment(params: {
     actorId: actor.id,
     itemCount: myItems.length,
     isAllSubmitted,
+    targetStageKey: isAllSubmitted ? targetStageKey : "PENILAI",
   }, actor.name);
 
   return {
@@ -1928,7 +2033,9 @@ export async function submitMyAssessorAssessment(params: {
     isAllSubmitted,
     submittedCount: myItems.length,
     message: isAllSubmitted
-      ? "Seluruh penilai telah menyelesaikan penilaian. Berkas otomatis diteruskan ke Head Dept untuk proses review."
+      ? isDirectFinal
+        ? "Seluruh penilai telah menyelesaikan penilaian. Data langsung masuk ke Report (Final)."
+        : `Seluruh penilai telah menyelesaikan penilaian. Berkas otomatis diteruskan ke tahap ${targetStageLabel} untuk proses review.`
       : `Penilaian Anda (${myItems.length} indikator) berhasil diserahkan dan dikunci. Menunggu penilai lainnya menyelesaikan penilaian mereka.`,
   };
 }
@@ -2174,18 +2281,43 @@ export async function recalculateAppraisal(appraisalId: number): Promise<number>
     }
 
     const compareBasis = p?.compareBasis || "ACTUAL";
+    const indName = it.indicatorNameSnapshot || p?.name || "Indikator";
+    const resolvedDir = resolveKpiDirection(
+      rules,
+      p?.direction,
+      indName,
+      p?.measurementType,
+      p?.unit
+    );
     const scoreRes = calculateKpiScore(annualActual, rules, {
       indicatorWeight: indWeight,
       parameterWeight: catWeight,
       maxScore,
       compareBasis,
       target,
-      direction: p?.direction,
+      direction: resolvedDir,
       measurementType: p?.measurementType,
       unit: p?.unit,
+      indicatorName: indName,
     });
 
-    totalWeightedScore += scoreRes.finalScoreFraction;
+    let finalItemScore = scoreRes.score;
+    let finalItemScoreFraction = scoreRes.finalScoreFraction;
+    let finalItemBandLabel = scoreRes.bandLabel ?? scoreRes.matchedRule?.label ?? null;
+
+    if (
+      (finalItemScore === null || finalItemScore === 0) &&
+      it.score !== null &&
+      it.score !== undefined &&
+      !isNaN(Number(it.score)) &&
+      Number(it.score) > 0
+    ) {
+      finalItemScore = Number(it.score);
+      finalItemScoreFraction = maxScore > 0 ? (finalItemScore / maxScore) * indWeight * catWeight : 0;
+      if (!finalItemBandLabel && it.bandLabel) finalItemBandLabel = it.bandLabel;
+    }
+
+    totalWeightedScore += finalItemScoreFraction;
 
     const achievement = scoreRes.realizationPct;
 
@@ -2195,22 +2327,18 @@ export async function recalculateAppraisal(appraisalId: number): Promise<number>
         annualActual: annualActual !== null ? String(annualActual) : null,
         actual: annualActual !== null ? String(annualActual) : null,
         achievement: achievement !== null ? String(achievement.toFixed(2)) : null,
-        bandLabel: scoreRes.bandLabel ?? scoreRes.matchedRule?.label ?? null,
-        score: String(scoreRes.score),
-        weightedScore: String(scoreRes.finalScoreFraction),
+        bandLabel: finalItemBandLabel,
+        score: finalItemScore !== null ? String(finalItemScore) : "0",
+        weightedScore: String(finalItemScoreFraction),
       })
       .where(eq(appraisalItems.id, it.id));
 
     // Annual Calculation Audit Log (month: null)
     try {
       const calcRuleId = calcRule?.id ?? p?.calculationRuleId ?? null;
+      const directionCode = resolvedDir;
       const calcRuleCode =
-        calcRule?.code ??
-        (p?.unit === "SP" || p?.unit === "Insiden" ? "ACH-INVERSE-V1" : "ACH-NORMAL-V1");
-      const directionCode =
-        p?.direction ||
-        calcRule?.direction ||
-        (calcRuleCode === "ACH-INVERSE-V1" ? "LOWER_IS_BETTER" : "HIGHER_IS_BETTER");
+        directionCode === "LOWER_IS_BETTER" ? "ACH-INVERSE-V1" : (calcRule?.code ?? "ACH-NORMAL-V1");
 
       const annualAchPct = scoreRes.realizationPct;
       const formulaDescription =
@@ -2373,6 +2501,8 @@ export async function saveBatchAssessmentFromExcel(params: {
     monthlyTargets?: (number | null)[];
     hasMonthlyData?: boolean;
     rawTitle?: string;
+    score?: number | null;
+    bandLabel?: string | null;
   }>;
   actor?: string;
 }) {
@@ -2391,19 +2521,30 @@ export async function saveBatchAssessmentFromExcel(params: {
   if (!appr) throw new Error("Appraisal tidak ditemukan.");
 
   const currentApprStatus = String(appr.status);
+  const currentUser = await getCurrentUser();
+  const wfExcelCheck = await resolveWorkflowForEmployee({
+    employeeId: appr.employeeId,
+    appraisalStatus: appr.status,
+    currentStageKey: appr.currentStage,
+    currentUser: currentUser ?? null,
+  });
+
   if (
     currentApprStatus === "FINAL" ||
-    currentApprStatus === "REVIEWED" ||
-    currentApprStatus.startsWith("PENDING_")
+    ((currentApprStatus === "REVIEWED" || currentApprStatus.startsWith("PENDING_")) &&
+      !wfExcelCheck.canCurrentUserEditScore)
   ) {
     throw new Error(
       `Penilaian ini sedang berada pada tahap "${appr.status}" (terkunci). Nilai tidak dapat diubah.`
     );
   }
 
-  // Validasi multi-layer kewenangan asesor jika bukan ADMIN
-  const currentUser = await getCurrentUser();
-  if (currentUser && currentUser.role !== "ADMIN") {
+  // Validasi multi-layer kewenangan asesor jika bukan ADMIN atau reviewer dengan hak koreksi nilai
+  if (
+    currentUser &&
+    currentUser.role !== "ADMIN" &&
+    !(wfExcelCheck.canCurrentUserApprove && wfExcelCheck.canCurrentUserEditScore)
+  ) {
     const [targetEmp] = await db
       .select({ departmentId: employees.departmentId })
       .from(employees)
@@ -2551,6 +2692,14 @@ export async function saveBatchAssessmentFromExcel(params: {
       const tgtStr = String(itm.annualTarget);
       updateData.target = tgtStr;
       updateData.targetSnapshot = tgtStr;
+    }
+
+    // Simpan Skor & Band jika ada dari Excel
+    if (itm.score !== null && itm.score !== undefined) {
+      updateData.score = String(itm.score);
+    }
+    if (itm.bandLabel) {
+      updateData.bandLabel = itm.bandLabel;
     }
 
     await db

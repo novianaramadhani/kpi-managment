@@ -15,6 +15,7 @@ import {
 } from "@/db/schema";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { importTemplateStructure, syncTemplateToEmployeeAppraisalsAction } from "@/lib/actions";
 
 export interface CreatePersonalTemplateInput {
   employeeId: number;
@@ -22,6 +23,7 @@ export interface CreatePersonalTemplateInput {
   customName?: string;
   description?: string;
   actor?: string;
+  categories?: any[];
 }
 
 export interface PersonalTemplateDetail {
@@ -397,4 +399,217 @@ export async function togglePersonalTemplateStatusAction(
       err instanceof Error ? err.message : "Gagal mengubah status template.";
     return { success: false, error: msg };
   }
+}
+
+
+/**
+ * Menyimpan / memperbarui Template KPI Personal untuk seorang karyawan dari hasil unggahan Excel.
+ * Otomatis menghubungkan struktur KPI (kategori, parameter, bobot, band) ke appraisal bulanan karyawan.
+ */
+export interface SavePersonalTemplateFromExcelInput {
+  employeeId: number;
+  templateName?: string;
+  categories: any[];
+  periodYear?: string;
+  actor?: string;
+}
+
+export async function savePersonalTemplateFromExcelAction(
+  input: SavePersonalTemplateFromExcelInput
+): Promise<{ success: boolean; templateId?: number; isUpdated?: boolean; error?: string }> {
+  const { employeeId, templateName, categories, periodYear, actor = "admin" } = input;
+
+  if (!employeeId || employeeId <= 0) {
+    return { success: false, error: "Karyawan wajib dipilih." };
+  }
+  if (!categories || categories.length === 0) {
+    return { success: false, error: "Struktur KPI tidak boleh kosong." };
+  }
+
+  try {
+    // 1. Verifikasi Data Karyawan
+    const [emp] = await db
+      .select({
+        id: employees.id,
+        name: employees.name,
+        nik: employees.nik,
+        departmentId: employees.departmentId,
+        jobLevelId: employees.jobLevelId,
+        jobPositionId: employees.jobPositionId,
+        jobPosition: employees.jobPosition,
+      })
+      .from(employees)
+      .where(eq(employees.id, employeeId))
+      .limit(1);
+
+    if (!emp) {
+      return { success: false, error: "Data karyawan tidak ditemukan." };
+    }
+
+    // 2. Resolve Periode
+    let periodId: number | null = null;
+    if (periodYear && periodYear.trim()) {
+      const yearNum = parseInt(periodYear.trim(), 10);
+      if (!isNaN(yearNum)) {
+        const [p] = await db
+          .select({ id: kpiPeriods.id })
+          .from(kpiPeriods)
+          .where(eq(kpiPeriods.year, yearNum))
+          .limit(1);
+        if (p) periodId = p.id;
+      }
+    }
+    if (!periodId) {
+      const [activePeriod] = await db
+        .select({ id: kpiPeriods.id })
+        .from(kpiPeriods)
+        .where(eq(kpiPeriods.status, "ACTIVE"))
+        .limit(1);
+      periodId = activePeriod?.id ?? null;
+    }
+
+    // 3. Cek template personal yang sudah ada untuk karyawan ini
+    const [existing] = await db
+      .select()
+      .from(kpiTemplates)
+      .where(
+        and(
+          eq(kpiTemplates.employeeId, employeeId),
+          eq(kpiTemplates.isCustom, true)
+        )
+      )
+      .limit(1);
+
+    const jobTitle = emp.jobPosition || "Karyawan";
+    const finalName =
+      templateName?.trim() || `Template KPI ${emp.name} - ${jobTitle}`;
+    const totalWeightStr = categories
+      .reduce((sum: number, c: any) => sum + Number(c.weight || 0), 0)
+      .toFixed(4);
+
+    let targetTemplateId: number;
+    let isUpdated = false;
+
+    if (existing) {
+      targetTemplateId = existing.id;
+      isUpdated = true;
+
+      await db
+        .update(kpiTemplates)
+        .set({
+          name: finalName,
+          periodId: periodId ?? existing.periodId,
+          totalWeight: totalWeightStr,
+          isActive: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(kpiTemplates.id, existing.id));
+
+      await importTemplateStructure(existing.id, categories, "REPLACE", {
+        skipRevalidate: true,
+      });
+    } else {
+      const cleanNik = emp.nik.replace(/[^0-9]/g, "").slice(-4);
+      const randSuffix = Math.floor(1000 + Math.random() * 9000);
+      const templateCode = `TPL-PRS-${cleanNik}-${randSuffix}`;
+
+      const [newTpl] = await db
+        .insert(kpiTemplates)
+        .values({
+          name: finalName,
+          code: templateCode,
+          departmentId: emp.departmentId,
+          jobLevelId: emp.jobLevelId,
+          jobPositionId: emp.jobPositionId ?? null,
+          periodId: periodId,
+          employeeId: emp.id,
+          isCustom: true,
+          isActive: true,
+          description: `Template personal khusus ${emp.name} (${emp.nik}) - diimpor dari Excel`,
+          totalWeight: totalWeightStr,
+          version: 1,
+        })
+        .returning();
+
+      targetTemplateId = newTpl.id;
+
+      await importTemplateStructure(newTpl.id, categories, "REPLACE", {
+        skipRevalidate: true,
+      });
+    }
+
+    // Sinkronkan ke form penilaian (appraisals) karyawan
+    try {
+      await syncTemplateToEmployeeAppraisalsAction(targetTemplateId);
+    } catch (syncErr) {
+      console.warn("Auto-sync personal template error:", syncErr);
+    }
+
+    // Audit log
+    await db.insert(auditLogs).values({
+      entity: "kpi_template",
+      entityId: targetTemplateId,
+      action: isUpdated
+        ? "UPDATE_PERSONAL_TEMPLATE_FROM_EXCEL"
+        : "CREATE_PERSONAL_TEMPLATE_FROM_EXCEL",
+      actor,
+      changes: JSON.stringify({
+        employeeId: emp.id,
+        employeeName: emp.name,
+        employeeNik: emp.nik,
+        isUpdated,
+        categoriesCount: categories.length,
+      }),
+    });
+
+    try {
+      revalidatePath("/setup/templates");
+      revalidatePath("/setup/assignments");
+      revalidatePath("/input-kpi");
+      revalidatePath("/dashboard");
+    } catch {
+      // Safe fallback
+    }
+
+    return { success: true, templateId: targetTemplateId, isUpdated };
+  } catch (err: unknown) {
+    console.error("Error saving personal template from Excel:", err);
+    const msg =
+      err instanceof Error ? err.message : "Gagal menyimpan template personal.";
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * Menyimpan beberapa template personal sekaligus dari multi-sheet Excel
+ */
+export async function batchSavePersonalTemplatesFromExcelAction(
+  inputs: SavePersonalTemplateFromExcelInput[]
+): Promise<{
+  success: boolean;
+  totalSaved: number;
+  totalFailed: number;
+  results: Array<{ employeeId: number; success: boolean; templateId?: number; error?: string }>;
+}> {
+  let saved = 0;
+  let failed = 0;
+  const results: Array<{ employeeId: number; success: boolean; templateId?: number; error?: string }> = [];
+
+  for (const item of inputs) {
+    const res = await savePersonalTemplateFromExcelAction(item);
+    if (res.success) {
+      saved++;
+      results.push({ employeeId: item.employeeId, success: true, templateId: res.templateId });
+    } else {
+      failed++;
+      results.push({ employeeId: item.employeeId, success: false, error: res.error });
+    }
+  }
+
+  return {
+    success: saved > 0,
+    totalSaved: saved,
+    totalFailed: failed,
+    results,
+  };
 }

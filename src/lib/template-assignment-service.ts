@@ -18,6 +18,7 @@ import {
 import { and, eq, inArray, sql, asc, desc, lte, gte, isNotNull, isNull, or } from "drizzle-orm";
 import { tenureMonths } from "./scoring";
 import { revalidatePath } from "next/cache";
+import { resolveTemplateMasterEmployee } from "./master-employee-resolver";
 
 export interface TemplateAssignmentStatus {
   templateId: number;
@@ -93,6 +94,8 @@ export interface TemplateAssignmentDrawerData {
     jobLevelName: string;
     isActive: boolean;
     version: number;
+    isCustom?: boolean;
+    employeeId?: number | null;
   };
   period: {
     id: number;
@@ -328,18 +331,49 @@ export async function getTemplateAssignmentDrawerData(
     }
   }
 
-  // 6. Get all active employees in this department
-  const deptEmployees = await db
-    .select({
-      emp: employees,
-      lvl: jobLevels,
-      dept: departments,
-    })
-    .from(employees)
-    .innerJoin(jobLevels, eq(employees.jobLevelId, jobLevels.id))
-    .innerJoin(departments, eq(employees.departmentId, departments.id))
-    .where(and(eq(employees.departmentId, tpl.template.departmentId), eq(employees.isActive, true)))
-    .orderBy(asc(jobLevels.rank), asc(employees.name));
+  // 6. Get target employee if personal template, or all active employees in this department
+  let targetEmployeeId: number | null = tpl.template.employeeId ?? null;
+  if (!targetEmployeeId) {
+    const resolved = await resolveTemplateMasterEmployee(templateId, db);
+    if (resolved?.id) {
+      targetEmployeeId = resolved.id;
+    }
+  }
+
+  let deptEmployees: Array<{
+    emp: typeof employees.$inferSelect;
+    lvl: typeof jobLevels.$inferSelect;
+    dept: typeof departments.$inferSelect;
+  }> = [];
+
+  if (targetEmployeeId) {
+    deptEmployees = await db
+      .select({
+        emp: employees,
+        lvl: jobLevels,
+        dept: departments,
+      })
+      .from(employees)
+      .innerJoin(jobLevels, eq(employees.jobLevelId, jobLevels.id))
+      .innerJoin(departments, eq(employees.departmentId, departments.id))
+      .where(eq(employees.id, targetEmployeeId))
+      .limit(1);
+  }
+
+  // Fallback: If not personal or target employee was not found, query department employees
+  if (deptEmployees.length === 0) {
+    deptEmployees = await db
+      .select({
+        emp: employees,
+        lvl: jobLevels,
+        dept: departments,
+      })
+      .from(employees)
+      .innerJoin(jobLevels, eq(employees.jobLevelId, jobLevels.id))
+      .innerJoin(departments, eq(employees.departmentId, departments.id))
+      .where(and(eq(employees.departmentId, tpl.template.departmentId), eq(employees.isActive, true)))
+      .orderBy(asc(jobLevels.rank), asc(employees.name));
+  }
 
   // 7. Get existing appraisals in this period for all department employees
   const deptEmpIds = deptEmployees.map((e) => e.emp.id);
@@ -430,8 +464,8 @@ export async function getTemplateAssignmentDrawerData(
   const drawerEmployees: DrawerEmployeeItem[] = deptEmployees.map((row) => {
     const appInfo = empAppraisalMap.get(row.emp.id);
     const assignedTplId = appInfo?.templateId ?? null;
-    const isThis = assignedTplId === templateId;
-    const isOther = assignedTplId !== null && assignedTplId !== templateId;
+    const isThis = assignedTplId === templateId || Boolean(targetEmployeeId && row.emp.id === targetEmployeeId);
+    const isOther = assignedTplId !== null && assignedTplId !== templateId && !isThis;
 
     const empOU = (row.emp.operatingUnit || "HO").trim().toUpperCase();
     const headInfo = deptHeadMap.get(`${row.emp.departmentId}_${empOU}`);
@@ -509,6 +543,8 @@ export async function getTemplateAssignmentDrawerData(
       jobLevelName: tpl.lvl.name,
       isActive: tpl.template.isActive,
       version: tpl.template.version,
+      isCustom: Boolean(tpl.template.isCustom || targetEmployeeId),
+      employeeId: targetEmployeeId ?? tpl.template.employeeId ?? null,
     },
     period: {
       id: targetPeriod.id,

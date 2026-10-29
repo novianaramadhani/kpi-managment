@@ -1,50 +1,75 @@
 import Link from "next/link";
 import { db } from "@/db";
 import {
+  appraisalItems,
+  appraisalMonthlyValues,
   appraisals,
   departments,
   employees,
-  jobLevels,
   kpiPeriods,
-  kpiTemplates,
 } from "@/db/schema";
-import { asc, desc, eq } from "drizzle-orm";
+import { asc, desc, eq, sql } from "drizzle-orm";
 import { Card, PageHeader } from "@/components/ui";
-import { getSystemDate } from "@/lib/actions";
 import { getCurrentUser } from "@/lib/auth";
-import { DashboardClient } from "@/components/dashboard-client";
+import { DashboardKpiClient } from "@/components/dashboard-kpi-client";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const [deps, emps, tpls, periods, systemDate, currentUser] = await Promise.all([
-    db.select().from(departments).orderBy(asc(departments.name)),
+  const [deps, emps, periods, currentUser, rawAppraisals, monthlyAggs] = await Promise.all([
+    db
+      .select({
+        id: departments.id,
+        name: departments.name,
+        code: departments.code,
+      })
+      .from(departments)
+      .orderBy(asc(departments.name)),
     db
       .select({
         id: employees.id,
         nik: employees.nik,
         name: employees.name,
         departmentId: employees.departmentId,
-        deptName: departments.name,
         jobLevelId: employees.jobLevelId,
-        levelName: jobLevels.name,
-        jobPosition: employees.jobPosition,
-        operatingUnit: employees.operatingUnit,
-        dateOfHire: employees.dateOfHire,
-        role: employees.role,
-        headDeptId: employees.headDeptId,
-        appraiserId: employees.appraiserId,
         isActive: employees.isActive,
       })
       .from(employees)
-      .leftJoin(departments, eq(employees.departmentId, departments.id))
-      .leftJoin(jobLevels, eq(employees.jobLevelId, jobLevels.id))
-      .where(eq(employees.isActive, true))
-      .orderBy(asc(employees.name)),
-    db.select().from(kpiTemplates),
+      .where(eq(employees.isActive, true)),
     db.select().from(kpiPeriods).orderBy(desc(kpiPeriods.year)),
-    getSystemDate(),
     getCurrentUser(),
+    db
+      .select({
+        id: appraisals.id,
+        periodId: appraisals.periodId,
+        employeeId: appraisals.employeeId,
+        status: appraisals.status,
+        finalScore: appraisals.finalScore,
+        isEligible: appraisals.isEligible,
+        empName: employees.name,
+        nik: employees.nik,
+        deptName: departments.name,
+        deptId: departments.id,
+        updatedAt: appraisals.updatedAt,
+        currentStage: appraisals.currentStage,
+      })
+      .from(appraisals)
+      .innerJoin(employees, eq(appraisals.employeeId, employees.id))
+      .innerJoin(departments, eq(employees.departmentId, departments.id))
+      .where(eq(employees.isActive, true))
+      .orderBy(desc(appraisals.updatedAt)),
+    db
+      .select({
+        appraisalId: appraisalItems.appraisalId,
+        month: appraisalMonthlyValues.month,
+        monthScore: sql<string>`COALESCE(SUM(CAST(${appraisalMonthlyValues.finalScore} AS numeric)), 0)::text`,
+      })
+      .from(appraisalMonthlyValues)
+      .innerJoin(appraisalItems, eq(appraisalMonthlyValues.appraisalItemId, appraisalItems.id))
+      .where(
+        sql`${appraisalMonthlyValues.actualValue} IS NOT NULL OR (${appraisalMonthlyValues.score} IS NOT NULL AND CAST(${appraisalMonthlyValues.score} AS numeric) > 0)`
+      )
+      .groupBy(appraisalItems.appraisalId, appraisalMonthlyValues.month),
   ]);
 
   if (deps.length === 0) {
@@ -75,43 +100,31 @@ export default async function DashboardPage() {
     status: "ACTIVE",
   };
 
-  // Ambil semua data appraisal untuk seluruh periode agar filter periode di client langsung responsif
-  const allAppraisals = await db
-    .select({
-      id: appraisals.id,
-      periodId: appraisals.periodId,
-      employeeId: appraisals.employeeId,
-      status: appraisals.status,
-      finalScore: appraisals.finalScore,
-      isEligible: appraisals.isEligible,
-      empName: employees.name,
-      nik: employees.nik,
-      jobPosition: employees.jobPosition,
-      operatingUnit: employees.operatingUnit,
-      deptName: departments.name,
-      deptId: departments.id,
-      levelName: jobLevels.name,
-      headDeptId: employees.headDeptId,
-      appraiserId: employees.appraiserId,
-      updatedAt: appraisals.updatedAt,
-      currentStage: appraisals.currentStage,
-    })
-    .from(appraisals)
-    .innerJoin(employees, eq(appraisals.employeeId, employees.id))
-    .innerJoin(departments, eq(employees.departmentId, departments.id))
-    .leftJoin(jobLevels, eq(employees.jobLevelId, jobLevels.id))
-    .orderBy(desc(appraisals.updatedAt));
+  const monthlyMap = new Map<number, Record<number, number>>();
+  for (const row of monthlyAggs) {
+    const scoreNum = Number(row.monthScore);
+    if (!Number.isFinite(scoreNum) || scoreNum <= 0) continue;
+    let rec = monthlyMap.get(row.appraisalId);
+    if (!rec) {
+      rec = {};
+      monthlyMap.set(row.appraisalId, rec);
+    }
+    rec[row.month] = scoreNum;
+  }
+
+  const allAppraisals = rawAppraisals.map((a) => ({
+    ...a,
+    monthlyScores: monthlyMap.get(a.id) ?? null,
+  }));
 
   return (
-    <DashboardClient
+    <DashboardKpiClient
       currentUser={currentUser}
       activePeriod={activePeriod}
       periods={periods}
       departments={deps}
       allEmployees={emps}
       allAppraisals={allAppraisals}
-      systemDate={systemDate}
-      templatesCount={tpls.length}
     />
   );
 }

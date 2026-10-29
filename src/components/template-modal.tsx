@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useEffect, useTransition, useMemo } from "react";
-import { X, Calendar, Briefcase, Layers, RefreshCw, AlertCircle, MapPin, Link2, Info } from "lucide-react";
+import React, { useState, useEffect, useTransition, useMemo, useRef } from "react";
+import { X, Calendar, Briefcase, Layers, RefreshCw, AlertCircle, MapPin, Link2, Info, Upload, FileSpreadsheet, CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
 import Swal from "sweetalert2";
 import type { Department, JobLevel, JobPosition, KpiPeriod, Pit, DepartmentMapping } from "@/db/schema";
+import { parseKpiTemplateExcel, type ParseResult } from "@/lib/excel-template-kpi";
 
 export interface TemplateModalProps {
   isOpen: boolean;
@@ -40,6 +41,12 @@ export function TemplateModal({
   const [periodId, setPeriodId] = useState("");
   const [effectiveDate, setEffectiveDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [description, setDescription] = useState("");
+
+  // Excel Upload State
+  const [excelFile, setExcelFile] = useState<File | null>(null);
+  const [parseResult, setParseResult] = useState<ParseResult | null>(null);
+  const [isParsingExcel, setIsParsingExcel] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Dynamic positions, periods, pits & sites if not passed as props
   const [positionsList, setPositionsList] = useState<JobPosition[]>(initialPositions || []);
@@ -204,6 +211,9 @@ export function TemplateModal({
       setJobLevelId(String(jobLevels[0]?.id ?? ""));
       setJobPositionId("");
       setDescription("");
+      setExcelFile(null);
+      setParseResult(null);
+      setIsParsingExcel(false);
 
       const activePer = periodsList.find((p) => p.status === "ACTIVE") || periodsList[0];
       if (activePer) {
@@ -237,6 +247,43 @@ export function TemplateModal({
     const matched = positionsList.filter((p) => p.departmentId === selectedDeptNum);
     return matched.length > 0 ? matched : positionsList;
   }, [positionsList, departmentId]);
+
+  // Handle Excel parsing
+  const handleFileChange = async (file: File) => {
+    setExcelFile(file);
+    setIsParsingExcel(true);
+    try {
+      const res = await parseKpiTemplateExcel(file, 115);
+      setParseResult(res);
+      if (res.errors.length > 0) {
+        void Swal.fire({
+          icon: "warning",
+          title: "File Excel Memiliki Catatan",
+          text: `Ditemukan ${res.errors.length} masalah format pada file Excel. Silakan periksa kembali.`,
+          confirmButtonColor: "#2563eb",
+        });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Gagal membaca format file Excel.";
+      void Swal.fire({
+        icon: "error",
+        title: "Gagal Parsing File",
+        text: msg,
+        confirmButtonColor: "#2563eb",
+      });
+      setParseResult(null);
+    } finally {
+      setIsParsingExcel(false);
+    }
+  };
+
+  const handleClearExcel = () => {
+    setExcelFile(null);
+    setParseResult(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -310,6 +357,9 @@ export function TemplateModal({
     fd.append("effectiveDate", effectiveDate);
     if (description.trim()) fd.append("description", description.trim());
     fd.append("totalWeight", "1.15"); // 115% standard total weight
+    if (parseResult?.categories && parseResult.categories.length > 0) {
+      fd.append("categoriesJson", JSON.stringify(parseResult.categories));
+    }
 
     startTransition(async () => {
       try {
@@ -636,6 +686,103 @@ export function TemplateModal({
                   className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition resize-none"
                 />
               </div>
+            </div>
+
+            {/* 6. Upload File Excel Template (Opsional) */}
+            <div className="space-y-1.5 pt-1">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold text-slate-700">
+                  Upload File Excel Template <span className="text-slate-400 font-normal">(Opsional)</span>
+                </label>
+                {parseResult && (
+                  <span className="text-[11px] font-medium text-emerald-600">
+                    {parseResult.categories.length} Kategori • {parseResult.summary?.totalIndicators ?? 0} Indikator ({Math.round((parseResult.summary?.totalWeight ?? 1.15) * 100)}% Bobot)
+                  </span>
+                )}
+              </div>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void handleFileChange(f);
+                }}
+                className="hidden"
+              />
+
+              {!excelFile ? (
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const f = e.dataTransfer.files?.[0];
+                    if (f) void handleFileChange(f);
+                  }}
+                  className="border-2 border-dashed border-slate-200 hover:border-blue-400 bg-slate-50/70 hover:bg-blue-50/40 rounded-xl p-3.5 text-center cursor-pointer transition group"
+                >
+                  <div className="flex flex-col items-center justify-center gap-1.5">
+                    <div className="h-8 w-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-slate-500 group-hover:text-blue-600 group-hover:border-blue-300 transition-colors shadow-2xs">
+                      <Upload className="h-4 w-4" />
+                    </div>
+                    <div className="text-xs text-slate-700 font-medium">
+                      <span className="text-blue-600 font-semibold hover:underline">Klik untuk pilih file</span> atau seret file Excel ke sini
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Otomatis mengisi struktur kategori, indikator, target, bobot, dan skala penilaian skor
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="h-8 w-8 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
+                      <FileSpreadsheet className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-slate-800 truncate">
+                        {excelFile.name}
+                      </p>
+                      <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                        <span>{(excelFile.size / 1024).toFixed(1)} KB</span>
+                        {isParsingExcel ? (
+                          <span className="flex items-center gap-1 text-blue-600">
+                            <Loader2 className="h-3 w-3 animate-spin" /> Membaca...
+                          </span>
+                        ) : parseResult?.errors.length ? (
+                          <span className="flex items-center gap-1 text-amber-600 font-medium">
+                            <AlertTriangle className="h-3 w-3" /> Ada {parseResult.errors.length} catatan
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1 text-emerald-600 font-medium">
+                            <CheckCircle2 className="h-3 w-3" /> Format valid
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="px-2.5 py-1 text-[11px] font-medium text-slate-600 hover:text-slate-900 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 cursor-pointer transition"
+                    >
+                      Ganti
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleClearExcel}
+                      className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer transition"
+                      title="Hapus file"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
