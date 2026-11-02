@@ -1,0 +1,52 @@
+name: kpi-app
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: kpi-app:latest
+    container_name: kpi-app
+    restart: unless-stopped
+    env_file:
+      - ${APP_ENV_FILE:-.env.development}
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 3000
+      HOSTNAME: "0.0.0.0"
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@kpi-postgres:5432/${POSTGRES_DB:-kpi_app}}
+      POSTGRES_HOST: ${POSTGRES_HOST:-kpi-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      NODE_OPTIONS: "--max-old-space-size=1536"
+    ports:
+      # Port host loopback (default 3001 agar tidak bentrok dengan native port 3000)
+      - "127.0.0.1:${APP_PORT:-3001}:3000"
+    volumes:
+      # Persistent volume bukti upload evidence agar tidak hilang saat rebuild
+      - ./public/uploads:/app/public/uploads
+    networks:
+      - kpi-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2048M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+networks:
+  kpi-network:
+    external: true
+    name: kpi-network

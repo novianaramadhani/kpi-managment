@@ -318,43 +318,38 @@ export function KpiExcelTable({
         </colgroup>
 
         {/* ========================================================= */}
-        {/* 1. TABLE HEADER (Satu Kali di Atas) */}
+        {/* 1. TABLE HEADER (Executive Classic Dark Navy) */}
         {/* ========================================================= */}
-        <thead className="bg-slate-100 border-b border-slate-200 text-slate-700 font-bold select-none text-[11px]">
-          <tr className="divide-x divide-slate-200">
+        <thead className="bg-[#0F2C59] border-b border-[#0F2C59] text-white font-medium select-none text-xs">
+          <tr className="divide-x divide-white/20">
             {/* Kolom 1: Parameter */}
-            <th className="px-3 py-2 text-left font-bold truncate">
+            <th className="px-3.5 py-2.5 text-left font-medium">
               Parameter
             </th>
 
             {/* Kolom 2: Kriteria Penilaian */}
-            <th className="px-3 py-2 text-left font-bold">
-              <div className="flex items-center justify-between gap-2">
-                <span>Kriteria Penilaian</span>
-                <span className="text-[10px] font-mono font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.2 rounded border border-blue-200">
-                  Operator • Nilai
-                </span>
-              </div>
+            <th className="px-3.5 py-2.5 text-left font-medium">
+              Kriteria Penilaian
             </th>
 
             {/* Kolom 3: Realisasi (HANYA MUNCUL DI MODE PENILAIAN) */}
             {isPenilaian && (
-              <th className="px-2.5 py-2 text-center font-bold">Realisasi</th>
+              <th className="px-2.5 py-2.5 text-center font-medium">Realisasi</th>
             )}
 
             {/* Kolom 4: Skor */}
-            <th className="px-2 py-2 text-center font-bold">
+            <th className="px-2 py-2.5 text-center font-medium">
               Skor
             </th>
 
             {/* Kolom 5: Bobot */}
-            <th className="px-2 py-2 text-center font-bold">
+            <th className="px-2 py-2.5 text-center font-medium">
               Bobot
             </th>
 
             {/* Kolom 6: Skor Akhir (HANYA MUNCUL DI MODE PENILAIAN) */}
             {isPenilaian && (
-              <th className="px-2.5 py-2 text-center font-bold">Skor Akhir</th>
+              <th className="px-2.5 py-2.5 text-center font-medium">Skor Akhir</th>
             )}
           </tr>
         </thead>
@@ -399,7 +394,7 @@ export function KpiExcelTable({
               return (
                 <React.Fragment key={cat.id}>
                   {/* --------------------------------------------------------- */}
-                  {/* BARIS PITA KATEGORI: ACCORDION HEADER (#BFDBFE) */}
+                  {/* BARIS PITA KATEGORI: MINIMALIST ACCORDION HEADER */}
                   {/* --------------------------------------------------------- */}
                   <tr
                     id={`category-row-${cat.id}`}
@@ -414,29 +409,29 @@ export function KpiExcelTable({
                         toggleCategory(cat.id);
                       }
                     }}
-                    className={`group transition-colors duration-150 cursor-pointer select-none border-y border-slate-300/80 bg-blue-100 dark:bg-blue-900/30 text-slate-900 ${
+                    className={`group transition-colors duration-150 cursor-pointer select-none border-y border-slate-200 bg-slate-50/90 text-slate-800 ${
                       isExpanded
-                        ? "shadow-2xs"
-                        : "hover:brightness-95"
+                        ? "shadow-none"
+                        : "hover:bg-slate-100/70"
                     } ${
                       isCatHighlighted
-                        ? "ring-2 ring-amber-400 ring-offset-1 z-20"
+                        ? "ring-1 ring-slate-400 z-20"
                         : ""
                     }`}
                   >
-                    <td colSpan={isPenilaian ? 6 : 4} className="px-3.5 py-1.5">
+                    <td colSpan={isPenilaian ? 6 : 4} className="px-3.5 py-2">
                       <div className="flex items-center justify-between gap-3 text-xs sm:text-[13px]">
-                        {/* Sisi Kiri: Chevron (#1D4ED8) + Nomor + Nama (slate-900 font-bold) + Ikon Peringatan amber-600 */}
+                        {/* Sisi Kiri: Chevron + Nomor + Nama */}
                         <div className="flex items-center gap-2 min-w-0 flex-1">
-                          <span className="shrink-0 p-0.5 rounded text-[#1D4ED8] transition-transform duration-150">
+                          <span className="shrink-0 p-0.5 rounded text-slate-500 group-hover:text-slate-800 transition-colors">
                             {isExpanded ? (
-                              <ChevronDown className="w-4 h-4 text-[#1D4ED8]" />
+                              <ChevronDown className="w-4 h-4" />
                             ) : (
-                              <ChevronRight className="w-4 h-4 text-[#1D4ED8]" />
+                              <ChevronRight className="w-4 h-4" />
                             )}
                           </span>
 
-                          <span className="font-bold text-slate-700 text-xs shrink-0 select-none">
+                          <span className="font-medium text-slate-500 text-xs shrink-0 select-none">
                             {catIdx + 1}.
                           </span>
 
@@ -464,7 +459,7 @@ export function KpiExcelTable({
                               }}
                               onClick={(e) => e.stopPropagation()}
                               autoFocus
-                              className="px-2 py-0.5 text-xs font-bold rounded bg-white text-slate-900 border border-blue-500 ring-2 ring-blue-400 focus:outline-none flex-1 min-w-0"
+                              className="px-2 py-0.5 text-xs font-medium rounded bg-white text-slate-900 border border-slate-300 focus:border-slate-500 focus:outline-none flex-1 min-w-0"
                             />
                           ) : (
                             <div
@@ -478,11 +473,11 @@ export function KpiExcelTable({
                               }}
                             >
                               <span
-                                className="font-bold text-slate-900 tracking-tight truncate cursor-text"
+                                className="font-semibold text-slate-800 tracking-normal truncate cursor-text"
                                 title={isEdit ? "Klik untuk edit nama parameter" : undefined}
                               >
                                 {cleanCatName}{" "}
-                                <span className="font-semibold text-blue-900/85 text-xs">
+                                <span className="font-normal text-slate-500 text-xs">
                                   ({catWeightPct}% dari {templateTargetPct}%)
                                 </span>
                               </span>
@@ -491,19 +486,19 @@ export function KpiExcelTable({
                                   title={issueTooltip}
                                   className="inline-flex items-center shrink-0 cursor-help"
                                 >
-                                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                                 </span>
                               )}
                             </div>
                           )}
                         </div>
 
-                        {/* Sisi Kanan: Ringkasan kecil + Tombol aksi hover + Total Bobot (blue-900 font-semibold) */}
+                        {/* Sisi Kanan: Ringkasan kecil + Tombol aksi hover + Total Bobot */}
                         <div
                           className="flex items-center gap-3 shrink-0"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <span className="text-[11px] font-normal text-blue-950/70 select-none">
+                          <span className="text-[11px] font-normal text-slate-400 select-none">
                             {totalIndicators} indikator · {totalBands} kriteria
                           </span>
 
@@ -517,10 +512,10 @@ export function KpiExcelTable({
                                     e.stopPropagation();
                                     onAddIndicator(cat.id);
                                   }}
-                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-semibold bg-white/85 hover:bg-white text-blue-800 rounded border border-blue-300 transition cursor-pointer shadow-2xs"
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-white hover:bg-slate-50 text-slate-700 rounded border border-slate-200 transition cursor-pointer"
                                   title="Tambah Indikator"
                                 >
-                                  <Plus className="w-3 h-3" />
+                                  <Plus className="w-3 h-3 text-slate-500" />
                                   <span>Indikator</span>
                                 </button>
                               )}
@@ -536,7 +531,7 @@ export function KpiExcelTable({
                                       () => onDeleteCategory(cat)
                                     );
                                   }}
-                                  className="p-1 text-slate-600 hover:text-rose-600 hover:bg-white/60 rounded transition cursor-pointer"
+                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-white rounded transition cursor-pointer"
                                   title="Hapus Parameter"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -545,7 +540,7 @@ export function KpiExcelTable({
                             </div>
                           )}
 
-                          {/* Total Bobot Kategori (Satu Kali Saja, #1E3A8A / blue-900) */}
+                          {/* Total Bobot Kategori */}
                           {isEdit && editingCell?.type === "catWeight" && editingCell.id === cat.id ? (
                             <input
                               type="number"
@@ -571,7 +566,7 @@ export function KpiExcelTable({
                               }}
                               onClick={(e) => e.stopPropagation()}
                               autoFocus
-                              className="w-12 px-1 py-0.5 text-xs font-bold text-center rounded bg-white text-slate-900 border border-blue-500 ring-2 ring-blue-400 font-mono"
+                              className="w-12 px-1 py-0.5 text-xs font-medium text-center rounded bg-white text-slate-900 border border-slate-300 focus:outline-none"
                             />
                           ) : (
                             <span
@@ -582,7 +577,7 @@ export function KpiExcelTable({
                                   setCellDraft(String(catWeightPct));
                                 }
                               }}
-                              className={`font-mono font-bold text-blue-950 text-xs sm:text-[13px] min-w-[38px] text-right ${
+                              className={`font-medium text-slate-800 text-xs sm:text-[13px] min-w-[38px] text-right ${
                                 isEdit ? "cursor-text hover:underline" : ""
                               }`}
                               title={isEdit ? "Klik untuk ubah bobot parameter" : undefined}
@@ -635,30 +630,30 @@ export function KpiExcelTable({
                                   ? `band-row-${band.id}`
                                   : undefined
                               }
-                              className={`divide-x divide-slate-200 group scroll-mt-36 transition-all duration-150 h-9 ${
+                              className={`divide-x divide-slate-200/70 group scroll-mt-36 transition-all duration-150 h-9 ${
                                 isParamHighlighted || isBandHighlighted
-                                  ? "bg-amber-100/90 ring-2 ring-amber-400 ring-offset-1 z-10"
+                                  ? "bg-amber-50/70 ring-1 ring-amber-300 z-10"
                                   : rowHighlight
-                                  ? "bg-amber-50/70 hover:bg-amber-50"
-                                  : "hover:bg-slate-50/70 bg-white"
+                                  ? "bg-amber-50/40 hover:bg-amber-50/60"
+                                  : "hover:bg-slate-50/60 bg-white"
                               }`}
                             >
                               {/* 1. Parameter (rowSpan) */}
                               {isFirst && (
                                 <td
                                   rowSpan={totalRowSpan}
-                                  className="px-3 py-2 align-top font-medium border border-slate-200 bg-white"
+                                  className="px-3.5 py-2.5 align-top font-normal border border-slate-200/80 bg-white"
                                 >
                                   <div className="flex items-start justify-between gap-1.5">
                                     <div className="flex-1 min-w-0">
                                       <span
-                                        className="font-semibold text-blue-950 dark:text-blue-100 line-clamp-2 block"
+                                        className="font-medium text-slate-800 line-clamp-2 block"
                                         title={cat.name}
                                       >
                                         {cat.name}
                                       </span>
                                       {directParam?.unit && (
-                                        <span className="text-[10px] text-blue-700/75 dark:text-blue-300 font-mono font-medium">
+                                        <span className="text-[11px] text-slate-400 font-normal">
                                           ({directParam.unit})
                                         </span>
                                       )}
@@ -670,7 +665,7 @@ export function KpiExcelTable({
                                           <button
                                             type="button"
                                             onClick={() => onEditIndicator(cat.id, directParam)}
-                                            className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition cursor-pointer"
+                                            className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded transition cursor-pointer"
                                             title="Edit Parameter & Skala Nilai"
                                           >
                                             <Edit3 className="w-3.5 h-3.5" />
@@ -696,12 +691,12 @@ export function KpiExcelTable({
                                     )}
                                   </div>
                                   {directParam?.description && (
-                                    <p className="text-[10px] text-slate-500 font-normal mt-0.5 leading-snug line-clamp-2">
+                                    <p className="text-[11px] text-slate-400 font-normal mt-0.5 leading-snug line-clamp-2">
                                       {directParam.description}
                                     </p>
                                   )}
                                   {integrity.hasIssue && (
-                                    <div className="mt-1 text-[10px] text-amber-700 bg-amber-100/80 px-1.5 py-0.5 rounded border border-amber-300">
+                                    <div className="mt-1 text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
                                       {integrity.message}
                                     </div>
                                   )}
@@ -709,7 +704,7 @@ export function KpiExcelTable({
                               )}
 
                               {/* 2. Kriteria Penilaian */}
-                              <td className="px-3 py-1.5 align-middle border border-slate-200 text-slate-700">
+                              <td className="px-3.5 py-2 align-middle border border-slate-200/80 text-slate-700">
                                 {band ? (
                                   <div className="flex items-center justify-between gap-2">
                                     {isEdit &&
@@ -740,7 +735,7 @@ export function KpiExcelTable({
                                           }
                                         }}
                                         autoFocus
-                                        className="w-full px-2 py-0.5 text-xs rounded bg-white border border-blue-500 ring-2 ring-blue-400 focus:outline-none"
+                                        className="w-full px-2 py-0.5 text-xs rounded bg-white border border-slate-300 focus:border-slate-500 focus:outline-none"
                                       />
                                     ) : (
                                       <span
@@ -750,7 +745,7 @@ export function KpiExcelTable({
                                             setCellDraft(band.label || "");
                                           }
                                         }}
-                                        className={isEdit ? "cursor-text hover:text-blue-700" : ""}
+                                        className={isEdit ? "cursor-text hover:text-slate-900" : ""}
                                         title={isEdit ? "Klik untuk edit kriteria" : undefined}
                                       >
                                         {(() => {
@@ -758,30 +753,14 @@ export function KpiExcelTable({
                                             parseBandOperatorDetails(band, directParam?.unit);
                                           return (
                                             <span className="inline-flex items-center gap-1.5 flex-wrap">
-                                              <span
-                                                className={`inline-flex items-center gap-0.5 font-mono font-bold text-[10px] px-1.5 py-0.2 rounded border shadow-2xs select-none shrink-0 ${
-                                                  isUnrecognizedOperator || operatorSymbol === "?"
-                                                    ? "bg-amber-100 text-amber-900 border-amber-400"
-                                                    : operatorSymbol === ">=" || operatorSymbol === "≥" || operatorSymbol === ">"
-                                                    ? "bg-emerald-50 text-emerald-800 border-emerald-300"
-                                                    : operatorSymbol === "<=" || operatorSymbol === "≤" || operatorSymbol === "<"
-                                                    ? "bg-blue-50 text-blue-800 border-blue-300"
-                                                    : operatorSymbol === "="
-                                                    ? "bg-indigo-50 text-indigo-800 border-indigo-300"
-                                                    : operatorSymbol === "Rentang"
-                                                    ? "bg-purple-50 text-purple-800 border-purple-300"
-                                                    : "bg-slate-100 text-slate-800 border-slate-300"
-                                                }`}
-                                                title={`Operator: ${operatorSymbol}`}
-                                              >
-                                                <span className="text-[9px] uppercase font-bold text-slate-500 mr-0.5">Op:</span>
-                                                <span>{operatorSymbol}</span>
+                                              <span className="text-xs font-medium text-slate-500 select-none">
+                                                {operatorSymbol}
                                               </span>
-                                              <span className="font-semibold text-xs text-slate-900">
+                                              <span className="text-xs font-normal text-slate-800">
                                                 {criteriaValue}
                                               </span>
                                               {(isUnrecognizedOperator || operatorSymbol === "?") && (
-                                                <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-amber-900 bg-amber-50 px-1 py-0.2 rounded border border-amber-300">
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-700 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">
                                                   <AlertTriangle className="w-2.5 h-2.5 text-amber-600 shrink-0" />
                                                   <span>Perlu pemeriksaan manual</span>
                                                 </span>
@@ -799,7 +778,7 @@ export function KpiExcelTable({
                                           <button
                                             type="button"
                                             onClick={() => onEditCriteriaBand(band, directParam)}
-                                            className="p-1 text-slate-400 hover:text-slate-800 rounded transition cursor-pointer"
+                                            className="p-1 text-slate-400 hover:text-slate-700 rounded transition cursor-pointer"
                                             title="Edit Kriteria Modal"
                                           >
                                             <Edit3 className="w-3 h-3" />
@@ -838,7 +817,7 @@ export function KpiExcelTable({
                               {isPenilaian && isFirst && (
                                 <td
                                   rowSpan={totalRowSpan}
-                                  className="px-2.5 py-1.5 align-middle text-center border border-slate-200 bg-white"
+                                  className="px-2.5 py-1.5 align-middle text-center border border-slate-200/80 bg-white"
                                 >
                                   {directParam && onAssessmentChange ? (
                                     <input
@@ -850,10 +829,10 @@ export function KpiExcelTable({
                                         })
                                       }
                                       placeholder="0"
-                                      className="w-full px-1.5 py-1 text-xs text-center font-mono font-bold bg-slate-50 border border-slate-200 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                      className="w-full px-2 py-1 text-xs text-center font-normal text-slate-800 bg-white border border-slate-200 rounded focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-300"
                                     />
                                   ) : (
-                                    <span className="font-mono text-slate-700 font-bold">
+                                    <span className="text-slate-800 text-xs font-normal">
                                       {directParam
                                         ? assessmentValues[directParam.id]?.actualValue ?? "-"
                                         : "-"}
@@ -863,7 +842,7 @@ export function KpiExcelTable({
                               )}
 
                               {/* 4. Skor */}
-                              <td className="px-2 py-1.5 align-middle text-center font-bold text-slate-800 border border-slate-200 font-mono">
+                              <td className="px-2 py-1.5 align-middle text-center text-xs font-normal text-slate-700 border border-slate-200/80">
                                 {band ? (
                                   isEdit &&
                                   editingCell?.type === "bandScore" &&
@@ -893,7 +872,7 @@ export function KpiExcelTable({
                                         }
                                       }}
                                       autoFocus
-                                      className="w-12 px-1 py-0.5 text-xs text-center font-mono font-bold rounded bg-white border border-blue-500 ring-2 ring-blue-400 focus:outline-none"
+                                      className="w-12 px-1 py-0.5 text-xs text-center font-normal rounded bg-white text-slate-800 border border-slate-300 focus:outline-none"
                                     />
                                   ) : (
                                     <span
@@ -903,7 +882,7 @@ export function KpiExcelTable({
                                           setCellDraft(String(band.score || "0"));
                                         }
                                       }}
-                                      className={isEdit ? "cursor-text hover:text-blue-700" : ""}
+                                      className={isEdit ? "cursor-text hover:text-slate-900" : ""}
                                       title={isEdit ? "Klik untuk edit skor" : undefined}
                                     >
                                       {band.score}
@@ -918,7 +897,7 @@ export function KpiExcelTable({
                               {isFirst && (
                                 <td
                                   rowSpan={totalRowSpan}
-                                  className="px-2 py-1.5 align-middle text-center font-bold text-slate-900 font-mono border border-slate-200 bg-white"
+                                  className="px-2 py-1.5 align-middle text-center text-xs font-medium text-slate-800 border border-slate-200/80 bg-white"
                                 >
                                   {catWeightPct}%
                                 </td>
@@ -928,7 +907,7 @@ export function KpiExcelTable({
                               {isPenilaian && isFirst && (
                                 <td
                                   rowSpan={totalRowSpan}
-                                  className="px-2.5 py-1.5 align-middle text-center font-mono font-bold text-emerald-700 border border-slate-200 bg-white"
+                                  className="px-2.5 py-1.5 align-middle text-center text-xs font-medium text-slate-900 border border-slate-200/80 bg-white"
                                 >
                                   {directParam &&
                                   assessmentValues[directParam.id]?.finalScore !== undefined &&
@@ -943,14 +922,14 @@ export function KpiExcelTable({
 
                         {/* Baris + Tambah Kriteria di dalam Grid Excel */}
                         {isEdit && directParam && (
-                          <tr className="divide-x divide-slate-200 bg-slate-50/40 hover:bg-blue-50/40 transition-colors h-8">
+                          <tr className="divide-x divide-slate-200/70 bg-slate-50/40 hover:bg-slate-100/60 transition-colors h-8">
                             <td
                               onClick={() => onAddCriteriaBand?.(directParam.id)}
-                              className="h-8 px-3 py-1.5 text-[11px] text-blue-600 hover:underline cursor-pointer select-none font-medium border border-slate-200 text-left align-middle"
+                              className="h-8 px-3.5 py-1.5 text-xs text-slate-500 hover:text-slate-800 hover:underline cursor-pointer select-none font-normal border border-slate-200/80 text-left align-middle"
                             >
                               + Tambah kriteria
                             </td>
-                            <td className="h-8 border border-slate-200 bg-slate-50/20" />
+                            <td className="h-8 border border-slate-200/80 bg-slate-50/20" />
                           </tr>
                         )}
                       </React.Fragment>
@@ -1040,7 +1019,7 @@ export function KpiExcelTable({
                                     <div className="flex items-start justify-between gap-1.5">
                                       <div className="flex-1 min-w-0">
                                         <div className="flex items-start gap-1 min-w-0">
-                                          <span className="font-mono font-semibold text-blue-700 dark:text-blue-400 text-xs shrink-0 select-none mt-0.5">
+                                          <span className="text-slate-500 font-medium text-xs shrink-0 select-none mt-0.5">
                                             {catIdx + 1}.{paramIdx + 1}
                                           </span>
 
@@ -1071,7 +1050,7 @@ export function KpiExcelTable({
                                                 }
                                               }}
                                               autoFocus
-                                              className="px-2 py-0.5 text-xs font-semibold rounded bg-white text-blue-950 border border-blue-500 ring-2 ring-blue-400 focus:outline-none w-full"
+                                              className="px-2 py-0.5 text-xs font-medium rounded bg-white text-slate-900 border border-slate-300 focus:border-slate-500 focus:outline-none w-full"
                                             />
                                           ) : (
                                             <span
@@ -1084,8 +1063,8 @@ export function KpiExcelTable({
                                                   setCellDraft(param.name);
                                                 }
                                               }}
-                                              className={`font-semibold text-blue-950 dark:text-blue-100 line-clamp-2 leading-tight ${
-                                                isEdit ? "cursor-text hover:text-blue-700 dark:hover:text-blue-300" : ""
+                                              className={`font-medium text-slate-800 line-clamp-2 leading-tight ${
+                                                isEdit ? "cursor-text hover:text-slate-900" : ""
                                               }`}
                                               title={param.name}
                                             >
@@ -1095,7 +1074,7 @@ export function KpiExcelTable({
                                         </div>
 
                                         {param.unit && (
-                                          <span className="text-[10px] text-blue-700/75 dark:text-blue-300 font-mono ml-4 font-medium block mt-0.5">
+                                          <span className="text-[10px] text-slate-500 ml-4 font-normal block mt-0.5">
                                             ({param.unit})
                                           </span>
                                         )}
@@ -1182,7 +1161,7 @@ export function KpiExcelTable({
                                             }
                                           }}
                                           autoFocus
-                                          className="w-full px-2 py-0.5 text-xs rounded bg-white border border-blue-500 ring-2 ring-blue-400 focus:outline-none"
+                                          className="w-full px-2 py-0.5 text-xs rounded bg-white border border-slate-300 focus:border-slate-500 focus:outline-none"
                                         />
                                       ) : (
                                         <span
@@ -1195,7 +1174,7 @@ export function KpiExcelTable({
                                               setCellDraft(band.label || "");
                                             }
                                           }}
-                                          className={isEdit ? "cursor-text hover:text-blue-700" : ""}
+                                          className={isEdit ? "cursor-text hover:text-slate-900" : ""}
                                           title={isEdit ? "Klik untuk edit kriteria" : undefined}
                                         >
                                           {(() => {
@@ -1204,29 +1183,20 @@ export function KpiExcelTable({
                                             return (
                                               <span className="inline-flex items-center gap-1.5 flex-wrap">
                                                 <span
-                                                  className={`inline-flex items-center gap-0.5 font-mono font-bold text-[10px] px-1.5 py-0.2 rounded border shadow-2xs select-none shrink-0 ${
+                                                  className={`inline-flex items-center gap-0.5 text-[11px] px-1.5 py-0.5 rounded border select-none shrink-0 ${
                                                     isUnrecognizedOperator || operatorSymbol === "?"
-                                                      ? "bg-amber-100 text-amber-900 border-amber-400"
-                                                      : operatorSymbol === ">=" || operatorSymbol === "≥" || operatorSymbol === ">"
-                                                      ? "bg-emerald-50 text-emerald-800 border-emerald-300"
-                                                      : operatorSymbol === "<=" || operatorSymbol === "≤" || operatorSymbol === "<"
-                                                      ? "bg-blue-50 text-blue-800 border-blue-300"
-                                                      : operatorSymbol === "="
-                                                      ? "bg-indigo-50 text-indigo-800 border-indigo-300"
-                                                      : operatorSymbol === "Rentang"
-                                                      ? "bg-purple-50 text-purple-800 border-purple-300"
-                                                      : "bg-slate-100 text-slate-800 border-slate-300"
+                                                      ? "bg-amber-50 text-amber-800 border-amber-300"
+                                                      : "bg-slate-50 text-slate-600 border-slate-200"
                                                   }`}
                                                   title={`Operator: ${operatorSymbol}`}
                                                 >
-                                                  <span className="text-[9px] uppercase font-bold text-slate-500 mr-0.5">Op:</span>
                                                   <span>{operatorSymbol}</span>
                                                 </span>
-                                                <span className="font-semibold text-xs text-slate-900">
+                                                <span className="text-xs text-slate-800">
                                                   {criteriaValue}
                                                 </span>
                                                 {(isUnrecognizedOperator || operatorSymbol === "?") && (
-                                                  <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-amber-900 bg-amber-50 px-1 py-0.2 rounded border border-amber-300">
+                                                  <span className="inline-flex items-center gap-1 text-[9px] font-medium text-amber-800 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">
                                                     <AlertTriangle className="w-2.5 h-2.5 text-amber-600 shrink-0" />
                                                     <span>Perlu pemeriksaan manual</span>
                                                   </span>
@@ -1303,7 +1273,7 @@ export function KpiExcelTable({
                                         <button
                                           type="button"
                                           onClick={() => onEditIndicator(cat.id, param)}
-                                          className="text-[10px] font-bold text-blue-600 hover:underline not-italic cursor-pointer"
+                                          className="text-xs text-slate-600 hover:text-slate-900 hover:underline not-italic cursor-pointer"
                                         >
                                           + Tambah Skala Nilai
                                         </button>
@@ -1328,10 +1298,10 @@ export function KpiExcelTable({
                                           })
                                         }
                                         placeholder="0"
-                                        className="w-full px-1.5 py-1 text-xs text-center font-mono font-bold bg-slate-50 border border-slate-200 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                        className="w-full px-1.5 py-1 text-xs text-center font-normal bg-white border border-slate-200 rounded focus:border-slate-400 focus:outline-none"
                                       />
                                     ) : (
-                                      <span className="font-mono text-slate-700 font-bold">
+                                      <span className="text-slate-800 font-normal">
                                         {assessmentValues[param.id]?.actualValue ?? "-"}
                                       </span>
                                     )}
@@ -1339,7 +1309,7 @@ export function KpiExcelTable({
                                 )}
 
                                 {/* 4. Skor */}
-                                <td className="px-2 py-1.5 align-middle text-center font-bold text-slate-800 border border-slate-200 font-mono">
+                                <td className="px-2 py-1.5 align-middle text-center text-slate-800 border border-slate-200 font-normal">
                                   {band ? (
                                     isEdit &&
                                     editingCell?.type === "bandScore" &&
@@ -1369,7 +1339,7 @@ export function KpiExcelTable({
                                           }
                                         }}
                                         autoFocus
-                                        className="w-12 px-1 py-0.5 text-xs text-center font-mono font-bold rounded bg-white border border-blue-500 ring-2 ring-blue-400 focus:outline-none"
+                                        className="w-12 px-1 py-0.5 text-xs text-center rounded bg-white border border-slate-300 focus:border-slate-500 focus:outline-none"
                                       />
                                     ) : (
                                       <span
@@ -1379,7 +1349,7 @@ export function KpiExcelTable({
                                             setCellDraft(String(band.score || "0"));
                                           }
                                         }}
-                                        className={isEdit ? "cursor-text hover:text-blue-700" : ""}
+                                        className={isEdit ? "cursor-text hover:text-slate-900" : ""}
                                         title={isEdit ? "Klik untuk edit skor" : undefined}
                                       >
                                         {band.score}
@@ -1394,10 +1364,10 @@ export function KpiExcelTable({
                                 {isFirst && (
                                   <td
                                     rowSpan={totalRowSpan}
-                                    className={`px-2 py-1.5 align-middle text-center font-bold font-mono border border-slate-200 ${
+                                    className={`px-2 py-1.5 align-middle text-center font-normal border border-slate-200 ${
                                       isIndWeightMismatch
                                         ? "bg-amber-50 text-amber-900"
-                                        : "bg-white text-slate-900"
+                                        : "bg-white text-slate-800"
                                     }`}
                                   >
                                     {isEdit &&
@@ -1436,7 +1406,7 @@ export function KpiExcelTable({
                                             }
                                           }}
                                           autoFocus
-                                          className="w-12 px-1 py-0.5 text-xs text-center font-mono font-bold border border-blue-500 ring-2 ring-blue-400 rounded bg-white text-slate-900"
+                                          className="w-12 px-1 py-0.5 text-xs text-center border border-slate-300 focus:border-slate-500 rounded bg-white text-slate-800"
                                         />
                                         <span>%</span>
                                       </div>
@@ -1454,7 +1424,7 @@ export function KpiExcelTable({
                                           }}
                                           className={
                                             isEdit
-                                              ? "cursor-text hover:text-blue-600 hover:underline"
+                                              ? "cursor-text hover:text-slate-900 hover:underline"
                                               : ""
                                           }
                                           title={
@@ -1482,7 +1452,7 @@ export function KpiExcelTable({
                                 {isPenilaian && isFirst && (
                                   <td
                                     rowSpan={totalRowSpan}
-                                    className="px-2.5 py-1.5 align-middle text-center font-mono font-bold text-emerald-700 border border-slate-200 bg-white"
+                                    className="px-2.5 py-1.5 align-middle text-center font-medium text-slate-800 border border-slate-200 bg-white"
                                   >
                                     {assessmentValues[param.id]?.finalScore !== undefined &&
                                     assessmentValues[param.id]?.finalScore !== null
@@ -1496,10 +1466,10 @@ export function KpiExcelTable({
 
                           {/* Baris + Tambah Kriteria di dalam Grid Excel */}
                           {isEdit && (
-                            <tr className="divide-x divide-slate-200 bg-slate-50/40 hover:bg-blue-50/40 transition-colors h-8">
+                            <tr className="divide-x divide-slate-200 bg-slate-50/40 hover:bg-slate-100/40 transition-colors h-8">
                               <td
                                 onClick={() => onAddCriteriaBand?.(param.id)}
-                                className="h-8 px-3 py-1.5 text-[11px] text-blue-600 hover:underline cursor-pointer select-none font-medium border border-slate-200 text-left align-middle"
+                                className="h-8 px-3 py-1.5 text-[11px] text-slate-500 hover:text-slate-800 hover:underline cursor-pointer select-none font-medium border border-slate-200 text-left align-middle"
                               >
                                 + Tambah kriteria
                               </td>
@@ -1512,11 +1482,11 @@ export function KpiExcelTable({
 
                   {/* Baris + Tambah Indikator di dalam Grid Excel di bawah Kategori */}
                   {isExpanded && isEdit && !isDirect && (
-                    <tr className="divide-x divide-slate-200 bg-slate-50/60 hover:bg-blue-50/60 transition-colors h-8">
+                    <tr className="divide-x divide-slate-200 bg-slate-50/60 hover:bg-slate-100/60 transition-colors h-8">
                       <td
                         colSpan={isPenilaian ? 6 : 4}
                         onClick={() => onAddIndicator?.(cat.id)}
-                        className="px-4 py-1.5 text-xs text-blue-700 font-semibold hover:underline cursor-pointer select-none border border-slate-200"
+                        className="px-4 py-1.5 text-xs text-slate-600 font-medium hover:text-slate-900 hover:underline cursor-pointer select-none border border-slate-200"
                       >
                         + Tambah indikator di {cleanCatName}
                       </td>

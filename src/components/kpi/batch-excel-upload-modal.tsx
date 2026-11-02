@@ -7,7 +7,6 @@ import {
   FileSpreadsheet,
   CheckCircle2,
   AlertCircle,
-  HelpCircle,
   AlertTriangle,
   X,
   Loader2,
@@ -599,8 +598,8 @@ export function BatchExcelUploadModal({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-3.5 border-b border-slate-200 bg-white">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-sky-100 flex items-center justify-center text-sky-700 border border-sky-200 shadow-xs shrink-0">
-              <FileSpreadsheet className="w-5 h-5" />
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-700 border border-emerald-200/80 shadow-xs shrink-0">
+              <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
             </div>
             <div>
               <h2 id="modal-title" className="text-base font-bold text-slate-900">
@@ -668,7 +667,7 @@ export function BatchExcelUploadModal({
 
           {/* STEP 1: Upload Dropzone if no workbook parsed yet */}
           {!multiSheetData && (
-            <div className="space-y-6">
+            <div className="py-2">
               <div
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={(e) => {
@@ -678,10 +677,10 @@ export function BatchExcelUploadModal({
                   }
                 }}
                 onClick={() => fileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all ${
+                className={`group border-2 border-dashed rounded-2xl py-14 px-8 text-center cursor-pointer transition-all ${
                   isParsing
-                    ? "border-sky-300 bg-sky-50/50 cursor-wait"
-                    : "border-slate-300 hover:border-sky-500 hover:bg-sky-50/20 bg-slate-50/50"
+                    ? "border-emerald-400 bg-emerald-50/40 cursor-wait"
+                    : "border-slate-300 hover:border-emerald-500 hover:bg-emerald-50/20 bg-slate-50/50"
                 }`}
               >
                 <input
@@ -698,91 +697,27 @@ export function BatchExcelUploadModal({
 
                 {isParsing ? (
                   <div className="flex flex-col items-center justify-center py-6 space-y-3">
-                    <Loader2 className="w-10 h-10 text-sky-600 animate-spin" />
+                    <Loader2 className="w-10 h-10 text-emerald-600 animate-spin" />
                     <p className="text-sm font-semibold text-slate-800">
                       Memindai semua sheet dan mencocokkan ke Master KPI...
                     </p>
-                    <p className="text-xs text-slate-500">Membaca Kolom H, Kolom I s/d T, dan Kolom U per sheet karyawan...</p>
+                    <p className="text-xs text-slate-500">Membaca data dan nilai realisasi per sheet karyawan...</p>
                   </div>
                 ) : (
-                  <div className="flex flex-col items-center justify-center py-4 space-y-3">
-                    <div className="w-16 h-16 rounded-2xl bg-white shadow-xs border border-slate-200 flex items-center justify-center text-slate-600 group-hover:scale-105 transition-transform">
-                      <Upload className="w-8 h-8 text-sky-600" />
+                  <div className="flex flex-col items-center justify-center py-4 space-y-3.5">
+                    <div className="w-16 h-16 rounded-2xl bg-emerald-50/90 border border-emerald-200/80 flex items-center justify-center text-emerald-600 shadow-2xs group-hover:scale-105 group-hover:bg-emerald-100/90 group-hover:border-emerald-300 transition-all duration-200">
+                      <Upload className="w-7 h-7 text-emerald-600 stroke-[2.2]" />
                     </div>
                     <div>
-                      <p className="text-base font-bold text-slate-800">
+                      <p className="text-base font-bold text-slate-800 group-hover:text-emerald-950 transition-colors">
                         Klik untuk unggah atau seret berkas Excel ke sini
                       </p>
-                      <p className="text-xs text-slate-500 mt-1 max-w-xl mx-auto">
-                        Mendukung berkas Excel multi-sheet (1 sheet mewakili 1 karyawan). Sistem akan membaca nama parameter pada Kolom H dan nilai Realisasi pada Kolom U secara otomatis.
+                      <p className="text-xs text-slate-500 mt-1.5 max-w-lg mx-auto leading-relaxed">
+                        Mendukung format berkas Excel multi-sheet (1 sheet mewakili 1 karyawan) untuk pemetaan dan pembacaan otomatis.
                       </p>
                     </div>
                   </div>
                 )}
-              </div>
-
-              {/* Panduan Format Kolom */}
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2">
-                <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
-                  <HelpCircle className="w-4 h-4 text-sky-600" />
-                  Format Standar Lembar Kerja yang Dikenali Sistem:
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-[11px] text-slate-600 border border-slate-200 bg-white rounded-lg">
-                    <thead className="bg-slate-100 text-slate-700 font-semibold border-b border-slate-200">
-                      <tr>
-                        <th className="p-2 border-r border-slate-200 text-left">Kolom H</th>
-                        <th className="p-2 border-r border-slate-200 text-center">Kolom I s/d T (12 Kolom)</th>
-                        <th className="p-2 border-r border-slate-200 text-right">Kolom U (Realisasi)</th>
-                        <th className="p-2 text-right">Kolom V</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 font-mono text-[10.5px]">
-                      <tr>
-                        <td className="p-2 border-r border-slate-200 font-sans font-semibold text-slate-800">
-                          [Nama Parameter KPI]
-                        </td>
-                        <td className="p-2 border-r border-slate-200 text-center text-slate-400">
-                          (Kosong / Header)
-                        </td>
-                        <td className="p-2 border-r border-slate-200 text-right text-slate-400">-</td>
-                        <td className="p-2 text-right text-slate-400">-</td>
-                      </tr>
-                      <tr className="bg-slate-50/50">
-                        <td className="p-2 border-r border-slate-200 font-bold text-sky-800">Type</td>
-                        <td className="p-2 border-r border-slate-200 text-center text-slate-500">
-                          Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec
-                        </td>
-                        <td className="p-2 border-r border-slate-200 text-right font-bold text-sky-800">
-                          Realisasi
-                        </td>
-                        <td className="p-2 text-right text-slate-500">Persentase</td>
-                      </tr>
-                      <tr>
-                        <td className="p-2 border-r border-slate-200 font-semibold text-slate-700">Target</td>
-                        <td className="p-2 border-r border-slate-200 text-center text-slate-500">
-                          Target Bulanan (opsional)
-                        </td>
-                        <td className="p-2 border-r border-slate-200 text-right font-bold text-slate-700">
-                          Target Tahunan
-                        </td>
-                        <td className="p-2 text-right text-slate-400">-</td>
-                      </tr>
-                      <tr>
-                        <td className="p-2 border-r border-slate-200 font-semibold text-slate-700">
-                          Actual / Aktual
-                        </td>
-                        <td className="p-2 border-r border-slate-200 text-center text-emerald-700">
-                          Realisasi Bulanan (Jan s/d Des)
-                        </td>
-                        <td className="p-2 border-r border-slate-200 text-right font-bold text-emerald-700">
-                          Nilai Realisasi Tahunan
-                        </td>
-                        <td className="p-2 text-right text-slate-600">% Capaian</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
               </div>
             </div>
           )}

@@ -428,7 +428,7 @@ export function ScoringBandsEditor({
                 return (
                   <tr key={idx} className="hover:bg-slate-50/60 transition-colors">
                     {/* Nomor */}
-                    <td className="py-2 px-3 text-center font-mono text-slate-400 text-xs font-semibold">
+                    <td className="py-2 px-3 text-center text-slate-400 text-xs font-normal">
                       {idx + 1}
                     </td>
 
@@ -513,7 +513,7 @@ export function ScoringBandsEditor({
                               value={band.minValue}
                               onChange={(e) => handleUpdateBand(idx, "minValue", e.target.value)}
                               placeholder="3"
-                              className="w-16 px-1.5 py-1 text-xs font-mono font-medium text-slate-800 text-center focus:outline-none"
+                              className="w-16 px-1.5 py-1 text-xs font-normal text-slate-800 text-center focus:outline-none"
                             />
                             {unitSuffix && (
                               <span className="px-1.5 py-1 bg-sky-50/70 border-l border-slate-200 text-[11px] font-bold text-sky-800 select-none">
@@ -536,7 +536,7 @@ export function ScoringBandsEditor({
                               value={band.maxValue}
                               onChange={(e) => handleUpdateBand(idx, "maxValue", e.target.value)}
                               placeholder="6"
-                              className="w-16 px-1.5 py-1 text-xs font-mono font-medium text-slate-800 text-center focus:outline-none"
+                              className="w-16 px-1.5 py-1 text-xs font-normal text-slate-800 text-center focus:outline-none"
                             />
                             {unitSuffix && (
                               <span className="px-1.5 py-1 bg-sky-50/70 border-l border-slate-200 text-[11px] font-bold text-sky-800 select-none">
@@ -571,7 +571,7 @@ export function ScoringBandsEditor({
                                 onChangeBands(updated);
                               }}
                               placeholder="3"
-                              className="w-24 px-2 py-1 text-xs font-mono font-medium text-slate-800 text-center focus:outline-none"
+                              className="w-24 px-2 py-1 text-xs font-normal text-slate-800 text-center focus:outline-none"
                             />
                             {unitSuffix && (
                               <span className="px-2 py-1 bg-sky-50/70 border-l border-slate-200 text-[11px] font-bold text-sky-800 select-none">
@@ -605,7 +605,7 @@ export function ScoringBandsEditor({
                                 onChangeBands(updated);
                               }}
                               placeholder="6"
-                              className="w-24 px-2 py-1 text-xs font-mono font-medium text-slate-800 text-center focus:outline-none"
+                              className="w-24 px-2 py-1 text-xs font-normal text-slate-800 text-center focus:outline-none"
                             />
                             {unitSuffix && (
                               <span className="px-2 py-1 bg-sky-50/70 border-l border-slate-200 text-[11px] font-bold text-sky-800 select-none">
@@ -630,7 +630,7 @@ export function ScoringBandsEditor({
                         value={band.score}
                         onChange={(e) => handleUpdateBand(idx, "score", e.target.value)}
                         placeholder={idx === 0 ? "25" : idx === 1 ? "15" : "5"}
-                        className="w-16 rounded-lg border border-slate-200 bg-white px-1.5 py-1.5 text-xs font-mono font-bold text-slate-900 text-center focus:border-sky-500 focus:outline-none transition shadow-2xs"
+                        className="w-16 rounded-lg border border-slate-200 bg-white px-1.5 py-1.5 text-xs font-normal text-slate-900 text-center focus:border-sky-500 focus:outline-none transition shadow-2xs"
                       />
                     </td>
 

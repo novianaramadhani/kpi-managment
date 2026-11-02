@@ -798,8 +798,10 @@ export function buildFormRealisasiActualWorksheet(data: KpiMatrixSheetData): {
     rowsHeight[currentR] = { hpt: 20 };
     currentR++;
 
+    const hasSubIndicators = cat.indicators.length > 1;
+
     cat.indicators.forEach((ind, indIdx) => {
-      const noStr = `${cat.number}.${indIdx + 1}`;
+      const noStr = hasSubIndicators ? `${cat.number}.${indIdx + 1}` : `${cat.number}`;
       const indKey = ind.id ?? `${cat.number}_${indIdx}`;
       const indWeightFrac = ind.weight > 1 ? ind.weight / 100 : ind.weight;
       const hasTarget = ind.target !== null && ind.target !== undefined && String(ind.target).trim() !== "";
@@ -1069,8 +1071,10 @@ export function buildFormPenilaianWorksheet(
     rowsHeight[currentR] = { hpt: 20 };
     currentR++;
 
+    const hasSubIndicators = cat.indicators.length > 1;
+
     cat.indicators.forEach((ind, indIdx) => {
-      const noStr = `${cat.number}.${indIdx + 1}`;
+      const noStr = hasSubIndicators ? `${cat.number}.${indIdx + 1}` : `${cat.number}`;
       const indKey = ind.id ?? `${cat.number}_${indIdx}`;
       const indWeightFrac = ind.weight > 1 ? ind.weight / 100 : ind.weight;
       const hasTarget = ind.target !== null && ind.target !== undefined && String(ind.target).trim() !== "";
@@ -1126,7 +1130,8 @@ export function buildFormPenilaianWorksheet(
       setCell(currentR, 0, { t: "s", v: noStr, s: styleCellCenter });
       setCell(currentR, 1, { t: "s", v: cat.name, s: styleCellLeft });
       setCell(currentR, 2, { t: "n", v: catWeightFrac, z: "0%", s: styleCellBoldCenter });
-      setCell(currentR, 3, { t: "s", v: ind.name, s: styleCellLeft });
+      // Jika memang tidak ada sub-nya, kosongkan kolom Indikator agar tidak menduplikasi kolom Parameter
+      setCell(currentR, 3, { t: "s", v: hasSubIndicators ? ind.name : "", s: styleCellLeft });
       setCell(currentR, 4, { t: "n", v: indWeightFrac, z: "0%", s: styleCellBoldCenter });
 
       // Col F (5): Target Tahunan (FORMULA LINK KE SHEET FORM REALISASI ACTUAL!)

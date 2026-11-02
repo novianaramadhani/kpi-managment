@@ -851,6 +851,253 @@ export function formatCriteriaNumber(num: number): string {
 }
 
 /**
+ * Intelligently auto-chains criteria boundaries across all rows.
+ * When the user selects an operator on any row (e.g. '=', 'Range', '<', '>'),
+ * the system automatically calculates and fills the range boundaries and subsequent values
+ * to eliminate gap and overlap errors.
+ */
+export function autoChainCriteria(params: {
+  rows: CriteriaItem[];
+  direction?: string;
+  measurementType?: string;
+  unit?: string;
+  changedIndex?: number;
+  changedField?: string;
+}): CriteriaItem[] {
+  const {
+    rows,
+    direction = "HIGHER_IS_BETTER",
+    measurementType = "PERCENTAGE",
+    unit = "%",
+    changedIndex = 0,
+    changedField = "",
+  } = params;
+
+  if (!rows || rows.length === 0) return [];
+  if (rows.length === 1) return rows;
+
+  const cleanMt = (measurementType || "").toUpperCase();
+  const cleanU = (unit || "").toLowerCase();
+  const isText =
+    cleanMt === "TEXT" ||
+    cleanMt === "QUALITATIVE" ||
+    cleanMt === "KUALITATIF" ||
+    cleanU === "teks" ||
+    cleanU === "text" ||
+    rows.some((r) => r.operator === "TEXT" || r.operator === "NEQ" || r.operator === "CONTAINS");
+
+  if (isText) {
+    return rows;
+  }
+
+  const result: CriteriaItem[] = rows.map((r) => ({ ...r }));
+  const dir = direction.toUpperCase();
+  const isLowerBetter = dir === "LOWER_IS_BETTER";
+
+  // Reference value from Row 0
+  const row0 = result[0];
+  let baseVal: number | null = null;
+  if (row0.operator === "LT" || row0.operator === "LTE") {
+    baseVal = parseNum(row0.maxValue || row0.minValue);
+  } else {
+    baseVal = parseNum(row0.minValue || row0.maxValue);
+  }
+
+  if (baseVal === null) {
+    baseVal = measurementType === "CURRENCY" ? 25000000 : (isLowerBetter ? 0 : 100);
+  }
+
+  // Ensure Row 0 has value formatted
+  if (row0.operator === "LT" || row0.operator === "LTE") {
+    if (!row0.maxValue && !row0.minValue) row0.maxValue = String(baseVal);
+  } else if (row0.operator === "BETWEEN") {
+    if (!row0.maxValue) row0.maxValue = String(baseVal);
+    if (!row0.minValue) row0.minValue = String(Math.max(0, baseVal - 5));
+  } else {
+    if (!row0.minValue && !row0.maxValue) row0.minValue = String(baseVal);
+  }
+
+  // Chain rows from 1 to N-1
+  for (let i = 1; i < result.length; i++) {
+    const prev = result[i - 1];
+    const curr = result[i];
+
+    if (isLowerBetter) {
+      // LOWER IS BETTER: Best score at top (lowest values)
+      const prevVal = parseNum(prev.maxValue || prev.minValue) ?? baseVal;
+
+      if (curr.operator === "EQ") {
+        curr.minValue = String(prevVal);
+        curr.maxValue = String(prevVal);
+      } else if (curr.operator === "GT") {
+        curr.minValue = String(prevVal);
+        curr.maxValue = "";
+      } else if (curr.operator === "GTE") {
+        curr.minValue = String(prevVal + 1);
+        curr.maxValue = "";
+      } else if (curr.operator === "BETWEEN") {
+        const step = prevVal > 20 ? 5 : 1;
+        const low = prev.operator === "LTE" ? prevVal + 1 : prevVal;
+        const existingHigh = parseNum(curr.maxValue);
+        const high =
+          existingHigh && existingHigh > low
+            ? existingHigh
+            : low + (prevVal > 0 ? prevVal : step * 2);
+        curr.minValue = String(low);
+        curr.maxValue = String(high);
+      }
+    } else {
+      // HIGHER IS BETTER (Default): Best score at top (highest values)
+      if (prev.operator === "GT") {
+        // e.g. Row 0 is > 95
+        const t = parseNum(prev.minValue || prev.maxValue) ?? baseVal;
+        if (curr.operator === "EQ") {
+          curr.minValue = String(t);
+          curr.maxValue = String(t);
+        } else if (curr.operator === "LT") {
+          curr.minValue = "";
+          curr.maxValue = String(t);
+        } else if (curr.operator === "LTE") {
+          curr.minValue = "";
+          curr.maxValue = String(t);
+        } else if (curr.operator === "BETWEEN") {
+          const high = t;
+          const existingLow = parseNum(curr.minValue);
+          const step = t > 20 ? 5 : 1;
+          const low =
+            existingLow && existingLow < high
+              ? existingLow
+              : Math.max(0, high - step);
+          curr.minValue = String(low);
+          curr.maxValue = String(high);
+        }
+      } else if (prev.operator === "EQ") {
+        // e.g. Row 1 is = 95
+        const t = parseNum(prev.minValue || prev.maxValue) ?? baseVal;
+        if (curr.operator === "LT") {
+          curr.minValue = "";
+          curr.maxValue = String(t);
+        } else if (curr.operator === "LTE") {
+          curr.minValue = "";
+          curr.maxValue = String(t - 1);
+        } else if (curr.operator === "BETWEEN") {
+          const high = t - 1;
+          const step = t > 20 ? 5 : 1;
+          const existingLow = parseNum(curr.minValue);
+          const low =
+            existingLow && existingLow < high
+              ? existingLow
+              : Math.max(0, high - step);
+          curr.minValue = String(low);
+          curr.maxValue = String(high);
+        }
+      } else if (prev.operator === "GTE") {
+        // e.g. Row 0 is >= 100
+        const t = parseNum(prev.minValue || prev.maxValue) ?? baseVal;
+        if (curr.operator === "LT") {
+          curr.minValue = "";
+          curr.maxValue = String(t);
+        } else if (curr.operator === "LTE") {
+          curr.minValue = "";
+          curr.maxValue = String(t - 1);
+        } else if (curr.operator === "EQ") {
+          curr.minValue = String(t - 1);
+          curr.maxValue = String(t - 1);
+        } else if (curr.operator === "BETWEEN") {
+          const high = t - 1;
+          const step = t > 20 ? 5 : 1;
+          const existingLow = parseNum(curr.minValue);
+          const low =
+            existingLow && existingLow < high
+              ? existingLow
+              : Math.max(0, high - (step - 1));
+          curr.minValue = String(low);
+          curr.maxValue = String(high);
+        }
+      } else if (prev.operator === "BETWEEN") {
+        // e.g. Row 1 is BETWEEN 95 s/d 99
+        const prevLow = parseNum(prev.minValue) ?? Math.max(0, baseVal - 5);
+        if (curr.operator === "LT") {
+          curr.minValue = "";
+          curr.maxValue = String(prevLow);
+        } else if (curr.operator === "LTE") {
+          curr.minValue = "";
+          curr.maxValue = String(Math.max(0, prevLow - 1));
+        } else if (curr.operator === "EQ") {
+          curr.minValue = String(Math.max(0, prevLow - 1));
+          curr.maxValue = String(Math.max(0, prevLow - 1));
+        } else if (curr.operator === "BETWEEN") {
+          const high = Math.max(0, prevLow - 1);
+          const step = high > 20 ? 5 : 1;
+          const existingLow = parseNum(curr.minValue);
+          const low =
+            existingLow && existingLow < high
+              ? existingLow
+              : Math.max(0, high - (step - 1));
+          curr.minValue = String(low);
+          curr.maxValue = String(high);
+        }
+      }
+    }
+
+    // Default scores cascading if empty
+    if (!curr.score || curr.score === "0") {
+      const prevScore = parseNum(prev.score) ?? 25;
+      curr.score = String(Math.max(0, Math.round(prevScore * 0.6)));
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Automatically fixes gaps and misaligned boundaries across criteria rows.
+ * Seamlessly connects adjacent thresholds and sets correct boundary values.
+ */
+export function autoFixCriteria(params: {
+  rows: CriteriaItem[];
+  direction?: string;
+  measurementType?: string;
+  unit?: string;
+}): CriteriaItem[] {
+  const {
+    rows,
+    direction = "HIGHER_IS_BETTER",
+    measurementType = "PERCENTAGE",
+    unit = "%",
+  } = params;
+
+  if (!rows || rows.length === 0) return [];
+  if (rows.length === 1) return rows;
+
+  const cleanMt = (measurementType || "").toUpperCase();
+  const cleanU = (unit || "").toLowerCase();
+  const isText =
+    cleanMt === "TEXT" ||
+    cleanMt === "QUALITATIVE" ||
+    cleanMt === "KUALITATIF" ||
+    cleanU === "teks" ||
+    cleanU === "text" ||
+    rows.some((r) => r.operator === "TEXT" || r.operator === "NEQ" || r.operator === "CONTAINS");
+
+  if (isText) return rows;
+
+  const cleanedRows: CriteriaItem[] = rows.map((r) => ({
+    ...r,
+    label: undefined,
+    minInclusive: true,
+    maxInclusive: true,
+  }));
+
+  return autoChainCriteria({
+    rows: cleanedRows,
+    direction,
+    measurementType,
+    unit,
+  });
+}
+
+/**
  * Auto-fills subsequent criteria rows based on the first row's configuration,
  * KPI direction, measurement type, unit, and target score.
  *
@@ -1407,12 +1654,15 @@ export function validateStructuredCriteria(
       let minInc = row.minInclusive ?? true;
       let maxInc = row.maxInclusive ?? true;
 
-      const parsedR = parseRangeValues(row.label || row.minValue || row.maxValue);
-      if (parsedR) {
-        if (minN === null) minN = parsedR.min;
-        if (maxN === null) maxN = parsedR.max;
-        if (row.minInclusive === undefined) minInc = parsedR.minInclusive;
-        if (row.maxInclusive === undefined) maxInc = parsedR.maxInclusive;
+      // Only fallback to parsing row.label if minN or maxN is missing
+      if (minN === null || maxN === null) {
+        const parsedR = parseRangeValues(row.label || row.minValue || row.maxValue);
+        if (parsedR) {
+          if (minN === null) minN = parsedR.min;
+          if (maxN === null) maxN = parsedR.max;
+          if (row.minInclusive === undefined) minInc = parsedR.minInclusive;
+          if (row.maxInclusive === undefined) maxInc = parsedR.maxInclusive;
+        }
       }
 
       if (minN === null || maxN === null) return;
@@ -1421,35 +1671,35 @@ export function validateStructuredCriteria(
       lowInc = minInc;
       highInc = maxInc;
       const cleanU = unit ? ` ${unit}` : "";
-      label = label || `${minInc ? "" : "> "}${low} s/d ${maxInc ? "" : "< "}${high}${cleanU}`.trim();
+      label = `${minInc ? "" : "> "}${low} s/d ${maxInc ? "" : "< "}${high}${cleanU}`.trim();
     } else if (op === "LT") {
       const val = parseNum(row.maxValue || row.minValue) ?? extractSingleNumericValue(row.label);
       if (val === null) return;
       high = val;
       highInc = false;
       const cleanU = unit ? ` ${unit}` : "";
-      label = label || `< ${high}${cleanU}`;
+      label = `< ${high}${cleanU}`;
     } else if (op === "LTE") {
       const val = parseNum(row.maxValue || row.minValue) ?? extractSingleNumericValue(row.label);
       if (val === null) return;
       high = val;
       highInc = true;
       const cleanU = unit ? ` ${unit}` : "";
-      label = label || `≤ ${high}${cleanU}`;
+      label = `≤ ${high}${cleanU}`;
     } else if (op === "GT") {
       const val = parseNum(row.minValue || row.maxValue) ?? extractSingleNumericValue(row.label);
       if (val === null) return;
       low = val;
       lowInc = false;
       const cleanU = unit ? ` ${unit}` : "";
-      label = label || `> ${low}${cleanU}`;
+      label = `> ${low}${cleanU}`;
     } else if (op === "GTE") {
       const val = parseNum(row.minValue || row.maxValue) ?? extractSingleNumericValue(row.label);
       if (val === null) return;
       low = val;
       lowInc = true;
       const cleanU = unit ? ` ${unit}` : "";
-      label = label || `≥ ${low}${cleanU}`;
+      label = `≥ ${low}${cleanU}`;
     } else if (op === "EQ") {
       const val = parseNum(row.minValue || row.maxValue) ?? extractSingleNumericValue(row.label);
       if (val === null) return;
@@ -1458,7 +1708,7 @@ export function validateStructuredCriteria(
       lowInc = true;
       highInc = true;
       const cleanU = unit ? ` ${unit}` : "";
-      label = label || `= ${val}${cleanU}`;
+      label = `= ${val}${cleanU}`;
     } else {
       // Non-numeric operator (e.g. TEXT), skip interval overlap math
       return;
@@ -1535,7 +1785,15 @@ export function validateStructuredCriteria(
       if (cur.high !== Infinity && nxt.low !== -Infinity) {
         const gapSize = nxt.low - cur.high;
 
-        if (gapSize > 1e-6) {
+        // Check if both endpoints are integers and adjacent (e.g. 97 and 98, or 99 and 100)
+        const isDiscreteAdjacent =
+          Number.isInteger(cur.high) &&
+          Number.isInteger(nxt.low) &&
+          cur.highInclusive &&
+          nxt.lowInclusive &&
+          Math.abs(gapSize - 1) <= 1e-6;
+
+        if (gapSize > 1e-6 && !isDiscreteAdjacent) {
           // There is a numeric gap between cur.high and nxt.low
           warnings.push(
             `Celah (Gap): Rentang nilai ${cur.high}${unit} s/d ${nxt.low}${unit} belum tercakup antara Baris #${cur.idx} (${cur.label}) dan Baris #${nxt.idx} (${nxt.label}).`

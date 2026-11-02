@@ -188,11 +188,15 @@ function formatValueWithUnit(val: number | null | undefined, unit: string | null
 }
 
 // Helper format target (angka aja)
-function formatTargetNumber(target: number | null | undefined, unit: string | null | undefined): string {
-  if (target === null || target === undefined || Number.isNaN(Number(target))) return "-";
-  const num = Number(target);
+function formatTargetNumber(target: number | string | null | undefined, unit: string | null | undefined): string {
+  if (target === null || target === undefined) return "-";
+  const str = String(target).trim();
+  if (!str || str === "-" || str === "null" || str === "undefined") return "-";
+  if (Number.isNaN(Number(str))) return str;
+  const num = Number(str);
   const numStr = num.toLocaleString("id-ID", { maximumFractionDigits: 2 });
   if (unit === "%") return `${numStr}%`;
+  if (unit && unit !== "Teks") return `${numStr} ${unit}`;
   return numStr;
 }
 
@@ -3468,23 +3472,23 @@ export function MonthlyAssessmentView({
         <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="border-b border-slate-200 bg-slate-100/80 text-[11px] font-semibold text-slate-600 select-none">
-                <th className="py-2.5 px-3.5 text-left border-r border-slate-200 min-w-[220px]">
+              <tr className="border-b border-[#0F2C59] bg-[#0F2C59] text-xs font-medium text-white select-none">
+                <th className="py-2.5 px-3.5 text-left border-r border-white/20 min-w-[220px]">
                   Parameter / Indikator KPI
                 </th>
-                <th className="py-2.5 px-3 text-left border-r border-slate-200 min-w-[160px]">
+                <th className="py-2.5 px-3 text-left border-r border-white/20 min-w-[160px]">
                   Kriteria Penilaian
                 </th>
-                <th className="py-2.5 px-2 text-center border-r border-slate-200 w-16 min-w-[60px]">
+                <th className="py-2.5 px-2 text-center border-r border-white/20 w-16 min-w-[60px]">
                   Skor
                 </th>
-                <th className="py-2.5 px-2.5 text-center border-r border-slate-200 w-24 min-w-[88px]">
+                <th className="py-2.5 px-2.5 text-center border-r border-white/20 w-24 min-w-[88px]">
                   Realisasi
                 </th>
-                <th className="py-2.5 px-2 text-center border-r border-slate-200 w-20 min-w-[72px]">
+                <th className="py-2.5 px-2 text-center border-r border-white/20 w-20 min-w-[72px]">
                   Bobot
                 </th>
-                <th className="py-2.5 px-2 text-center border-r border-slate-200 w-24 min-w-[84px]">
+                <th className="py-2.5 px-2 text-center border-r border-white/20 w-24 min-w-[84px]">
                   Skor Akhir
                 </th>
                 <th className="py-2.5 px-2.5 text-center w-28 min-w-[108px]">
@@ -3518,29 +3522,29 @@ export function MonthlyAssessmentView({
 
                   return (
                     <React.Fragment key={cat.categoryId}>
-                      {/* Minimalist Category Group Header Row (Bright Light Blue Separator) */}
+                      {/* Minimalist Category Group Header Row */}
                       <tr
                         onClick={() => toggleParameter(cat.categoryId)}
-                        className="cursor-pointer select-none border-b border-sky-200/90 bg-sky-100 hover:bg-sky-200/75 transition-colors"
+                        className="cursor-pointer select-none border-t-2 border-slate-300 border-b border-slate-300 bg-slate-100/90 hover:bg-slate-100 text-slate-800 transition-colors"
                       >
                         {/* Kolom 1: Parameter Name & Status */}
-                        <td className="py-2 px-3.5 align-middle border-r border-sky-200/80">
+                        <td className="py-2.5 px-3.5 align-middle border-r border-slate-200 border-t-2 border-slate-300 border-b border-slate-300">
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 min-w-0">
                               {isExpanded ? (
-                                <ChevronDown className="w-3.5 h-3.5 text-blue-600 shrink-0 transition-transform" />
+                                <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0 transition-transform" />
                               ) : (
-                                <ChevronRight className="w-3.5 h-3.5 text-blue-600 shrink-0 transition-transform" />
+                                <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0 transition-transform" />
                               )}
-                              <span className="font-mono text-xs font-bold text-blue-600 shrink-0">
+                              <span className="text-xs font-bold text-slate-700 shrink-0">
                                 {cat.categoryNumber}.
                               </span>
-                              <span className="font-bold text-blue-950 text-xs tracking-tight uppercase truncate">
+                              <span className="font-medium text-slate-800 text-xs tracking-tight uppercase truncate">
                                 {cat.categoryName}
                               </span>
                             </div>
                             <span
-                              className={`inline-flex items-center gap-1.5 font-medium shrink-0 select-none text-[11px] ${
+                              className={`inline-flex items-center gap-1.5 font-normal shrink-0 select-none text-[11px] ${
                                 catStatus === "Completed"
                                   ? "text-emerald-700"
                                   : catStatus === "In Progress"
@@ -3569,43 +3573,43 @@ export function MonthlyAssessmentView({
                         </td>
 
                         {/* Kolom 2: Ringkasan Indikator */}
-                        <td className="py-2 px-3 align-middle border-r border-sky-200/80 text-slate-700 text-xs font-medium">
+                        <td className="py-2.5 px-3 align-middle border-r border-slate-200 border-t-2 border-slate-300 border-b border-slate-300 text-slate-600 text-xs font-normal">
                           {cat.indicators.length} {cat.indicators.length > 1 ? "Indikator" : "Indikator Utama"}
                         </td>
 
                         {/* Kolom 3: Skor */}
-                        <td className="py-2 px-2 text-slate-400 text-center text-xs align-middle border-r border-sky-200/80 font-mono">
+                        <td className="py-2.5 px-2 text-slate-400 text-center text-xs align-middle border-r border-slate-200 border-t-2 border-slate-300 border-b border-slate-300 font-normal">
                           -
                         </td>
 
                         {/* Kolom 4: Realisasi */}
-                        <td className="py-2 px-2 text-slate-400 text-center text-xs align-middle border-r border-sky-200/80 font-mono">
+                        <td className="py-2.5 px-2 text-slate-400 text-center text-xs align-middle border-r border-slate-200 border-t-2 border-slate-300 border-b border-slate-300 font-normal">
                           -
                         </td>
 
                         {/* Kolom 5: Bobot Utama */}
-                        <td className="py-2 px-2 text-slate-900 text-center align-middle border-r border-sky-200/80 font-mono text-xs font-semibold">
+                        <td className="py-2.5 px-2 text-slate-800 text-center align-middle border-r border-slate-200 border-t-2 border-slate-300 border-b border-slate-300 text-xs font-normal">
                           {Math.round(cat.categoryWeight * 100)}%
                         </td>
 
                         {/* Kolom 6: Skor Akhir Parameter */}
-                        <td className="py-2 px-2 text-blue-600 text-center align-middle border-r border-sky-200/80 font-mono text-xs font-bold">
+                        <td className="py-2.5 px-2 text-slate-800 text-center align-middle border-r border-slate-200 border-t-2 border-slate-300 border-b border-slate-300 text-xs font-medium">
                           {(cat.annualScorePercentage ?? cat.scorePercentage ?? 0).toFixed(1)}%
                         </td>
 
                         {/* Kolom 7: Aksi Accordion */}
-                        <td className="py-2 px-2.5 text-center align-middle text-slate-700 text-xs">
+                        <td className="py-2.5 px-2.5 text-center align-middle border-t-2 border-slate-300 border-b border-slate-300 text-slate-700 text-xs">
                           <button
                             type="button"
                             aria-expanded={isExpanded}
                             aria-label={`${isExpanded ? "Tutup" : "Buka"} rincian parameter ${cat.categoryName}`}
-                            className="inline-flex items-center justify-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 transition-colors cursor-pointer whitespace-nowrap"
+                            className="inline-flex items-center justify-center gap-1 text-[11px] font-medium text-slate-500 hover:text-slate-800 transition-colors cursor-pointer whitespace-nowrap"
                           >
                             <span>{isExpanded ? "Tutup" : "Buka"}</span>
                             {isExpanded ? (
-                              <ChevronDown className="w-3 h-3 text-blue-600 shrink-0" />
+                              <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
                             ) : (
-                              <ChevronRight className="w-3 h-3 text-blue-600 shrink-0" />
+                              <ChevronRight className="w-3 h-3 text-slate-400 shrink-0" />
                             )}
                           </button>
                         </td>
@@ -3615,7 +3619,7 @@ export function MonthlyAssessmentView({
                       {isExpanded && (
                         cat.indicators.length === 0 ? (
                           <tr>
-                            <td colSpan={7} className="py-6 text-center text-slate-400 italic bg-white text-xs border-b border-slate-200">
+                            <td colSpan={7} className="py-6 text-center text-slate-400 italic bg-white text-xs border-b-2 border-slate-300">
                               Belum ada indikator pada parameter ini.
                             </td>
                           </tr>
@@ -3668,54 +3672,83 @@ export function MonthlyAssessmentView({
                               popoverAnchor?.type === "final_score" &&
                               popoverAnchor.indicator.appraisalItemId === ind.appraisalItemId;
 
-                            const indCode = isTargetKerja ? `1.${indIdx + 1}` : `${cat.categoryNumber}.1`;
+                            const hasSubIndicators =
+                              cat.indicators.length > 1 ||
+                              (cat.indicators.length === 1 &&
+                                isTargetKerja &&
+                                cat.indicators[0].indicatorName.toLowerCase().replace(/^\d+[\.\s\-:]*/, "").trim() !==
+                                  cat.categoryName.toLowerCase().replace(/^\d+[\.\s\-:]*/, "").trim());
+
+                            const indCode = isTargetKerja
+                              ? `1.${indIdx + 1}`
+                              : hasSubIndicators
+                              ? `${cat.categoryNumber}.${indIdx + 1}`
+                              : "";
                             const weightPctVal = Math.round((ind.indicatorWeight || 1) * 100);
-                            const isWeightPopoverOpen =
-                              popoverAnchor?.type === "weight" &&
-                              popoverAnchor.indicator.appraisalItemId === ind.appraisalItemId;
 
                             return (
                               <tr
                                 id={`indicator-row-${ind.appraisalItemId}`}
                                 key={ind.appraisalItemId}
-                                className={`border-b border-slate-200 transition-colors scroll-mt-24 ${
+                                className={`border-b-2 border-slate-300 transition-colors scroll-mt-24 ${
                                   isIndUnfilled && validationAttempted
                                     ? "bg-amber-50/50 hover:bg-amber-50/80"
                                     : "bg-white hover:bg-slate-50/50"
                                 }`}
                               >
                                 {/* 1. Indikator KPI & Target (Minimalist flat text) */}
-                                <td className="py-2 px-3.5 pl-6 border-r border-slate-200 align-middle">
+                                <td className="py-2.5 px-3.5 pl-6 border-r border-slate-200 border-b-2 border-slate-300 align-middle">
                                   <div className="flex items-start gap-2">
-                                    <span
-                                      className={`text-xs font-mono shrink-0 mt-0.5 w-6 ${
-                                        isIndUnfilled && validationAttempted
-                                          ? "text-amber-700 font-bold"
-                                          : "text-slate-400 font-medium"
-                                      }`}
-                                    >
-                                      {indCode}
-                                    </span>
+                                    {hasSubIndicators && indCode && (
+                                      <span
+                                        className={`text-xs font-semibold shrink-0 mt-0.5 w-7 select-none ${
+                                          isIndUnfilled && validationAttempted
+                                            ? "text-amber-700 font-medium"
+                                            : "text-slate-600"
+                                        }`}
+                                      >
+                                        {indCode}
+                                      </span>
+                                    )}
                                     <div className="min-w-0 flex-1">
-                                      <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="font-medium text-slate-900 text-xs leading-snug">
-                                          {ind.indicatorName}
-                                        </span>
-                                        {isIndUnfilled && validationAttempted && (
-                                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700">
-                                            <AlertTriangle className="h-3 w-3 text-amber-600 shrink-0" />
-                                            <span>Belum Diisi</span>
+                                      {hasSubIndicators ? (
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className="font-normal text-slate-800 text-xs leading-snug">
+                                            {ind.indicatorName}
                                           </span>
-                                        )}
-                                      </div>
-                                      {ind.target !== null && ind.target !== undefined && (
-                                        <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1 font-mono">
-                                          <span className="text-slate-400 font-sans">Target:</span>
-                                          <span className="font-semibold text-slate-700">
-                                            {formatTargetNumber(ind.target, ind.unit)}
-                                          </span>
+                                          {isIndUnfilled && validationAttempted && (
+                                            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-700">
+                                              <AlertTriangle className="h-3 w-3 text-amber-600 shrink-0" />
+                                              <span>Belum Diisi</span>
+                                            </span>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        /* Parameter tunggal tanpa sub-indikator: Kosongkan nama indikator agar tidak menduplikasi header parameter */
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          {isIndUnfilled && validationAttempted ? (
+                                            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-700">
+                                              <AlertTriangle className="h-3 w-3 text-amber-600 shrink-0" />
+                                              <span>Belum Diisi</span>
+                                            </span>
+                                          ) : (
+                                            <span className="text-slate-300 text-xs font-normal select-none">-</span>
+                                          )}
                                         </div>
                                       )}
+                                      {(() => {
+                                        const tStr = ind.target !== null && ind.target !== undefined ? String(ind.target).trim() : "";
+                                        if (!tStr || tStr === "-" || tStr === "null" || tStr === "undefined") return null;
+                                        const displayVal = formatTargetNumber(ind.target, ind.unit);
+                                        if (!displayVal || displayVal === "-") return null;
+
+                                        return (
+                                          <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1 font-normal">
+                                            <span className="text-slate-400">Target:</span>
+                                            <span className="font-medium text-slate-700">{displayVal}</span>
+                                          </div>
+                                        );
+                                      })()}
                                       {ind.evidenceList && ind.evidenceList.length > 0 && (
                                         <div className="mt-1 flex items-center">
                                           <button
@@ -3741,9 +3774,9 @@ export function MonthlyAssessmentView({
                                 </td>
 
                                 {/* 2. Kriteria Penilaian Acuan (Flat sub-rows dengan border tipis) */}
-                                <td className="p-0 border-r border-slate-200 align-middle">
+                                <td className="p-0 border-r border-slate-200 border-b-2 border-slate-300 align-middle">
                                   {ind.scoringRules && ind.scoringRules.length > 0 ? (
-                                    <div className="divide-y divide-slate-200/80">
+                                    <div className="divide-y divide-slate-100">
                                       {ind.scoringRules.slice(0, 3).map((r, rIdx) => {
                                         const matchedLabel = ind.annualBandLabel || ind.bandLabel;
                                         const isRuleMatched =
@@ -3753,10 +3786,10 @@ export function MonthlyAssessmentView({
                                         return (
                                           <div
                                             key={rIdx}
-                                            className={`h-7 flex items-center px-3 text-[11px] font-mono truncate transition-colors ${
+                                            className={`h-7 flex items-center px-3 text-[11px] font-normal truncate transition-colors ${
                                               isRuleMatched
-                                                ? "bg-sky-100/80 text-blue-900 font-semibold"
-                                                : "text-slate-600 font-normal"
+                                                ? "bg-slate-100 text-slate-900 font-medium"
+                                                : "text-slate-600"
                                             }`}
                                             title={cleanRuleNumeric(r, ind.unit)}
                                           >
@@ -3768,30 +3801,30 @@ export function MonthlyAssessmentView({
                                         <button
                                           type="button"
                                           onClick={() => setCriteriaModalItem(ind)}
-                                          className="w-full text-left px-3 py-1 text-[10px] text-blue-600 hover:text-blue-800 hover:underline font-medium block"
+                                          className="w-full text-left px-3 py-1 text-[10px] text-slate-600 hover:text-slate-900 hover:underline font-medium block"
                                         >
                                           +{ind.scoringRules.length - 3} lainnya...
                                         </button>
                                       )}
                                     </div>
                                   ) : (
-                                    <div className="px-3 py-2 text-slate-300 font-mono text-xs">-</div>
+                                    <div className="px-3 py-2 text-slate-300 font-normal text-xs">-</div>
                                   )}
                                 </td>
 
                                 {/* 3. Skor Nilai Acuan (Flat sub-rows dengan border tipis) */}
-                                <td className="p-0 border-r border-slate-200 align-middle text-center">
+                                <td className="p-0 border-r border-slate-200 border-b-2 border-slate-300 align-middle text-center">
                                   {ind.scoringRules && ind.scoringRules.length > 0 ? (
-                                    <div className="divide-y divide-slate-200/80">
+                                    <div className="divide-y divide-slate-100">
                                       {ind.scoringRules.slice(0, 3).map((r, rIdx) => {
                                         const isRuleMatched = hasActual && effectiveScore === Number(r.score);
                                         return (
                                           <div
                                             key={rIdx}
-                                            className={`h-7 flex items-center justify-center px-2 text-[11px] font-mono tabular-nums ${
+                                            className={`h-7 flex items-center justify-center px-2 text-[11px] font-normal ${
                                               isRuleMatched
-                                                ? "bg-sky-100/80 text-blue-900 font-bold"
-                                                : "text-slate-600 font-medium"
+                                                ? "bg-slate-100 text-slate-900 font-medium"
+                                                : "text-slate-600"
                                             }`}
                                           >
                                             {r.score}
@@ -3803,12 +3836,12 @@ export function MonthlyAssessmentView({
                                       )}
                                     </div>
                                   ) : (
-                                    <div className="px-2 py-2 text-slate-300 font-mono text-xs">-</div>
+                                    <div className="px-2 py-2 text-slate-300 font-normal text-xs">-</div>
                                   )}
                                 </td>
 
                                 {/* 4. Realisasi Aktual (Flat text + ikon info kecil) */}
-                                <td className="py-2 px-2.5 border-r border-slate-200 text-center align-middle font-sans">
+                                <td className="py-2.5 px-2.5 border-r border-slate-200 border-b-2 border-slate-300 text-center align-middle font-sans">
                                   {!hasActual || effectiveScore === null ? (
                                     <span className="text-slate-300 text-xs font-normal select-none cursor-default">-</span>
                                   ) : (
@@ -3820,13 +3853,13 @@ export function MonthlyAssessmentView({
                                       onClick={(e) => handleTriggerClick(e, "realization", ind, cat.categoryName, cat.categoryWeight)}
                                       onMouseEnter={(e) => handleTriggerMouseEnter("realization", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
                                       onMouseLeave={handleTriggerMouseLeave}
-                                      className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 whitespace-nowrap"
+                                      className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-slate-400 whitespace-nowrap"
                                     >
-                                      <span className="text-xs font-semibold text-slate-800 font-mono tabular-nums">
+                                      <span className="text-xs font-normal text-slate-800">
                                         {displayScore}
                                       </span>
                                       <Info
-                                        className="w-[11px] h-[11px] stroke-[1.75] text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
+                                        className="w-[11px] h-[11px] stroke-[1.75] text-slate-400 group-hover:text-slate-600 transition-colors shrink-0"
                                         aria-hidden="true"
                                       />
                                     </button>
@@ -3834,37 +3867,18 @@ export function MonthlyAssessmentView({
                                 </td>
 
                                 {/* 5. Bobot */}
-                                <td className="py-2 px-2 border-r border-slate-200 text-center align-middle font-sans">
-                                  {isTargetKerja ? (
-                                    <button
-                                      type="button"
-                                      aria-expanded={isWeightPopoverOpen}
-                                      aria-haspopup="dialog"
-                                      aria-label={`Rincian bobot internal ${ind.indicatorName}, nilai ${weightPctVal}%`}
-                                      onClick={(e) => handleTriggerClick(e, "weight", ind, cat.categoryName, cat.categoryWeight)}
-                                      onMouseEnter={(e) => handleTriggerMouseEnter("weight", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
-                                      onMouseLeave={handleTriggerMouseLeave}
-                                      className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 whitespace-nowrap"
-                                    >
-                                      <span className="tabular-nums font-medium font-mono">
-                                        {weightPctVal}%
-                                      </span>
-                                      <Info
-                                        className="w-[11px] h-[11px] stroke-[1.75] text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
-                                        aria-hidden="true"
-                                      />
-                                    </button>
-                                  ) : (
-                                    <span className="tabular-nums font-medium text-xs text-slate-700 font-mono">
-                                      {Math.round((cat.categoryWeight || 0) * 100)}%
-                                    </span>
-                                  )}
+                                <td className="py-2.5 px-2 border-r border-slate-200 border-b-2 border-slate-300 text-center align-middle font-sans">
+                                  <span className="font-normal text-xs text-slate-700 select-none">
+                                    {hasSubIndicators || isTargetKerja
+                                      ? `${weightPctVal}%`
+                                      : `${Math.round((cat.categoryWeight || 0) * 100)}%`}
+                                  </span>
                                 </td>
 
                                 {/* 6. Skor Akhir */}
-                                <td className="py-2 px-2 border-r border-slate-200 text-center align-middle font-sans">
+                                <td className="py-2.5 px-2 border-r border-slate-200 border-b-2 border-slate-300 text-center align-middle font-sans">
                                   {!finalScoreStr || finalScoreStr === "-" ? (
-                                    <span className="tabular-nums font-semibold text-xs text-slate-800 font-mono">
+                                    <span className="font-normal text-xs text-slate-800">
                                       {(cat.annualScorePercentage ?? cat.scorePercentage ?? 0).toFixed(1)}%
                                     </span>
                                   ) : (
@@ -3876,13 +3890,13 @@ export function MonthlyAssessmentView({
                                       onClick={(e) => handleTriggerClick(e, "final_score", ind, cat.categoryName, cat.categoryWeight)}
                                       onMouseEnter={(e) => handleTriggerMouseEnter("final_score", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
                                       onMouseLeave={handleTriggerMouseLeave}
-                                      className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs font-semibold text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 whitespace-nowrap"
+                                      className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs font-medium text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-slate-400 whitespace-nowrap"
                                     >
-                                      <span className="tabular-nums font-semibold text-blue-600 text-xs font-mono">
+                                      <span className="font-medium text-slate-800 text-xs">
                                         {finalScoreStr}
                                       </span>
                                       <Info
-                                        className="w-[11px] h-[11px] stroke-[1.75] text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
+                                        className="w-[11px] h-[11px] stroke-[1.75] text-slate-400 group-hover:text-slate-600 transition-colors shrink-0"
                                         aria-hidden="true"
                                       />
                                     </button>
@@ -3890,7 +3904,7 @@ export function MonthlyAssessmentView({
                                 </td>
 
                                 {/* 7. Aksi */}
-                                <td className="py-2 px-2.5 text-center align-middle">
+                                <td className="py-2.5 px-2.5 border-b-2 border-slate-300 text-center align-middle">
                                   <div className="flex items-center justify-center gap-1.5">
                                     {ind.isEditable === false ? (
                                       <span
@@ -3910,14 +3924,14 @@ export function MonthlyAssessmentView({
                                       <button
                                         type="button"
                                         onClick={() => handleOpenAssessmentModal(ind, cat.categoryName)}
-                                        className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition cursor-pointer whitespace-nowrap border ${
+                                        className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition cursor-pointer whitespace-nowrap border shadow-2xs ${
                                           isIndUnfilled && validationAttempted
                                             ? "bg-amber-600 hover:bg-amber-700 text-white border-amber-600"
-                                            : "text-slate-700 hover:text-blue-700 bg-white hover:bg-slate-50 border-slate-200"
+                                            : "text-blue-700 hover:text-blue-800 bg-blue-50/90 hover:bg-blue-100 border-blue-200/90"
                                         }`}
                                         title={`Input rincian penilaian untuk ${ind.indicatorName}`}
                                       >
-                                        <Pencil className="h-2.5 w-2.5 shrink-0 text-slate-400" />
+                                        <Pencil className="h-3 w-3 shrink-0 text-blue-600" />
                                         <span>{hasActual ? "Edit Nilai" : "Input Nilai"}</span>
                                       </button>
                                     )}
@@ -3952,25 +3966,25 @@ export function MonthlyAssessmentView({
                 })
               )}
 
-              {/* Baris Total Bobot & Total Skor Akhir KPI (Orange Muda) */}
+              {/* Baris Total Bobot & Total Skor Akhir KPI */}
               {liveCategories.length > 0 && (
-                <tr className="border-t border-orange-200/90 bg-orange-100 font-bold text-orange-950 select-none">
+                <tr className="border-t border-slate-200 bg-slate-50/90 font-medium text-slate-800 select-none">
                   <td
                     colSpan={4}
-                    className="py-2.5 px-3.5 text-left align-middle border-r border-orange-200/80 text-xs font-bold uppercase tracking-tight text-orange-950"
+                    className="py-2.5 px-3.5 text-left align-middle border-r border-slate-200 text-xs font-medium uppercase tracking-tight text-slate-700"
                   >
                     Total Skor Akhir KPI
                   </td>
-                  <td className="py-2.5 px-2 text-center align-middle border-r border-orange-200/80 font-mono text-xs font-bold text-orange-950">
+                  <td className="py-2.5 px-2 text-center align-middle border-r border-slate-200 text-xs font-medium text-slate-800">
                     {Math.round(
                       liveCategories.reduce((sum, c) => sum + (c.categoryWeight || 0), 0) * 100
                     ) || (initialDetail?.templateId ? 115 : 100)}
                     %
                   </td>
-                  <td className="py-2.5 px-2 text-center align-middle border-r border-orange-200/80 font-mono text-xs font-bold text-orange-700">
+                  <td className="py-2.5 px-2 text-center align-middle border-r border-slate-200 text-xs font-medium text-slate-800">
                     {liveAnnualOverall.overallScoreDisplay}
                   </td>
-                  <td className="py-2.5 px-2.5 text-center align-middle text-xs font-semibold text-orange-700">
+                  <td className="py-2.5 px-2.5 text-center align-middle text-xs font-normal text-slate-500">
                     Grade {liveAnnualOverall.grade}
                   </td>
                 </tr>
@@ -5812,7 +5826,7 @@ export function MonthlyAssessmentView({
               <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
-                    <tr className="border-b border-slate-200 bg-slate-100/80 text-[11px] font-semibold text-slate-600 select-none">
+                    <tr className="border-b border-slate-200 bg-slate-50/90 text-xs font-medium text-slate-600 select-none">
                       <th className="py-2.5 px-3.5 text-left border-r border-slate-200 min-w-[240px]">
                         Parameter / Indikator KPI
                       </th>
@@ -5836,31 +5850,31 @@ export function MonthlyAssessmentView({
                   <tbody>
                     {liveCategories.map((cat) => (
                       <React.Fragment key={cat.categoryId}>
-                        {/* Parameter Header Row (Bright Light Blue Separator) */}
-                        <tr className="bg-sky-100 border-b border-sky-200/90 text-slate-900 select-none">
-                          <td className="px-3.5 py-2 border-r border-sky-200/80">
+                        {/* Parameter Header Row */}
+                        <tr className="bg-slate-50/90 border-b border-slate-200 text-slate-800 select-none">
+                          <td className="px-3.5 py-2 border-r border-slate-200">
                             <div className="flex items-center gap-2">
-                              <span className="font-mono text-xs font-bold text-blue-600 shrink-0">
+                              <span className="text-xs font-medium text-slate-500 shrink-0">
                                 {cat.categoryNumber}.
                               </span>
-                              <span className="text-xs font-bold uppercase tracking-tight text-blue-950">
+                              <span className="text-xs font-medium uppercase tracking-tight text-slate-800">
                                 {cat.categoryName}
                               </span>
                             </div>
                           </td>
-                          <td className="px-3 py-2 text-slate-700 font-medium text-xs border-r border-sky-200/80">
+                          <td className="px-3 py-2 text-slate-600 font-normal text-xs border-r border-slate-200">
                             {cat.indicators.length} {cat.indicators.length > 1 ? "Indikator" : "Indikator Utama"}
                           </td>
-                          <td className="px-2 py-2 text-center text-slate-400 font-mono text-xs border-r border-sky-200/80">
+                          <td className="px-2 py-2 text-center text-slate-400 text-xs border-r border-slate-200 font-normal">
                             -
                           </td>
-                          <td className="px-2.5 py-2 text-center text-slate-400 font-mono text-xs border-r border-sky-200/80">
+                          <td className="px-2.5 py-2 text-center text-slate-400 text-xs border-r border-slate-200 font-normal">
                             -
                           </td>
-                          <td className="px-2 py-2 text-center font-semibold text-slate-900 font-mono text-xs border-r border-sky-200/80">
+                          <td className="px-2 py-2 text-center font-normal text-slate-800 text-xs border-r border-slate-200">
                             {Math.round(cat.categoryWeight * 100)}%
                           </td>
-                          <td className="px-3 py-2 text-right font-bold text-blue-600 font-mono text-xs">
+                          <td className="px-3 py-2 text-right font-medium text-slate-800 text-xs">
                             {(cat.annualScorePercentage ?? cat.scorePercentage ?? 0).toFixed(1)}%
                           </td>
                         </tr>
@@ -5889,12 +5903,12 @@ export function MonthlyAssessmentView({
                                 {/* 1. Parameter / Indikator KPI */}
                                 <td className="py-2 px-3.5 pl-6 border-r border-slate-200 align-middle">
                                   <div className="flex items-start gap-2">
-                                    <span className="font-mono text-xs text-slate-400 font-medium shrink-0 mt-0.5 w-6">
+                                    <span className="text-xs text-slate-400 font-normal shrink-0 mt-0.5 w-6">
                                       {ind.indicatorCode}
                                     </span>
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-center gap-1.5 flex-wrap">
-                                        <span className="font-medium text-slate-900 text-xs leading-snug">
+                                        <span className="font-normal text-slate-800 text-xs leading-snug">
                                           {ind.indicatorName}
                                         </span>
                                         <button
@@ -5906,8 +5920,8 @@ export function MonthlyAssessmentView({
                                           }
                                           className={`inline-flex items-center justify-center p-0.5 rounded transition cursor-pointer shrink-0 ${
                                             isExpanded
-                                              ? "text-blue-700"
-                                              : "text-slate-400 hover:text-blue-600"
+                                              ? "text-slate-800"
+                                              : "text-slate-400 hover:text-slate-600"
                                           }`}
                                           title={
                                             isExpanded
@@ -5924,7 +5938,7 @@ export function MonthlyAssessmentView({
                                       <div className="mt-0.5 flex items-center gap-2 text-[11px] text-slate-500 flex-wrap">
                                         <span>
                                           Target:{" "}
-                                          <strong className="font-mono font-semibold text-slate-700">
+                                          <strong className="font-normal text-slate-700">
                                             {formatTargetNumber(ind.target, ind.unit)}
                                           </strong>
                                         </span>
@@ -5982,10 +5996,10 @@ export function MonthlyAssessmentView({
                                         return (
                                           <div
                                             key={rIdx}
-                                            className={`h-7 flex items-center px-3 text-[11px] font-mono truncate ${
+                                            className={`h-7 flex items-center px-3 text-[11px] font-normal truncate ${
                                               isMatched
-                                                ? "bg-sky-50/70 text-sky-900 font-semibold"
-                                                : "text-slate-600 font-normal"
+                                                ? "bg-slate-100 text-slate-900 font-medium"
+                                                : "text-slate-600"
                                             }`}
                                             title={cleanRuleNumeric(r, ind.unit)}
                                           >
@@ -5997,14 +6011,14 @@ export function MonthlyAssessmentView({
                                         <button
                                           type="button"
                                           onClick={() => setCriteriaModalItem(ind)}
-                                          className="w-full text-left px-3 py-1 text-[10px] text-blue-600 hover:underline font-medium block"
+                                          className="w-full text-left px-3 py-1 text-[10px] text-slate-600 hover:text-slate-900 hover:underline font-medium block"
                                         >
                                           +{ind.scoringRules.length - 3} lainnya...
                                         </button>
                                       )}
                                     </div>
                                   ) : (
-                                    <div className="px-3 py-2 text-slate-300 font-mono text-xs">-</div>
+                                    <div className="px-3 py-2 text-slate-300 font-normal text-xs">-</div>
                                   )}
                                 </td>
 
@@ -6017,10 +6031,10 @@ export function MonthlyAssessmentView({
                                         return (
                                           <div
                                             key={rIdx}
-                                            className={`h-7 flex items-center justify-center px-2 text-[11px] font-mono tabular-nums ${
+                                            className={`h-7 flex items-center justify-center px-2 text-[11px] font-normal ${
                                               isMatched
-                                                ? "bg-sky-50/70 text-sky-900 font-bold"
-                                                : "text-slate-600 font-medium"
+                                                ? "bg-slate-100 text-slate-900 font-medium"
+                                                : "text-slate-600"
                                             }`}
                                           >
                                             {r.score}
@@ -6032,7 +6046,7 @@ export function MonthlyAssessmentView({
                                       )}
                                     </div>
                                   ) : (
-                                    <div className="px-2 py-2 text-slate-300 font-mono text-xs">-</div>
+                                    <div className="px-2 py-2 text-slate-300 font-normal text-xs">-</div>
                                   )}
                                 </td>
 
@@ -6052,50 +6066,30 @@ export function MonthlyAssessmentView({
                                       onClick={(e) => handleTriggerClick(e, "realization", ind, cat.categoryName, cat.categoryWeight)}
                                       onMouseEnter={(e) => handleTriggerMouseEnter("realization", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
                                       onMouseLeave={handleTriggerMouseLeave}
-                                      className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs font-semibold text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 whitespace-nowrap"
+                                      className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs font-normal text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-slate-400 whitespace-nowrap"
                                     >
-                                      <span className="tabular-nums font-semibold font-mono">
+                                      <span className="font-normal text-slate-800 text-xs">
                                         {effectiveScore} pt
                                       </span>
                                       <Info
-                                        className="w-[11px] h-[11px] stroke-[1.75] text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
+                                        className="w-[11px] h-[11px] stroke-[1.75] text-slate-400 group-hover:text-slate-600 transition-colors shrink-0"
                                         aria-hidden="true"
                                       />
                                     </button>
                                   )}
                                 </td>
 
-                                {/* 5. Bobot (Nilai Bobot + Ikon Info) */}
+                                {/* 5. Bobot */}
                                 <td className="py-2 px-2 border-r border-slate-200 text-center align-middle font-sans">
                                   {(() => {
                                     const isSingleIndicator = cat.indicators.length === 1;
                                     const weightPctVal = isSingleIndicator
                                       ? Math.round((cat.categoryWeight || 0) * 100)
                                       : Math.round((ind.indicatorWeight || 0) * 100);
-                                    const weightPctDisplay = `${weightPctVal}%`;
-                                    const isPopoverOpen =
-                                      popoverAnchor?.type === "weight" &&
-                                      popoverAnchor.indicator.appraisalItemId === ind.appraisalItemId;
-
                                     return (
-                                      <button
-                                        type="button"
-                                        aria-expanded={isPopoverOpen}
-                                        aria-haspopup="dialog"
-                                        aria-label={`Rincian perhitungan bobot ${ind.indicatorName}, nilai ${weightPctDisplay}`}
-                                        onClick={(e) => handleTriggerClick(e, "weight", ind, cat.categoryName, cat.categoryWeight)}
-                                        onMouseEnter={(e) => handleTriggerMouseEnter("weight", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
-                                        onMouseLeave={handleTriggerMouseLeave}
-                                        className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 whitespace-nowrap"
-                                      >
-                                        <span className="tabular-nums font-medium font-mono">
-                                          {weightPctDisplay}
-                                        </span>
-                                        <Info
-                                          className="w-[11px] h-[11px] stroke-[1.75] text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
-                                          aria-hidden="true"
-                                        />
-                                      </button>
+                                      <span className="font-normal text-xs text-slate-700 select-none">
+                                        {weightPctVal}%
+                                      </span>
                                     );
                                   })()}
                                 </td>
@@ -6121,13 +6115,13 @@ export function MonthlyAssessmentView({
                                         onClick={(e) => handleTriggerClick(e, "final_score", ind, cat.categoryName, cat.categoryWeight)}
                                         onMouseEnter={(e) => handleTriggerMouseEnter("final_score", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
                                         onMouseLeave={handleTriggerMouseLeave}
-                                        className="group inline-flex items-center justify-end gap-1 px-1.5 py-1 rounded text-xs font-semibold text-blue-700 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-blue-500 whitespace-nowrap"
+                                        className="group inline-flex items-center justify-end gap-1 px-1.5 py-1 rounded text-xs font-medium text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-slate-400 whitespace-nowrap"
                                       >
-                                        <span className="tabular-nums font-semibold font-mono">
+                                        <span className="font-medium text-slate-800">
                                           {finalScoreStr}
                                         </span>
                                         <Info
-                                          className="w-[11px] h-[11px] stroke-[1.75] text-slate-400 group-hover:text-blue-600 transition-colors shrink-0"
+                                          className="w-[11px] h-[11px] stroke-[1.75] text-slate-400 group-hover:text-slate-600 transition-colors shrink-0"
                                           aria-hidden="true"
                                         />
                                       </button>
@@ -6446,23 +6440,23 @@ export function MonthlyAssessmentView({
                       </React.Fragment>
                     ))}
 
-                    {/* Overall Summary Row (6 Kolom - Orange Muda) */}
-                    <tr className="bg-orange-100 font-bold text-orange-950 border-t border-orange-200/90">
-                      <td colSpan={3} className="px-3.5 py-2.5 text-left font-bold text-xs uppercase tracking-tight text-orange-950 border-r border-orange-200/80">
+                    {/* Overall Summary Row */}
+                    <tr className="bg-slate-50/90 font-medium text-slate-800 border-t border-slate-200">
+                      <td colSpan={3} className="px-3.5 py-2.5 text-left font-medium text-xs uppercase tracking-tight text-slate-700 border-r border-slate-200">
                         Total Skor Akhir KPI
                       </td>
-                      <td className="px-2.5 py-2.5 text-center border-r border-orange-200/80">
-                        <span className="text-xs font-bold text-orange-700">
+                      <td className="px-2.5 py-2.5 text-center border-r border-slate-200">
+                        <span className="text-xs font-normal text-slate-500">
                           Grade {liveAnnualOverall.grade}
                         </span>
                       </td>
-                      <td className="px-2 py-2.5 text-center font-bold text-orange-950 font-mono text-xs border-r border-orange-200/80">
+                      <td className="px-2 py-2.5 text-center font-medium text-slate-800 text-xs border-r border-slate-200">
                         {Math.round(
                           liveCategories.reduce((sum, c) => sum + (c.categoryWeight || 0), 0) * 100
                         ) || (initialDetail?.templateId ? 115 : 100)}
                         %
                       </td>
-                      <td className="px-3 py-2.5 text-right text-xs text-orange-700 font-bold font-mono">
+                      <td className="px-3 py-2.5 text-right text-xs text-slate-800 font-medium">
                         {liveAnnualOverall.overallScoreDisplay}
                       </td>
                     </tr>
@@ -6490,39 +6484,39 @@ export function MonthlyAssessmentView({
               <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50/90 text-[11px] font-semibold text-slate-600">
-                      <th className="px-3 py-2 min-w-[180px] border-r border-slate-200">Indikator KPI</th>
-                      <th className="px-2 py-2 text-right border-r border-slate-200">Target</th>
+                    <tr className="border-b border-[#0F2C59] bg-[#0F2C59] text-[11px] font-medium text-white">
+                      <th className="px-3 py-2 min-w-[180px] border-r border-white/20">Indikator KPI</th>
+                      <th className="px-2 py-2 text-right border-r border-white/20">Target</th>
                       {SHORT_MONTH_NAMES.map((m) => (
-                        <th key={m} className="px-2 py-2 text-right min-w-[50px] border-r border-slate-200">
+                        <th key={m} className="px-2 py-2 text-right min-w-[50px] border-r border-white/20">
                           {m}
                         </th>
                       ))}
-                      <th className="px-3 py-2 text-right bg-slate-100/70">Rata-rata</th>
+                      <th className="px-3 py-2 text-right bg-[#0F2C59]">Rata-rata</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
                     {liveCategories.flatMap((cat) =>
                       cat.indicators.map((ind) => (
                         <tr key={ind.appraisalItemId} className="hover:bg-slate-50/50">
-                          <td className="px-3 py-2 font-medium text-slate-800 border-r border-slate-200">
-                            <span className="text-slate-400 font-mono mr-1.5">{ind.indicatorCode}</span>
+                          <td className="px-3 py-2 font-normal text-slate-800 border-r border-slate-200">
+                            <span className="text-slate-400 mr-1.5">{ind.indicatorCode}</span>
                             {ind.indicatorName}
                           </td>
-                          <td className="px-2 py-2 text-right text-slate-600 font-mono border-r border-slate-200">
+                          <td className="px-2 py-2 text-right text-slate-600 border-r border-slate-200">
                             {formatTargetNumber(ind.target, ind.unit)}
                           </td>
                           {(ind.monthlyDetails || []).map((m) => (
                             <td
                               key={m.month}
-                              className={`px-2 py-2 text-right font-mono tabular-nums border-r border-slate-200 ${
-                                m.actual !== null ? "font-semibold text-slate-900" : "text-slate-300"
+                              className={`px-2 py-2 text-right border-r border-slate-200 ${
+                                m.actual !== null ? "font-normal text-slate-800" : "text-slate-300"
                               }`}
                             >
                               {m.actual !== null ? m.actual.toLocaleString("id-ID") : "-"}
                             </td>
                           ))}
-                          <td className="px-3 py-2 text-right font-bold font-mono tabular-nums text-indigo-700 bg-slate-50/50">
+                          <td className="px-3 py-2 text-right font-medium text-slate-800 bg-slate-50/50">
                             {ind.annualActual !== null ? ind.annualActual.toLocaleString("id-ID") : "-"}
                           </td>
                         </tr>

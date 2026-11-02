@@ -25,6 +25,12 @@ out
 .env*
 !.env.example
 !.env.docker.example
+!.env.production.example
+
+# Uploads & Persistent Evidence Attachments
+uploads
+public/uploads/*
+!public/uploads/.gitkeep
 
 # Backups & SQL dumps
 backups

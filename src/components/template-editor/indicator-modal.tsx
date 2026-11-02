@@ -14,6 +14,8 @@ import {
   CheckCircle2,
   Sparkles,
   BookOpen,
+  ChevronDown,
+  SlidersHorizontal,
 } from "lucide-react";
 import type {
   Department,
@@ -28,9 +30,68 @@ import type { MasterParamItem } from "@/lib/excel-template-kpi";
 import Swal from "sweetalert2";
 import { formatNaturalCriteria } from "@/lib/kpi-display";
 import {
+  autoChainCriteria,
+  autoFixCriteria,
   generateAutoFillCriteria,
   validateStructuredCriteria,
 } from "@/lib/kpi-criteria-helper";
+
+export function stripIndicatorPrefix(name: string): string {
+  if (!name) return "";
+  return name.replace(/^\s*\d+(\.\d+)*[\.\:\s\-]+\s*/, "").trim();
+}
+
+export function getFriendlyMeasurementTypeName(code: string, originalName?: string): string {
+  switch (code) {
+    case "PERCENTAGE":
+      return "Persentase (%)";
+    case "NUMBER":
+    case "NUMERIC":
+      return "Angka / Numerik";
+    case "CURRENCY":
+      return "Nominal Uang (Rupiah / IDR)";
+    case "COUNT":
+      return "Jumlah / Frekuensi (Kasus/Kali)";
+    case "DAYS":
+      return "Hari / Durasi Waktu";
+    case "TEXT":
+      return "Kualitatif / Pilihan Teks";
+    default:
+      return originalName || code;
+  }
+}
+
+export function getFriendlyDirectionName(code: string, originalName?: string): string {
+  switch (code) {
+    case "HIGHER_IS_BETTER":
+      return "Makin Tinggi Makin Baik (Pencapaian Target)";
+    case "LOWER_IS_BETTER":
+      return "Makin Rendah Makin Baik (Efisiensi / Cacat Minim)";
+    case "EXACT_TARGET":
+      return "Tepat Sesuai Target (Zero Variance)";
+    case "TARGET_RANGE":
+      return "Rentang Target Tertentu";
+    case "NOT_APPLICABLE":
+      return "Tidak Berlaku (Kualitatif)";
+    default:
+      return originalName || code;
+  }
+}
+
+export function getFriendlyScoringMethodName(code: string, originalName?: string): string {
+  switch (code) {
+    case "CRITERIA_BASED":
+      return "Kriteria Skala Nilai (Standar Matriks)";
+    case "FORMULA_BASED":
+      return "Rumus / Formula Otomatis";
+    case "DIRECT_SCORE":
+      return "Penilaian Langsung oleh Asesor";
+    case "RATING_BASED":
+      return "Skala Peringkat / Rating";
+    default:
+      return originalName || code;
+  }
+}
 
 export interface IndicatorModalProps {
   isOpen: boolean;
@@ -38,6 +99,9 @@ export interface IndicatorModalProps {
   parameterId: number; // The parent parameter ID
   categoryId: number;
   templateId: number;
+  categoryName?: string;
+  categoryOrder?: number;
+  indicatorCode?: string;
   editingIndicator?: KpiParameter | null;
   existingBands?: KpiBand[];
   calculationRules?: KpiCalculationRule[];
@@ -49,7 +113,7 @@ export interface IndicatorModalProps {
     description: string;
     weight: string;
     unit: string;
-    target: string;
+    target?: string | null;
     picRole?: string;
     measurementType?: string;
     direction?: string;
@@ -94,6 +158,9 @@ export function IndicatorModal({
   parameterId,
   categoryId,
   templateId,
+  categoryName,
+  categoryOrder,
+  indicatorCode,
   editingIndicator,
   existingBands = [],
   calculationRules = [],
@@ -104,6 +171,7 @@ export function IndicatorModal({
 }: IndicatorModalProps) {
   const [activeTab, setActiveTab] = useState<"info" | "scoring">(initialTab);
   const [isSaving, setIsSaving] = useState(false);
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
 
   // Kamus Master Parameters per Department
   const currentDeptId = department?.id ?? null;
@@ -139,7 +207,7 @@ export function IndicatorModal({
   const [unit, setUnit] = useState("%");
   const [direction, setDirection] = useState("HIGHER_IS_BETTER");
   const [scoringMethod, setScoringMethod] = useState("CRITERIA_BASED");
-  const [target, setTarget] = useState("100");
+  const [target, setTarget] = useState("");
   const [calculationRuleId, setCalculationRuleId] = useState<number | null>(null);
 
   // Table Column Resizing State for Kriteria Scoring Table
@@ -221,10 +289,10 @@ export function IndicatorModal({
     const p = masterParams.find((x) => String(x.id) === String(paramId));
     if (!p) return;
 
-    setName(p.name);
+    setName(stripIndicatorPrefix(p.name));
     if (p.unit) setUnit(p.unit);
     if (p.description) setDescription(p.description);
-    setTarget("100");
+    setTarget((p as any).target ? String((p as any).target) : "");
 
     if (p.inputType === "PERCENTAGE") setMeasurementType("PERCENTAGE");
     else if (p.inputType === "NUMERIC") setMeasurementType("NUMERIC");
@@ -289,8 +357,9 @@ export function IndicatorModal({
   useEffect(() => {
     if (isOpen) {
       setActiveTab(initialTab || "info");
+      setIsAdvancedOpen(false);
       if (editingIndicator) {
-        setName(editingIndicator.name || "");
+        setName(stripIndicatorPrefix(editingIndicator.name || ""));
         setDescription(editingIndicator.description || "");
         setWeight(String(Math.round(Number(editingIndicator.weight) * 100) || 20));
 
@@ -377,17 +446,7 @@ export function IndicatorModal({
         setUnit(defaultUnit);
         setDirection(isInitText ? "NOT_APPLICABLE" : configDirections[0]?.code || "HIGHER_IS_BETTER");
         setScoringMethod(configScoringMethods[0]?.code || "CRITERIA_BASED");
-        setTarget(
-          isInitText
-            ? "Memenuhi"
-            : defaultMt === "PERCENTAGE"
-            ? "100"
-            : defaultMt === "CURRENCY"
-            ? "25000000"
-            : defaultMt === "COUNT" || defaultMt === "DAYS"
-            ? "0"
-            : "100"
-        );
+        setTarget("");
         const defaultRule =
           calculationRules.find((r) => r.code === "ACH-NORMAL-V1") ||
           calculationRules.find((r) => r.calculationType === "ACHIEVEMENT");
@@ -417,9 +476,6 @@ export function IndicatorModal({
     if (newMt === "TEXT") {
       setUnit("Teks");
       setDirection("NOT_APPLICABLE");
-      if (!target || target === "100" || target === "0" || target === "25000000") {
-        setTarget("Memenuhi");
-      }
       // Switch criteria rows to qualitative mapping if currently numeric
       const hasNumericOp = criteria.some((c) =>
         ["GT", "GTE", "LT", "LTE", "BETWEEN"].includes(c.operator)
@@ -446,15 +502,6 @@ export function IndicatorModal({
         setDirection(fallbackDir);
       }
 
-      // Update default target format
-      if (newMt === "PERCENTAGE") {
-        if (!target || target === "0" || target === "25000000" || target === "Memenuhi") setTarget("100");
-      } else if (newMt === "CURRENCY") {
-        if (!target || target === "100" || target === "Memenuhi") setTarget("25000000");
-      } else if (newMt === "COUNT" || newMt === "DAYS") {
-        if (!target || target === "100" || target === "25000000" || target === "Memenuhi") setTarget("0");
-      }
-
       // Revert criteria to numeric standard if switching from TEXT
       const hasTextOp = criteria.some((c) =>
         c.operator === "NEQ" || c.operator === "CONTAINS" || c.operator === "TEXT" || (c.operator === "EQ" && isNaN(Number(c.minValue)))
@@ -470,16 +517,39 @@ export function IndicatorModal({
   };
 
   const handleAddCriteriaRow = () => {
-    setCriteria((prev) => [
-      ...prev,
-      {
-        id: `new-${Date.now()}`,
-        operator: isTextType ? "EQ" : "GTE",
-        minValue: "",
-        maxValue: "",
-        score: "10",
-      },
-    ]);
+    setCriteria((prev) => {
+      let newOp: CriteriaRow["operator"] = "LT";
+      let newScore = "5";
+
+      if (isTextType) {
+        newOp = "EQ";
+      } else {
+        const isLowerBetter = direction === "LOWER_IS_BETTER";
+        newOp = isLowerBetter ? "GT" : "LT";
+      }
+
+      const newRows: CriteriaRow[] = [
+        ...prev,
+        {
+          id: `new-${Date.now()}`,
+          operator: newOp,
+          minValue: "",
+          maxValue: "",
+          score: newScore,
+        },
+      ];
+
+      if (isAutoFillEnabled && !isTextType) {
+        return autoChainCriteria({
+          rows: newRows as any,
+          direction,
+          measurementType,
+          unit,
+        }) as CriteriaRow[];
+      }
+
+      return newRows;
+    });
   };
 
   const handleRemoveCriteriaRow = (index: number) => {
@@ -492,19 +562,40 @@ export function IndicatorModal({
       });
       return;
     }
-    setCriteria((prev) => prev.filter((_, i) => i !== index));
+    setCriteria((prev) => {
+      const filtered = prev.filter((_, i) => i !== index);
+      if (isAutoFillEnabled && !isTextType && filtered.length > 1) {
+        return autoChainCriteria({
+          rows: filtered as any,
+          direction,
+          measurementType,
+          unit,
+        }) as CriteriaRow[];
+      }
+      return filtered;
+    });
   };
 
   const handleTriggerAutoFill = () => {
     if (criteria.length === 0) return;
-    const filled = generateAutoFillCriteria({
-      firstRow: criteria[0],
-      currentRows: criteria,
+    const filled = autoChainCriteria({
+      rows: criteria as any,
       direction,
       measurementType,
       unit,
-    });
+    }) as CriteriaRow[];
     setCriteria(filled);
+  };
+
+  const handleAutoFixCriteria = () => {
+    if (criteria.length === 0) return;
+    const fixed = autoFixCriteria({
+      rows: criteria as any,
+      direction,
+      measurementType,
+      unit,
+    }) as CriteriaRow[];
+    setCriteria(fixed);
   };
 
   const handleCriteriaChange = (index: number, field: keyof CriteriaRow, value: string) => {
@@ -513,19 +604,16 @@ export function IndicatorModal({
       const updatedRow = { ...next[index], [field]: value };
       next[index] = updatedRow;
 
-      // Auto-fill baris berikutnya saat rule/threshold pertama diubah (jika auto-fill aktif)
-      if (
-        index === 0 &&
-        isAutoFillEnabled &&
-        (field === "operator" || field === "minValue" || field === "maxValue" || field === "score")
-      ) {
-        return generateAutoFillCriteria({
-          firstRow: updatedRow,
-          currentRows: next,
+      // Auto-chain / auto-fill rentang nilai saat operator atau nilai diubah
+      if (isAutoFillEnabled && !isTextType) {
+        return autoChainCriteria({
+          rows: next as any,
           direction,
           measurementType,
           unit,
-        });
+          changedIndex: index,
+          changedField: field,
+        }) as CriteriaRow[];
       }
 
       return next;
@@ -534,11 +622,13 @@ export function IndicatorModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) {
+    const cleanName = stripIndicatorPrefix(name).trim();
+    if (!cleanName) {
       setActiveTab("info");
       void Swal.fire({
         icon: "warning",
         title: "Nama Indikator Wajib Diisi",
+        text: "Harap isi nama indikator penilaian.",
         confirmButtonColor: "#0f172a",
       });
       return;
@@ -660,11 +750,11 @@ export function IndicatorModal({
       }
 
       await onSave({
-        name: name.trim(),
+        name: cleanName,
         description: description.trim(),
         weight: String(weightNum),
         unit: isTextType ? "Teks" : unit.trim() || "%",
-        target: isTextType ? (target.trim() || "Memenuhi") : (target.trim() || "100"),
+        target: target.trim() ? target.trim() : null,
         measurementType,
         direction: isTextType ? "NOT_APPLICABLE" : direction,
         scoringMethod,
@@ -758,10 +848,10 @@ export function IndicatorModal({
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
           <div>
             <h3 className="text-base font-bold text-slate-900">
-              {editingIndicator ? "Edit Indikator / Kriteria Scoring" : "Tambah Indikator / Kriteria Scoring"}
+              {editingIndicator ? "Edit Indikator Penilaian" : "Tambah Indikator Penilaian"}
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Kelola informasi pokok dan kriteria scoring terstruktur untuk kalkulasi otomatis.
+              Kelola informasi indikator dan kriteria penilaian untuk kalkulasi skor otomatis.
             </p>
           </div>
           <button
@@ -785,7 +875,7 @@ export function IndicatorModal({
             }`}
           >
             <Layers className="w-3.5 h-3.5" />
-            <span>1. Informasi Pokok</span>
+            <span>1. Informasi Indikator</span>
           </button>
 
           <button
@@ -807,7 +897,7 @@ export function IndicatorModal({
                 ? "2. Formula Engine"
                 : scoringMethod === "DIRECT_SCORE"
                 ? "2. Penilaian Langsung"
-                : "2. Kriteria Scoring Terstruktur"}
+                : "2. Kriteria Nilai / Skor"}
             </span>
           </button>
         </div>
@@ -815,13 +905,31 @@ export function IndicatorModal({
         {/* Modal Body */}
         <form onSubmit={handleSubmit} className="p-6 overflow-y-auto flex-1 space-y-4">
           {activeTab === "info" ? (
-            /* TAB 1: INFORMASI POKOK */
+            /* TAB 1: INFORMASI INDIKATOR */
             <div className="space-y-4">
-              {/* Header Status KPI Config */}
+              {/* Header Info Kelompok Parameter & No. Indikator */}
+              <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                    Kelompok:
+                  </span>
+                  <span className="text-xs font-bold text-slate-800">
+                    {categoryOrder ? `${categoryOrder}. ` : ""}{categoryName || "Parameter"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-medium text-slate-500">Nomor Indikator:</span>
+                  <span className="px-2 py-0.5 bg-blue-50 border border-blue-200 text-blue-700 font-mono font-bold text-xs rounded-md">
+                    {indicatorCode || "1.1"}
+                  </span>
+                </div>
+              </div>
+
+              {/* Status KPI Config Loading/Error */}
               {isConfigLoading && (
                 <div className="p-2.5 bg-blue-50/70 border border-blue-200 rounded-lg flex items-center gap-2 text-xs text-blue-700">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Memuat master KPI Configuration dari sistem...</span>
+                  <span>Memuat konfigurasi master KPI dari sistem...</span>
                 </div>
               )}
               {configError && (
@@ -837,24 +945,24 @@ export function IndicatorModal({
                 </div>
               )}
 
-              {/* Selector Kamus Master Parameter */}
+              {/* Selector Kamus Master Parameter (Opsional) */}
               {allRelevantMasterParams.length > 0 && (
-                <div className="space-y-1">
-                  <label className="text-[11px] font-semibold text-slate-700 flex items-center gap-1.5">
-                    <BookOpen className="w-3.5 h-3.5 text-slate-500" />
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-600 flex items-center gap-1.5 mb-1">
+                    <BookOpen className="w-3.5 h-3.5 text-slate-400" />
                     <span>Pilih dari Kamus Parameter (Opsional)</span>
                   </label>
                   <select
                     onChange={(e) => handleSelectMasterParam(e.target.value)}
                     defaultValue=""
-                    className="w-full px-2.5 py-1.5 text-xs bg-slate-50 hover:bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:border-blue-500 cursor-pointer"
+                    className="w-full px-3 py-2 text-xs bg-white hover:bg-slate-50/50 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 cursor-pointer transition"
                   >
                     <option value="">-- Ketik manual atau pilih dari Kamus --</option>
                     {deptMasterParams.length > 0 && (
                       <optgroup label={`Kamus ${department?.name || "Departemen"} (${deptMasterParams.length})`}>
                         {deptMasterParams.map((p) => (
                           <option key={p.id} value={p.id}>
-                            {p.code ? `[${p.code}] ` : ""}{p.name} ({p.unit || "%"})
+                            {p.code ? `[${p.code}] ` : ""}{stripIndicatorPrefix(p.name)} ({p.unit || "%"})
                           </option>
                         ))}
                       </optgroup>
@@ -863,7 +971,7 @@ export function IndicatorModal({
                       <optgroup label={`Kamus Umum / Corporate (${generalMasterParams.length})`}>
                         {generalMasterParams.map((p) => (
                           <option key={p.id} value={p.id}>
-                            {p.code ? `[${p.code}] ` : ""}{p.name} ({p.unit || "%"})
+                            {p.code ? `[${p.code}] ` : ""}{stripIndicatorPrefix(p.name)} ({p.unit || "%"})
                           </option>
                         ))}
                       </optgroup>
@@ -874,70 +982,69 @@ export function IndicatorModal({
 
               {/* 1. Nama Indikator */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Nama Indikator <span className="text-rose-500">*</span>
                 </label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Contoh: Pencapaian Produksi, Ketepatan Waktu Laporan, dll"
-                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
-                />
+                <div className="flex rounded-lg shadow-2xs">
+                  <span className="inline-flex items-center px-3 rounded-l-lg border border-r-0 border-slate-200 bg-slate-50 text-slate-600 font-mono font-semibold text-xs select-none">
+                    {indicatorCode || "1.1"}
+                  </span>
+                  <input
+                    type="text"
+                    required
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    onBlur={() => setName(stripIndicatorPrefix(name))}
+                    placeholder="Contoh: Pemenuhan Kebutuhan User, Rasio Deadstock, dll"
+                    className="flex-1 min-w-0 block w-full px-3 py-2 text-xs border border-slate-200 rounded-r-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition font-medium text-slate-800"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Nomor indikator diatur otomatis oleh sistem. Cukup masukkan nama aktivitas atau sasaran kerja tanpa nomor.
+                </p>
               </div>
 
-              {/* 2. Bobot & Measurement Type */}
+              {/* 2. Target Pencapaian & Satuan Pengukuran */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Bobot Indikator (%) <span className="text-rose-500">*</span>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Target Pencapaian (Opsional)
                   </label>
-                  <div className="relative">
+                  <div className="relative flex items-center">
+                    {isCurrency && (
+                      <span className="absolute left-3 text-xs font-semibold text-slate-500 select-none">
+                        Rp
+                      </span>
+                    )}
                     <input
-                      type="number"
-                      required
-                      min="1"
-                      max="100"
-                      value={weight}
-                      onChange={(e) => setWeight(e.target.value)}
-                      placeholder="20"
-                      className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition pr-8 font-bold tabular-nums"
+                      type="text"
+                      value={target}
+                      onChange={(e) => setTarget(e.target.value)}
+                      placeholder={
+                        isTextType
+                          ? "Contoh: Memenuhi"
+                          : "Kosongkan jika tidak ada target"
+                      }
+                      className={`w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition ${
+                        isCurrency ? "pl-9" : ""
+                      } ${!isTextType && unit ? "pr-12" : ""}`}
                     />
-                    <span className="absolute right-3 top-2 text-xs text-slate-400 font-bold">%</span>
+                    {!isTextType && unit && (
+                      <span className="absolute right-3 text-xs text-slate-400 font-medium select-none">
+                        {unit}
+                      </span>
+                    )}
                   </div>
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    Bobot distribusi internal di dalam parameter.
-                  </p>
+                  {isCurrency && target && !isNaN(Number(target.replace(/[^\d.-]/g, ""))) && (
+                    <p className="text-[10px] text-slate-500 mt-1 font-mono">
+                      Rp {Number(target.replace(/[^\d.-]/g, "")).toLocaleString("id-ID")}
+                    </p>
+                  )}
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Measurement Type <span className="text-rose-500">*</span>
-                  </label>
-                  <select
-                    value={measurementType}
-                    onChange={(e) => handleMeasurementTypeChange(e.target.value)}
-                    disabled={isConfigLoading}
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition font-medium cursor-pointer"
-                  >
-                    {configMeasurementTypes.map((mt) => (
-                      <option key={mt.code} value={mt.code}>
-                        {mt.name}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    Format nilai actual dan tipe data pengukuran dari KPI Configuration.
-                  </p>
-                </div>
-              </div>
-
-              {/* 3. Unit & KPI Direction */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Unit (Satuan) <span className="text-rose-500">*</span>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Satuan Pengukuran <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -945,187 +1052,172 @@ export function IndicatorModal({
                     disabled={isTextType}
                     value={isTextType ? "Teks" : unit}
                     onChange={(e) => setUnit(e.target.value)}
-                    placeholder={isTextType ? "Teks" : "Contoh: %, IDR, Hari, Kasus, Unit"}
-                    className={`w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition font-medium ${
+                    placeholder="Contoh: %, Hari, Kasus, IDR, Dokumen"
+                    className={`w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition ${
                       isTextType ? "bg-slate-100 text-slate-500 cursor-not-allowed select-none" : ""
                     }`}
                   />
-                  <p className="text-[10px] text-blue-600 mt-1">
-                    {isTextType
-                      ? "Unit otomatis Teks untuk tipe pengukuran Kualitatif."
-                      : "Mengikuti Measurement Type, digunakan sebagai label nilai kriteria."}
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    KPI Direction <span className="text-rose-500">*</span>
-                  </label>
-                  <select
-                    value={isTextType ? "NOT_APPLICABLE" : direction}
-                    onChange={(e) => setDirection(e.target.value)}
-                    disabled={isTextType || isConfigLoading}
-                    className={`w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition font-medium ${
-                      isTextType ? "bg-slate-100 text-slate-500 cursor-not-allowed select-none" : "cursor-pointer"
-                    }`}
-                  >
-                    {isTextType ? (
-                      <option value="NOT_APPLICABLE">Not Applicable (Tidak Berlaku)</option>
-                    ) : (
-                      configDirections.map((kd) => (
-                        <option key={kd.code} value={kd.code}>
-                          {kd.name}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    {isTextType
-                      ? "Arah KPI dinonaktifkan (Not Applicable) untuk tipe kualitatif."
-                      : "Arah evaluasi capaian terhadap target."}
-                  </p>
                 </div>
               </div>
 
-              {/* 4. Target & Scoring Method */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-bold text-slate-700">
-                      Target <span className="text-rose-500">*</span>
-                    </label>
-                    <span className="text-[10px] text-slate-400 font-mono">
-                      Satuan: {isTextType ? "Teks" : unit || "-"}
-                    </span>
-                  </div>
-                  <div className="relative flex items-center">
-                    {isCurrency && (
-                      <span className="absolute left-3 text-xs font-bold text-slate-500 font-mono select-none">
-                        Rp
-                      </span>
-                    )}
-                    <input
-                      type="text"
-                      required
-                      value={target}
-                      onChange={(e) => setTarget(e.target.value)}
-                      placeholder={
-                        isTextType
-                          ? "Contoh: Memenuhi"
-                          : isCurrency
-                          ? "25.000.000"
-                          : isPercentage
-                          ? "100"
-                          : "100"
-                      }
-                      className={`w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition font-mono ${
-                        isCurrency ? "pl-9" : ""
-                      } ${!isTextType && unit ? "pr-14" : ""}`}
-                    />
-                    {!isTextType && unit && (
-                      <span className="absolute right-3 text-xs text-slate-400 font-bold font-mono select-none">
-                        {unit}
-                      </span>
-                    )}
-                  </div>
-                  {isCurrency && target && !isNaN(Number(target.replace(/[^\d.-]/g, ""))) && (
-                    <p className="text-[10px] text-slate-500 mt-1 font-mono">
-                      Format Nilai: Rp {Number(target.replace(/[^\d.-]/g, "")).toLocaleString("id-ID")}
-                    </p>
-                  )}
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    {isTextType
-                      ? "Target ekspektasi kualitatif (misal: Memenuhi, Selesai, dsb)."
-                      : `Format otomatis menyesuaikan Measurement Type (${measurementType}) dan Unit (${unit}).`}
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Scoring Method <span className="text-rose-500">*</span>
-                  </label>
-                  <select
-                    value={scoringMethod}
-                    onChange={(e) => setScoringMethod(e.target.value)}
-                    disabled={isConfigLoading}
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition font-medium cursor-pointer"
-                  >
-                    {configScoringMethods.map((sm) => (
-                      <option key={sm.code} value={sm.code}>
-                        {sm.name}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    Metode perhitungan skor akhir capaian indikator ini.
-                  </p>
-                </div>
-              </div>
-
-              {/* Kondisional Field Formula jika Scoring Method = FORMULA_BASED */}
-              {scoringMethod === "FORMULA_BASED" && (
-                <div className="p-3 bg-blue-50/60 border border-blue-200 rounded-xl space-y-2 animate-in fade-in duration-150">
-                  <div className="flex items-center gap-1.5">
-                    <Calculator className="w-4 h-4 text-blue-600" />
-                    <label className="text-xs font-bold text-slate-900">
-                      Pilih Formula Engine <span className="text-rose-500">*</span>
-                    </label>
-                  </div>
-                  <select
-                    value={calculationRuleId ?? ""}
-                    onChange={(e) =>
-                      setCalculationRuleId(e.target.value ? Number(e.target.value) : null)
-                    }
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition font-medium cursor-pointer"
-                  >
-                    <option value="">Pilih Formula Engine...</option>
-                    {calculationRules.map((rule) => (
-                      <option key={rule.id} value={rule.id}>
-                        {rule.name} ({rule.code})
-                      </option>
-                    ))}
-                  </select>
-                  {selectedRule && (
-                    <div className="text-[11px] text-slate-600 space-y-0.5 pt-1 border-t border-blue-100">
-                      <div>
-                        <span className="font-semibold">Kode:</span> {selectedRule.code} |{" "}
-                        <span className="font-semibold">Tipe:</span> {selectedRule.calculationType}
-                      </div>
-                      {selectedRule.description && (
-                        <div>
-                          <span className="font-semibold">Keterangan:</span> {selectedRule.description}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Kondisional Info jika Scoring Method = DIRECT_SCORE */}
-              {scoringMethod === "DIRECT_SCORE" && (
-                <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl text-xs text-slate-700 flex items-start gap-2 animate-in fade-in duration-150">
-                  <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-bold text-slate-900">Metode Penilaian Langsung:</span>
-                    <p className="text-[11px] text-slate-600 mt-0.5 leading-relaxed">
-                      Skor indikator ini diisi langsung secara diskresioner oleh Asesor pada tahap appraisal tanpa matriks rentang nilai kuantitatif atau formula otomatis.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* 5. Deskripsi */}
+              {/* 3. Bobot Indikator (%) */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Deskripsi / Petunjuk Pengukuran (Opsional)
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Bobot Indikator (%) <span className="text-rose-500">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    required
+                    min="1"
+                    max="100"
+                    value={weight}
+                    onChange={(e) => setWeight(e.target.value)}
+                    placeholder="20"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition pr-8 font-medium text-slate-800"
+                  />
+                  <span className="absolute right-3 top-2 text-xs text-slate-400 font-semibold">%</span>
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Persentase pembagian bobot indikator di dalam parameter ini.
+                </p>
+              </div>
+
+              {/* 4. Keterangan (Opsional) */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Keterangan / Petunjuk Pengukuran (Opsional)
                 </label>
                 <textarea
                   rows={2}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Jelaskan cara perhitungan atau sumber data verifikasi untuk indikator ini..."
+                  placeholder="Opsional: tambahkan catatan petunjuk pengukuran atau sumber data verifikasi..."
                   className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
                 />
+              </div>
+
+              {/* 5. Pengaturan Lanjutan (Collapsible) */}
+              <div className="pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
+                  className="flex items-center justify-between w-full p-2.5 rounded-lg bg-slate-50 hover:bg-slate-100/70 border border-slate-200 text-xs font-semibold text-slate-700 transition cursor-pointer"
+                >
+                  <div className="flex items-center gap-2">
+                    <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Pengaturan Lanjutan</span>
+                    <span className="text-[10px] font-normal text-slate-400">
+                      (Tipe Pengukuran, Arah Target, Metode Skor)
+                    </span>
+                  </div>
+                  <ChevronDown
+                    className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${
+                      isAdvancedOpen ? "rotate-180" : ""
+                    }`}
+                  />
+                </button>
+
+                {isAdvancedOpen && (
+                  <div className="mt-3 p-3.5 bg-slate-50/50 border border-slate-200 rounded-xl space-y-3.5 animate-in fade-in duration-150">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                      {/* Tipe Data Pengukuran */}
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">
+                          Tipe Data Pengukuran
+                        </label>
+                        <select
+                          value={measurementType}
+                          onChange={(e) => handleMeasurementTypeChange(e.target.value)}
+                          disabled={isConfigLoading}
+                          className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition cursor-pointer"
+                        >
+                          {configMeasurementTypes.map((mt) => (
+                            <option key={mt.code} value={mt.code}>
+                              {getFriendlyMeasurementTypeName(mt.code, mt.name)}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Format data capaian (misal persentase, nominal rupiah, atau teks).
+                        </p>
+                      </div>
+
+                      {/* Arah Pencapaian Target */}
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">
+                          Arah Pencapaian Target
+                        </label>
+                        <select
+                          value={isTextType ? "NOT_APPLICABLE" : direction}
+                          onChange={(e) => setDirection(e.target.value)}
+                          disabled={isTextType || isConfigLoading}
+                          className={`w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition ${
+                            isTextType ? "bg-slate-100 text-slate-500 cursor-not-allowed select-none" : "cursor-pointer"
+                          }`}
+                        >
+                          {isTextType ? (
+                            <option value="NOT_APPLICABLE">Tidak Berlaku (Kualitatif)</option>
+                          ) : (
+                            configDirections.map((kd) => (
+                              <option key={kd.code} value={kd.code}>
+                                {getFriendlyDirectionName(kd.code, kd.name)}
+                              </option>
+                            ))
+                          )}
+                        </select>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Menentukan apakah nilai lebih besar lebih baik atau sebaliknya.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Metode Perhitungan Skor */}
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">
+                        Metode Perhitungan Skor
+                      </label>
+                      <select
+                        value={scoringMethod}
+                        onChange={(e) => setScoringMethod(e.target.value)}
+                        disabled={isConfigLoading}
+                        className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition cursor-pointer"
+                      >
+                        {configScoringMethods.map((sm) => (
+                          <option key={sm.code} value={sm.code}>
+                            {getFriendlyScoringMethodName(sm.code, sm.name)}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        Cara sistem mengonversi hasil realisasi menjadi poin skor akhir.
+                      </p>
+                    </div>
+
+                    {/* Formula Engine selection if FORMULA_BASED */}
+                    {scoringMethod === "FORMULA_BASED" && (
+                      <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-lg space-y-2">
+                        <label className="block text-xs font-semibold text-blue-900">
+                          Formula Engine Terpilih
+                        </label>
+                        <select
+                          value={calculationRuleId ?? ""}
+                          onChange={(e) =>
+                            setCalculationRuleId(e.target.value ? Number(e.target.value) : null)
+                          }
+                          className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:border-blue-500 cursor-pointer"
+                        >
+                          <option value="">Pilih Formula Engine...</option>
+                          {calculationRules.map((rule) => (
+                            <option key={rule.id} value={rule.id}>
+                              {rule.name} ({rule.code})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           ) : (
@@ -1308,6 +1400,14 @@ export function IndicatorModal({
                         <span>Tambah Baris</span>
                       </button>
                     </div>
+                  </div>
+
+                  {/* Auto-fill Helper Banner */}
+                  <div className="p-2.5 bg-blue-50/60 border border-blue-200/70 rounded-xl flex items-center gap-2 text-xs text-blue-800">
+                    <Sparkles className="w-4 h-4 text-blue-600 shrink-0" />
+                    <span>
+                      <strong>Auto-fill Pintar Aktif:</strong> Pilih kondisi (operator) atau ubah nilai, sistem otomatis menyambungkan rentang baris berikutnya agar tidak terjadi celah (gap).
+                    </span>
                   </div>
 
                   {/* Criteria Table: No | Kondisi | Nilai/Target/Value Text | Skor | Aksi */}
@@ -1551,44 +1651,49 @@ export function IndicatorModal({
                     </table>
                   </div>
 
-                  {/* Status Validasi Kriteria: Gap, Overlap, & Incomplete */}
+                  {/* Status Validasi Kriteria (Simple & Compact dengan Tombol Perbaiki Otomatis) */}
                   {criteriaValidation.hasErrors ? (
-                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 space-y-1.5 animate-in fade-in duration-150">
-                      <div className="flex items-center gap-1.5 font-bold text-rose-900">
+                    <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl flex items-center justify-between gap-3 text-xs text-rose-900 animate-in fade-in duration-150">
+                      <div className="flex items-center gap-2 min-w-0">
                         <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                        <span>Validasi Kriteria Scoring Terdeteksi Masalah:</span>
+                        <span className="text-[11.5px] font-medium truncate">
+                          {criteriaValidation.errors[0] || "Kriteria scoring belum lengkap atau ada nilai tumpang tindih."}
+                        </span>
                       </div>
-                      <ul className="list-disc list-inside text-[11px] space-y-0.5 text-rose-700 pl-1">
-                        {criteriaValidation.errors.map((err, i) => (
-                          <li key={i}>{err}</li>
-                        ))}
-                      </ul>
-                      <p className="text-[10px] text-rose-600 mt-0.5">
-                        Harap perbaiki kriteria di atas agar perhitungan Calculation Engine akurat tanpa tumpang tindih.
-                      </p>
+                      <button
+                        type="button"
+                        onClick={handleAutoFixCriteria}
+                        className="shrink-0 px-2.5 py-1 text-[11px] font-bold text-rose-900 bg-rose-100 hover:bg-rose-200 border border-rose-300 rounded-lg transition cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-rose-700" />
+                        <span>Perbaiki Otomatis</span>
+                      </button>
                     </div>
                   ) : criteriaValidation.hasWarnings ? (
-                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 space-y-1.5 animate-in fade-in duration-150">
-                      <div className="flex items-center gap-1.5 font-bold text-amber-900">
+                    <div className="p-2.5 bg-amber-50/90 border border-amber-200 rounded-xl flex items-center justify-between gap-3 text-xs text-amber-900 animate-in fade-in duration-150">
+                      <div className="flex items-center gap-2 min-w-0">
                         <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                        <span>Peringatan Celah Nilai (Gap Terdeteksi):</span>
+                        <span className="text-[11.5px] font-medium truncate">
+                          {criteriaValidation.warnings[0] || "Terdapat celah rentang nilai yang belum terhubung rapi."}
+                        </span>
                       </div>
-                      <ul className="list-disc list-inside text-[11px] space-y-0.5 text-amber-700 pl-1">
-                        {criteriaValidation.warnings.map((warn, i) => (
-                          <li key={i}>{warn}</li>
-                        ))}
-                      </ul>
-                      <p className="text-[10px] text-amber-600 mt-0.5">
-                        Catatan: Pastikan celah nilai ini disengaja atau sesuaikan rentang agar seluruh capaian terdefinisi.
-                      </p>
+                      <button
+                        type="button"
+                        onClick={handleAutoFixCriteria}
+                        className="shrink-0 px-2.5 py-1 text-[11px] font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg transition cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                        title="Sistem akan otomatis menyesuaikan batas nilai agar tidak ada celah"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+                        <span>Perbaiki Otomatis</span>
+                      </button>
                     </div>
                   ) : (
-                    <div className="p-2.5 bg-emerald-50/80 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex items-center gap-2 animate-in fade-in duration-150">
+                    <div className="p-2 bg-emerald-50/80 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex items-center gap-2 animate-in fade-in duration-150">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                       <span className="font-medium text-[11px]">
                         {isTextType
-                          ? "Kriteria scoring kualitatif terstruktur valid: mapping teks dan skor sudah terdefinisi dengan benar."
-                          : "Kriteria scoring terstruktur valid: semua rentang terdefinisi tanpa celah (gap) atau tumpang tindih (overlap)."}
+                          ? "Kriteria kualitatif valid: pilihan teks dan skor terdefinisi dengan benar."
+                          : "Rentang kriteria valid dan tersambung tanpa celah (gap)."}
                       </span>
                     </div>
                   )}
@@ -1642,7 +1747,7 @@ export function IndicatorModal({
               disabled={isSaving}
               className="px-4 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg shadow-xs transition cursor-pointer"
             >
-              {isSaving ? "Menyimpan..." : "Simpan Indikator & Kriteria"}
+              {isSaving ? "Menyimpan..." : "Simpan Indikator"}
             </button>
           </div>
         </form>

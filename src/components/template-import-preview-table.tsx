@@ -533,7 +533,11 @@ export function TemplateImportPreviewTable({
 
                                   {/* Target & Satuan */}
                                   <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
-                                    <div>Target: <span className="font-semibold text-slate-800">{param.target || "100"}{param.unit || "%"}</span></div>
+                                    {param.target ? (
+                                      <div>Target: <span className="font-semibold text-slate-800">{param.target}{param.unit || "%"}</span></div>
+                                    ) : (
+                                      <div />
+                                    )}
                                     {onAutoHarmonizeParamBands && (
                                       <button
                                         type="button"

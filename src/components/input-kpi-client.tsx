@@ -1570,24 +1570,24 @@ export function InputKpiClient({
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-semibold text-slate-600">
-                    <th className="px-3 py-3 w-10 text-center">No</th>
-                    <th className="px-4 py-3 min-w-[200px]">Parameter KPI</th>
-                    <th className="px-3 py-3 text-center">Target</th>
+                  <tr className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-medium text-slate-600">
+                    <th className="px-3 py-3 w-10 text-center font-medium">No</th>
+                    <th className="px-4 py-3 min-w-[200px] font-medium">Parameter KPI</th>
+                    <th className="px-3 py-3 text-center font-medium">Target</th>
                     {MONTH_SHORT.map((m, idx) => (
                       <th
                         key={m}
-                        className={`px-2 py-3 text-center font-mono ${
-                          selectedMonth === idx + 1 ? "bg-slate-100 font-bold text-slate-900" : ""
+                        className={`px-2 py-3 text-center ${
+                          selectedMonth === idx + 1 ? "bg-slate-100 font-semibold text-slate-900" : "font-medium"
                         }`}
                       >
                         {m}
                       </th>
                     ))}
-                    <th className="px-3 py-3 text-center bg-slate-50 font-bold text-slate-800">
+                    <th className="px-3 py-3 text-center bg-slate-50 font-medium text-slate-800">
                       Annual Actual
                     </th>
-                    <th className="px-3 py-3 text-right bg-slate-50 font-bold text-slate-900 pr-4">
+                    <th className="px-3 py-3 text-right bg-slate-50 font-medium text-slate-900 pr-4">
                       Final Score
                     </th>
                   </tr>
@@ -1598,11 +1598,11 @@ export function InputKpiClient({
 
                     return (
                       <tr key={param.id} className="hover:bg-slate-50/60 transition">
-                        <td className="px-3 py-3 text-center text-slate-400 font-mono">
+                        <td className="px-3 py-3 text-center text-slate-400 font-normal">
                           {no}
                         </td>
                         <td className="px-4 py-3">
-                          <div className="font-semibold text-slate-900">{param.name}</div>
+                          <div className="font-medium text-slate-900">{param.name}</div>
                           <div className="text-[10px] text-slate-400">
                             {param.category} · Bobot {param.weight}%
                           </div>
@@ -1622,7 +1622,7 @@ export function InputKpiClient({
                                 setPeriodType("Bulanan");
                                 setActiveTab("bulanan");
                               }}
-                              className="px-2 py-3 text-center font-mono text-xs cursor-pointer hover:bg-slate-100 transition"
+                              className="px-2 py-3 text-center font-normal text-xs cursor-pointer hover:bg-slate-100 transition"
                               title={`Klik untuk edit ${MONTH_NAMES[mIdx]}`}
                             >
                               {val !== null ? (
@@ -1635,16 +1635,14 @@ export function InputKpiClient({
                         })}
 
                         {/* Annual Actual */}
-                        <td className="px-3 py-3 text-center font-mono font-semibold text-slate-900 whitespace-nowrap bg-slate-50/40">
+                        <td className="px-3 py-3 text-center font-normal text-slate-800 whitespace-nowrap bg-slate-50/40">
                           {annualActual !== null ? `${annualActual} ${param.unit}` : "-"}
                         </td>
 
                         {/* Final Score */}
-                        <td className="px-3 py-3 text-right font-mono font-bold text-slate-900 pr-4 whitespace-nowrap bg-slate-50/40">
+                        <td className="px-3 py-3 text-right font-medium text-slate-800 pr-4 whitespace-nowrap bg-slate-50/40">
                           {annualActual !== null ? (
-                            <span className="rounded bg-emerald-50 text-emerald-800 px-2 py-0.5 border border-emerald-200">
-                              {finalWeightedScore}%
-                            </span>
+                            <span>{finalWeightedScore}%</span>
                           ) : (
                             <span className="text-slate-300">-</span>
                           )}

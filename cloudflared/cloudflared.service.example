@@ -1,0 +1,20 @@
+# ==============================================================================
+# SYSTEMD SERVICE UNIT: CLOUDFLARE TUNNEL NATIVE DI UBUNTU SERVER
+# Berkas pasang: /etc/systemd/system/cloudflared.service
+# ==============================================================================
+
+[Unit]
+Description=Cloudflare Tunnel Daemon (Native)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/cloudflared --no-autoupdate tunnel --config /etc/cloudflared/config.yml run
+Restart=always
+RestartSec=5
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
+

@@ -1385,7 +1385,7 @@ export function TemplateExcelImportWizard({
             masterParameterId: p.masterParameterId ?? null,
             name: p.name,
             description: p.description || null,
-            target: p.target || "100",
+            target: p.target && String(p.target).trim() !== "" ? String(p.target).trim() : null,
             unit: p.unit || "%",
             weight: p.weight,
             maxScore: p.maxScore || 25,

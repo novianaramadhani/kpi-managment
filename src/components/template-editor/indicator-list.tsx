@@ -77,7 +77,7 @@ export function IndicatorList({
                 {/* Order & Move buttons */}
                 <td className="py-3 px-4 text-center">
                   <div className="flex items-center justify-center gap-1">
-                    <span className="text-xs font-mono text-slate-400 font-medium">
+                    <span className="text-xs text-slate-400 font-normal">
                       {idx + 1}
                     </span>
                     <div className="flex flex-col opacity-0 group-hover:opacity-100 transition-opacity">
@@ -105,8 +105,8 @@ export function IndicatorList({
 
                 {/* Indicator Info: Name & Truncated Description */}
                 <td className="py-3 px-4">
-                  <div className="font-semibold text-slate-900 text-xs">
-                    {param.name}
+                  <div className="font-medium text-slate-900 text-xs">
+                    {param.name.replace(/^\s*\d+(\.\d+)*[\.\:\s\-]+\s*/, "") || param.name}
                   </div>
                   {param.description && (
                     <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1 max-w-md font-normal">
@@ -115,14 +115,14 @@ export function IndicatorList({
                   )}
                 </td>
 
-                {/* Weight: Simple font-mono text, NO badge, shows both internal and effective */}
+                {/* Weight: Simple text, NO badge, shows both internal and effective */}
                 <td className="py-3 px-4 text-center">
                   <div className="flex flex-col items-center justify-center">
-                    <span className="font-mono text-xs font-bold text-slate-800" title="Bobot Internal Sub-poin">
+                    <span className="text-xs font-medium text-slate-800" title="Bobot Internal Sub-poin">
                       {weightPct}%
                     </span>
                     {categoryWeightPct !== undefined && (
-                      <span className="text-[10px] text-slate-500 font-medium mt-0.5" title="Bobot Efektif thd Global">
+                      <span className="text-[10px] text-slate-500 font-normal mt-0.5" title="Bobot Efektif thd Global">
                         Eff: {((weightPct / 100) * categoryWeightPct).toFixed(1).replace(/\.0$/, "")}%
                       </span>
                     )}

@@ -704,7 +704,7 @@ export function buildKpiTemplateSheetRows({
             Number(b.score ?? 0) - Number(a.score ?? 0)
         );
 
-      const hasTarget = p.target !== null && p.target !== undefined && String(p.target).trim() !== "" && String(p.target).trim() !== "100";
+      const hasTarget = p.target !== null && p.target !== undefined && String(p.target).trim() !== "";
       const targetVal = hasTarget ? String(p.target).trim() : "";
       const unitVal = p.unit || "%";
       const b1 = pBands[0];
@@ -1701,7 +1701,7 @@ export async function parseKpiTemplateExcel(
         action: mapInfo?.indicatorId ? "UPDATE" : "CREATE",
         name: subName,
         description: paramDescCol || matchedDbParam?.description || "",
-        target: targetCol || "100",
+        target: targetCol && targetCol.trim() !== "" ? targetCol.trim() : undefined,
         unit: unitCol || matchedDbParam?.unit || "%",
         weight: parsedPWeight || (currentIndicator && currentIndicator.weight > 0 ? currentIndicator.weight : 0.2),
         maxScore: 25,
@@ -1737,7 +1737,7 @@ export async function parseKpiTemplateExcel(
           action: mapInfo?.indicatorId ? "UPDATE" : "CREATE",
           name: indName,
           description: paramDescCol || matchedDbParam?.description || "",
-          target: targetCol || "100",
+          target: targetCol && targetCol.trim() !== "" ? targetCol.trim() : undefined,
           unit: unitCol || matchedDbParam?.unit || "%",
           weight: parsedPWeight || 0.2,
           maxScore: 25,
@@ -1768,7 +1768,7 @@ export async function parseKpiTemplateExcel(
         action: mapInfo?.indicatorId ? "UPDATE" : "CREATE",
         name: currentIndicator.name,
         description: paramDescCol || matchedDbParam?.description || "",
-        target: targetCol || "100",
+        target: targetCol && targetCol.trim() !== "" ? targetCol.trim() : undefined,
         unit: unitCol || matchedDbParam?.unit || "%",
         weight: currentIndicator.weight || parsedPWeight || 0.2,
         maxScore: 25,
@@ -1794,7 +1794,7 @@ export async function parseKpiTemplateExcel(
         action: mapInfo?.indicatorId ? "UPDATE" : "CREATE",
         name: cleanParamName,
         description: paramDescCol || matchedDbParam?.description || "",
-        target: targetCol || "100",
+        target: targetCol && targetCol.trim() !== "" ? targetCol.trim() : undefined,
         unit: unitCol || matchedDbParam?.unit || "%",
         weight: parsedPWeight || 0.25,
         maxScore: 25,
@@ -1816,7 +1816,7 @@ export async function parseKpiTemplateExcel(
         action: mapInfo?.indicatorId ? "UPDATE" : "CREATE",
         name: currentCat.name,
         description: paramDescCol || matchedDbParam?.description || "Penilaian langsung parameter",
-        target: targetCol || "100",
+        target: targetCol && targetCol.trim() !== "" ? targetCol.trim() : undefined,
         unit: unitCol || matchedDbParam?.unit || "%",
         weight: 1.0,
         maxScore: 25,
@@ -2105,6 +2105,7 @@ export interface MasterParamItem {
   code?: string | null;
   name: string;
   description?: string | null;
+  target?: string | null;
   departmentId?: number | null;
   departmentName?: string | null;
   categoryName?: string | null;
@@ -3522,10 +3523,9 @@ export async function validateAndParseWizardExcel(
       const directCode = effectiveCode || configCat?.parameterCode || "";
       if (directCode) foundParameterCodes.add(directCode.toUpperCase().trim());
 
-      const finalTarget = targetCol || configCat?.target || "100";
-      if (!finalTarget) {
-        missingTargets.push(currentCat.name);
-      }
+      const finalTarget = (targetCol && targetCol.trim() !== "")
+        ? targetCol.trim()
+        : (configCat?.target ? configCat.target.trim() : undefined);
 
       currentParam = {
         id: mapInfo?.parameterId ?? configCat?.parameterId ?? null,
@@ -3578,7 +3578,9 @@ export async function validateAndParseWizardExcel(
         }
 
         const effectiveUnit = unitCol || mapInfo?.unit || matchedConfigSub?.unit || "%";
-        const effectiveTarget = targetCol || matchedConfigSub?.target || "100";
+        const effectiveTarget = (targetCol && targetCol.trim() !== "")
+          ? targetCol.trim()
+          : (matchedConfigSub?.target ? matchedConfigSub.target.trim() : undefined);
 
         currentParam = {
           id: mapInfo?.parameterId ?? matchedConfigSub?.id ?? null,
@@ -4565,7 +4567,7 @@ export async function parseMasterTemplateExcelSheet(
           masterParameterId: matchedMaster?.id ?? null,
           name: currentCat.name,
           description: paramDescCol || matchedMaster?.description || "Penilaian langsung indikator",
-          target: targetCol || "100",
+          target: targetCol && targetCol.trim() !== "" ? targetCol.trim() : undefined,
           unit: unitCol || matchedMaster?.unit || "%",
           weight: 1.0,
           maxScore: 25,
@@ -4633,7 +4635,7 @@ export async function parseMasterTemplateExcelSheet(
         masterParameterId: matchedMaster?.id ?? null,
         name: subName,
         description: paramDescCol || matchedMaster?.description || "",
-        target: targetCol || "100",
+        target: targetCol && targetCol.trim() !== "" ? targetCol.trim() : undefined,
         unit: unitCol || matchedMaster?.unit || "%",
         weight: parsedW || (currentIndicator && currentIndicator.weight > 0 ? currentIndicator.weight : 0.2),
         maxScore: 25,
@@ -4667,7 +4669,7 @@ export async function parseMasterTemplateExcelSheet(
           masterParameterId: matchedMaster?.id ?? null,
           name: indName,
           description: paramDescCol || matchedMaster?.description || "",
-          target: targetCol || "100",
+          target: targetCol && targetCol.trim() !== "" ? targetCol.trim() : undefined,
           unit: unitCol || matchedMaster?.unit || "%",
           weight: parsedW || 0.2,
           maxScore: 25,
@@ -4698,7 +4700,7 @@ export async function parseMasterTemplateExcelSheet(
         masterParameterId: matchedMaster?.id ?? null,
         name: currentIndicator.name,
         description: paramDescCol || matchedMaster?.description || "",
-        target: targetCol || "100",
+        target: targetCol && targetCol.trim() !== "" ? targetCol.trim() : undefined,
         unit: unitCol || matchedMaster?.unit || "%",
         weight: currentIndicator.weight || parsedW || 0.2,
         maxScore: 25,
@@ -4721,7 +4723,7 @@ export async function parseMasterTemplateExcelSheet(
         masterParameterId: matchedMaster?.id ?? null,
         name: cleanName,
         description: paramDescCol || matchedMaster?.description || "",
-        target: targetCol || "100",
+        target: targetCol && targetCol.trim() !== "" ? targetCol.trim() : undefined,
         unit: unitCol || matchedMaster?.unit || "%",
         weight: parsedW || 0.2,
         maxScore: 25,

@@ -16,6 +16,8 @@ node_modules/
 .env.*
 !.env.example
 !.env.docker.example
+!.env.development.example
+!.env.production.example
 
 # Backups & Database Dumps
 backups/
@@ -23,8 +25,10 @@ backups/
 !drizzle/*.sql
 *.sql.gz
 
-# Cloudflare Tunnel Credentials & Local Config
-cloudflared/
+# Cloudflare Tunnel Credentials & Local Config (Credentials & config lokal diabaikan)
+cloudflared/*
+!cloudflared/*.example*
+!cloudflared/config.ubuntu.example.yml
 *.pem
 
 # File Eksperimen / Scratch & File Sementara

@@ -1269,7 +1269,7 @@ export function KpiStructureForm({
     description: string;
     weight: string;
     unit: string;
-    target: string;
+    target?: string | null;
     picRole?: string;
     measurementType?: string;
     direction?: string;
@@ -1292,7 +1292,11 @@ export function KpiStructureForm({
     fd.append("weight", data.weight);
     fd.append("unit", data.unit);
     fd.append("picRole", data.picRole || "HEAD_DEPT");
-    fd.append("target", data.target);
+    if (data.target && data.target.trim()) {
+      fd.append("target", data.target.trim());
+    } else {
+      fd.append("target", "");
+    }
     if (data.measurementType) fd.append("measurementType", data.measurementType);
     if (data.direction) fd.append("direction", data.direction);
     if (data.scoringMethod) fd.append("scoringMethod", data.scoringMethod);
@@ -2093,20 +2097,41 @@ export function KpiStructureForm({
       {/* ========================================================= */}
       {/* 4. MODAL INDIKATOR & SKALA NILAI (Scoring Table inside Modal) */}
       {/* ========================================================= */}
-      <IndicatorModal
-        isOpen={indicatorModalState.isOpen}
-        onClose={() => setIndicatorModalState((prev) => ({ ...prev, isOpen: false }))}
-        parameterId={indicatorModalState.categoryId}
-        categoryId={indicatorModalState.categoryId}
-        templateId={templateId}
-        editingIndicator={indicatorModalState.editingIndicator}
-        existingBands={bands}
-        calculationRules={calculationRules}
-        initialTab={indicatorModalState.initialTab || "info"}
-        masterParams={masterParams}
-        department={department}
-        onSave={handleSaveIndicatorFromModal}
-      />
+      {(() => {
+        const activeCategory = sortedCategories.find((c) => c.id === indicatorModalState.categoryId);
+        const activeCategoryIndex = sortedCategories.findIndex((c) => c.id === indicatorModalState.categoryId);
+        const categoryOrder = activeCategoryIndex >= 0 ? activeCategoryIndex + 1 : 1;
+        const categoryName = activeCategory?.name || "";
+        const catParams = categoryParametersMap.get(indicatorModalState.categoryId) || [];
+        let indicatorIndex = catParams.length + 1;
+        if (indicatorModalState.editingIndicator) {
+          const foundIdx = catParams.findIndex((p) => p.id === indicatorModalState.editingIndicator?.id);
+          if (foundIdx >= 0) {
+            indicatorIndex = foundIdx + 1;
+          }
+        }
+        const indicatorCode = `${categoryOrder}.${indicatorIndex}`;
+
+        return (
+          <IndicatorModal
+            isOpen={indicatorModalState.isOpen}
+            onClose={() => setIndicatorModalState((prev) => ({ ...prev, isOpen: false }))}
+            parameterId={indicatorModalState.categoryId}
+            categoryId={indicatorModalState.categoryId}
+            categoryName={categoryName}
+            categoryOrder={categoryOrder}
+            indicatorCode={indicatorCode}
+            templateId={templateId}
+            editingIndicator={indicatorModalState.editingIndicator}
+            existingBands={bands}
+            calculationRules={calculationRules}
+            initialTab={indicatorModalState.initialTab || "info"}
+            masterParams={masterParams}
+            department={department}
+            onSave={handleSaveIndicatorFromModal}
+          />
+        );
+      })()}
 
       {/* ========================================================= */}
       {/* 5. MODAL PEMILIH MASTER PARAMETER (KAMUS) */}

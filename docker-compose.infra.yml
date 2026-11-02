@@ -1,0 +1,75 @@
+services:
+  db:
+    image: postgres:16
+    container_name: kpi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-kpi_app}
+      TZ: Asia/Jakarta
+    volumes:
+      - kpi_postgres_data:/var/lib/postgresql/data
+    ports:
+      # Port 5433 hanya di-bind ke 127.0.0.1 host untuk administrasi lokal (SSH Tunnel / DBeaver)
+      - "127.0.0.1:5433:5432"
+    networks:
+      kpi-network:
+        aliases:
+          - db
+          - kpi-postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-kpi_app}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2048M
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  backup:
+    image: prodrigestivill/postgres-backup-local:16-alpine
+    container_name: kpi-backup
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backups:/backups
+    environment:
+      POSTGRES_HOST: kpi-postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-kpi_app}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      SCHEDULE: ${BACKUP_SCHEDULE:-@daily}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_SUFFIX: ".sql.gz"
+      POSTGRES_EXTRA_OPTS: "-Z6 --schema=public --blobs"
+    networks:
+      - kpi-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  kpi_postgres_data:
+    name: ${DB_VOLUME_NAME:-template_kpi_postgres_data}
+
+networks:
+  kpi-network:
+    external: true
+    name: kpi-network

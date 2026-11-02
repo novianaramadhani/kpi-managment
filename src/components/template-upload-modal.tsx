@@ -139,8 +139,8 @@ export function buildCategoriesPayloadFromDraft(categories: KpiCategoryDraft[]):
         return {
           name: p.name.trim(),
           description: p.description?.trim() || undefined,
-          target: "100",
-          unit: "%",
+          target: (p as any).target && String((p as any).target).trim() !== "" ? String((p as any).target).trim() : null,
+          unit: (p as any).unit && String((p as any).unit).trim() !== "" ? String((p as any).unit).trim() : "%",
           weight: paramWeight,
           maxScore: Number(p.skor) || 25,
           inputType: "MONTHLY_ACTUAL" as const,

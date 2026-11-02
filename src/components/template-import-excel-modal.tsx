@@ -839,7 +839,7 @@ export function TemplateImportExcelModal({
                                               </div>
                                               <div className="text-[10px] text-slate-400 font-normal flex items-center gap-2 mt-0.5">
                                                 <span>Satuan: <strong>{p.unit}</strong></span>
-                                                <span>Target: <strong>{p.target || "100"}</strong></span>
+                                                {p.target ? <span>Target: <strong>{p.target}</strong></span> : null}
                                               </div>
                                             </div>
                                           )}

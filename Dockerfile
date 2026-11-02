@@ -39,7 +39,8 @@ RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
 # Salin aset publik
-COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+RUN mkdir -p ./public/uploads && chown -R nextjs:nodejs ./public/uploads
 
 # Salin standalone Next.js ke root /app (berisi server.js, package.json, minimal node_modules)
 COPY --from=builder --chown=nextjs:nodejs /app/.next_fresh/standalone ./
