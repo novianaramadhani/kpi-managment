@@ -101,6 +101,9 @@ export interface IndicatorModalProps {
   templateId: number;
   categoryName?: string;
   categoryOrder?: number;
+  categoryWeight?: number | string;
+  isDirectCategory?: boolean;
+  hasMultipleSubIndicators?: boolean;
   indicatorCode?: string;
   editingIndicator?: KpiParameter | null;
   existingBands?: KpiBand[];
@@ -112,6 +115,7 @@ export interface IndicatorModalProps {
     name: string;
     description: string;
     weight: string;
+    categoryWeight?: string;
     unit: string;
     target?: string | null;
     picRole?: string;
@@ -160,6 +164,9 @@ export function IndicatorModal({
   templateId,
   categoryName,
   categoryOrder,
+  categoryWeight,
+  isDirectCategory,
+  hasMultipleSubIndicators = false,
   indicatorCode,
   editingIndicator,
   existingBands = [],
@@ -201,6 +208,9 @@ export function IndicatorModal({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [weight, setWeight] = useState("20");
+  const [catWeight, setCatWeight] = useState(
+    categoryWeight !== undefined && categoryWeight !== null ? String(categoryWeight) : "20"
+  );
 
   // KPI Configuration Fields
   const [measurementType, setMeasurementType] = useState("PERCENTAGE");
@@ -358,6 +368,11 @@ export function IndicatorModal({
     if (isOpen) {
       setActiveTab(initialTab || "info");
       setIsAdvancedOpen(false);
+
+      if (categoryWeight !== undefined && categoryWeight !== null) {
+        setCatWeight(String(categoryWeight));
+      }
+
       if (editingIndicator) {
         setName(stripIndicatorPrefix(editingIndicator.name || ""));
         setDescription(editingIndicator.description || "");
@@ -436,7 +451,7 @@ export function IndicatorModal({
       } else {
         setName("");
         setDescription("");
-        setWeight("20");
+        setWeight(categoryWeight !== undefined && categoryWeight !== null ? String(categoryWeight) : "20");
         const defaultMt = configMeasurementTypes[0]?.code || "PERCENTAGE";
         const isInitText = defaultMt === "TEXT";
         const defaultUnit = isInitText
@@ -466,7 +481,7 @@ export function IndicatorModal({
         }
       }
     }
-  }, [isOpen, editingIndicator, existingBands, calculationRules]);
+  }, [isOpen, editingIndicator, existingBands, calculationRules, categoryWeight, initialTab]);
 
   if (!isOpen) return null;
 
@@ -634,12 +649,24 @@ export function IndicatorModal({
       return;
     }
 
-    const weightNum = Number(weight);
+    const catWeightNum = Number(catWeight);
+    if (isNaN(catWeightNum) || catWeightNum <= 0 || catWeightNum > 100) {
+      setActiveTab("info");
+      void Swal.fire({
+        icon: "warning",
+        title: "Bobot Parameter Tidak Valid",
+        text: "Bobot parameter harus bernilai antara 1% sampai 100%.",
+        confirmButtonColor: "#0f172a",
+      });
+      return;
+    }
+
+    const weightNum = hasMultipleSubIndicators ? Number(weight) : catWeightNum;
     if (isNaN(weightNum) || weightNum <= 0 || weightNum > 100) {
       setActiveTab("info");
       void Swal.fire({
         icon: "warning",
-        title: "Bobot Tidak Valid",
+        title: "Bobot Indikator Tidak Valid",
         text: "Bobot indikator harus bernilai antara 1% sampai 100%.",
         confirmButtonColor: "#0f172a",
       });
@@ -753,6 +780,7 @@ export function IndicatorModal({
         name: cleanName,
         description: description.trim(),
         weight: String(weightNum),
+        categoryWeight: String(catWeightNum),
         unit: isTextType ? "Teks" : unit.trim() || "%",
         target: target.trim() ? target.trim() : null,
         measurementType,
@@ -1060,28 +1088,79 @@ export function IndicatorModal({
                 </div>
               </div>
 
-              {/* 3. Bobot Indikator (%) */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Bobot Indikator (%) <span className="text-rose-500">*</span>
-                </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    required
-                    min="1"
-                    max="100"
-                    value={weight}
-                    onChange={(e) => setWeight(e.target.value)}
-                    placeholder="20"
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition pr-8 font-medium text-slate-800"
-                  />
-                  <span className="absolute right-3 top-2 text-xs text-slate-400 font-semibold">%</span>
+              {/* 3. Bobot Parameter & Indikator */}
+              {hasMultipleSubIndicators ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Bobot Parameter KPI (%) <span className="text-rose-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        required
+                        min="1"
+                        max="100"
+                        value={catWeight}
+                        onChange={(e) => setCatWeight(e.target.value)}
+                        placeholder="20"
+                        className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition pr-8 font-medium text-slate-800"
+                      />
+                      <span className="absolute right-3 top-2 text-xs text-slate-400 font-semibold">%</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Bobot kelompok parameter {categoryName ? `"${categoryName}"` : ""} terhadap total KPI (100%).
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Bobot Indikator (%) <span className="text-rose-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        required
+                        min="1"
+                        max="100"
+                        value={weight}
+                        onChange={(e) => setWeight(e.target.value)}
+                        placeholder="50"
+                        className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition pr-8 font-medium text-slate-800"
+                      />
+                      <span className="absolute right-3 top-2 text-xs text-slate-400 font-semibold">%</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Porsi pembagian bobot indikator {indicatorCode || ""} di dalam parameter ini.
+                    </p>
+                  </div>
                 </div>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Persentase pembagian bobot indikator di dalam parameter ini.
-                </p>
-              </div>
+              ) : (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Bobot Parameter (%) <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      required
+                      min="1"
+                      max="100"
+                      value={catWeight}
+                      onChange={(e) => {
+                        setCatWeight(e.target.value);
+                        setWeight(e.target.value);
+                      }}
+                      placeholder="20"
+                      className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition pr-8 font-medium text-slate-800"
+                    />
+                    <span className="absolute right-3 top-2 text-xs text-slate-400 font-semibold">%</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Bobot parameter {categoryName ? `"${categoryName}"` : ""} terhadap total keseluruhan KPI (100%).
+                  </p>
+                </div>
+              )}
 
               {/* 4. Keterangan (Opsional) */}
               <div>

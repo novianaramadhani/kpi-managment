@@ -226,6 +226,17 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
   // Urutkan menurut waktu terbaru (descending)
   unifiedLogs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
+  async function handleUpsertEmployee(fd: FormData) {
+    "use server";
+    try {
+      await upsertEmployee(fd);
+      return { success: true };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Gagal menyimpan data karyawan.";
+      return { success: false, error: msg };
+    }
+  }
+
   return (
     <div className="min-h-screen bg-slate-50/60 py-5 px-3 sm:px-6 lg:px-8">
       <EmployeeDetailClient
@@ -237,7 +248,7 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
         mappings={mappingsList}
         permission={permission}
         auditLogs={unifiedLogs}
-        upsertAction={upsertEmployee}
+        upsertAction={handleUpsertEmployee}
         resetPasswordAction={resetEmployeePasswordAction}
       />
     </div>

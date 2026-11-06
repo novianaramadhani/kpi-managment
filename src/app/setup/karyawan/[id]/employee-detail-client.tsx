@@ -54,7 +54,7 @@ interface Props {
   mappings?: DepartmentMapping[];
   permission?: JobLevelPermission | null;
   auditLogs?: UnifiedLogItem[];
-  upsertAction: (fd: FormData) => Promise<void>;
+  upsertAction: (fd: FormData) => Promise<{ success: boolean; error?: string } | void>;
   resetPasswordAction: (
     employeeId: number
   ) => Promise<{ success: boolean; message?: string; error?: string }>;
@@ -322,7 +322,12 @@ export function EmployeeDetailClient({
 
   const handleJobPositionChange = (posName: string) => {
     setJobPosition(posName);
-    const matched = jobPositions.find((p) => p.name === posName);
+    const currentDeptIdNum = Number(departmentId);
+    const matched =
+      jobPositions.find(
+        (p) => p.name === posName && (!currentDeptIdNum || p.departmentId === currentDeptIdNum)
+      ) || jobPositions.find((p) => p.name === posName);
+
     if (matched) {
       setJobPositionId(String(matched.id));
       if (matched.jobLevelId) {
@@ -338,6 +343,37 @@ export function EmployeeDetailClient({
 
   const handleSimpan = (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!departmentId) {
+      void Swal.fire({
+        icon: "warning",
+        title: "Departemen Belum Dipilih",
+        text: "Silakan pilih Departemen untuk karyawan ini sebelum menyimpan.",
+        confirmButtonColor: "#2563eb",
+      });
+      return;
+    }
+
+    if (!jobPosition.trim()) {
+      void Swal.fire({
+        icon: "warning",
+        title: "Jabatan Belum Diisi",
+        text: "Jabatan (Job Position) wajib dipilih atau diisi sebelum menyimpan.",
+        confirmButtonColor: "#2563eb",
+      });
+      return;
+    }
+
+    if (!jobLevelId) {
+      void Swal.fire({
+        icon: "warning",
+        title: "Job Level Belum Dipilih",
+        text: "Silakan pilih Job Level untuk karyawan ini sebelum menyimpan.",
+        confirmButtonColor: "#2563eb",
+      });
+      return;
+    }
+
     const fd = new FormData();
     fd.append("id", String(employee.id));
     fd.append("nik", employee.nik);
@@ -358,7 +394,17 @@ export function EmployeeDetailClient({
 
     startTransition(async () => {
       try {
-        await upsertAction(fd);
+        const res = await upsertAction(fd);
+        if (res && typeof res === "object" && "success" in res && !res.success) {
+          await Swal.fire({
+            icon: "error",
+            title: "Gagal Menyimpan",
+            text: res.error || "Terjadi kesalahan saat menyimpan data karyawan.",
+            confirmButtonColor: "#e11d48",
+          });
+          return;
+        }
+
         await Swal.fire({
           icon: "success",
           title: "Berhasil Disimpan",
@@ -368,8 +414,14 @@ export function EmployeeDetailClient({
         });
         router.push("/setup/master?tab=karyawan");
         router.refresh();
-      } catch (err: any) {
-        Swal.fire({ icon: "error", title: "Gagal Menyimpan", text: err.message });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Terjadi kesalahan pada server saat menyimpan.";
+        void Swal.fire({
+          icon: "error",
+          title: "Gagal Menyimpan",
+          text: msg,
+          confirmButtonColor: "#e11d48",
+        });
       }
     });
   };
@@ -644,10 +696,19 @@ export function EmployeeDetailClient({
                   const newDeptId = e.target.value;
                   setDepartmentId(newDeptId);
                   const posInNewDept = jobPositions.find(
-                    (p) => String(p.departmentId) === String(newDeptId) && p.name === jobPosition
+                    (p) =>
+                      String(p.departmentId) === String(newDeptId) &&
+                      p.name.trim().toLowerCase() === jobPosition.trim().toLowerCase()
                   );
-                  if (!posInNewDept && jobPosition) {
-                    setJobPosition("");
+                  if (posInNewDept) {
+                    setJobPosition(posInNewDept.name);
+                    setJobPositionId(String(posInNewDept.id));
+                    if (posInNewDept.jobLevelId) {
+                      setJobLevelId(String(posInNewDept.jobLevelId));
+                    }
+                  } else {
+                    // Lepas tautan jobPositionId agar tidak terikat ke master jabatan departemen lama,
+                    // tetapi pertahankan teks jobPosition agar tidak kosong atau hilang
                     setJobPositionId("");
                   }
                   // Auto-suggest PIT dari mapping departemen jika departemen baru memiliki mapping PIT di site saat ini
@@ -707,14 +768,25 @@ export function EmployeeDetailClient({
             </div>
 
             <div>
-              <label className={labelBase}>Jabatan (Job Position)</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className={labelBase} style={{ marginBottom: 0 }}>
+                  Jabatan (Job Position)
+                </label>
+                {!jobPosition && (
+                  <span className="text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200/80 px-1.5 py-0.2 rounded">
+                    Wajib dipilih
+                  </span>
+                )}
+              </div>
               {jobPositions && jobPositions.length > 0 ? (
                 <select
                   value={jobPosition}
                   onChange={(e) => handleJobPositionChange(e.target.value)}
-                  className={inputBase}
+                  className={`${inputBase} ${
+                    !jobPosition ? "border-amber-400 bg-amber-50/40 text-slate-800" : ""
+                  }`}
                 >
-                  <option value="">-- Pilih Jabatan --</option>
+                  <option value="">-- Pilih Jabatan di {selectedDeptName || "Departemen"} --</option>
                   {deptPositions.length > 0 && (
                     <optgroup label={`Jabatan di Departemen (${selectedDeptName || "Departemen"})`}>
                       {deptPositions.map((p) => (

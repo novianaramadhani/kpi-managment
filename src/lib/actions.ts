@@ -26,12 +26,17 @@ import {
   sites,
   jobPositionSequences,
   pits,
+  departmentKpiActuals,
 } from "@/db/schema";
 import { and, eq, inArray, or, ilike, isNull, sql, asc, desc, ne } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { scoreItem, tenureMonths, resolveKpiDirection, type ItemInput } from "./scoring";
-import { recalculateAppraisal as recalculateAppraisalUnified } from "./monthly-assessment-service";
+import { getCurrentUser } from "@/lib/auth";
+import {
+  recalculateAppraisal as recalculateAppraisalUnified,
+  getMonthlyAssessmentDetail,
+} from "./monthly-assessment-service";
 import { seedDemoData } from "@/db/seed-data";
 import { syncAllFromOdoo, ODOO_CONFIG } from "@/lib/odoo";
 import { matchesSite, matchesDeptName } from "./department-mapping-utils";
@@ -1064,16 +1069,50 @@ export async function upsertEmployee(fd: FormData) {
     const [matched] = await db.select().from(jobPositions).where(eq(jobPositions.id, jobPositionId));
     if (matched) {
       jobPosition = matched.name;
-      departmentId = matched.departmentId;
-      jobLevelId = matched.jobLevelId;
+      // Only set departmentId if not explicitly provided in the form
+      if (!departmentId && matched.departmentId) {
+        departmentId = matched.departmentId;
+      } else if (departmentId && matched.departmentId && matched.departmentId !== departmentId) {
+        // If employee is being reassigned to a different department than the position's department,
+        // decouple jobPositionId unless a matching position in the new department exists
+        const [deptMatched] = await db.select().from(jobPositions).where(
+          and(
+            eq(jobPositions.departmentId, departmentId),
+            ilike(jobPositions.name, matched.name)
+          )
+        );
+        jobPositionId = deptMatched ? deptMatched.id : null;
+      }
+      if (!jobLevelId && matched.jobLevelId) {
+        jobLevelId = matched.jobLevelId;
+      }
     }
   } else if (jobPosition) {
-    // If only text is given, lookup from master jobPositions
-    const [matched] = await db.select().from(jobPositions).where(eq(jobPositions.name, jobPosition));
+    // If only text is given, lookup from master jobPositions (prioritize user's department)
+    let matched: typeof jobPositions.$inferSelect | undefined;
+    if (departmentId) {
+      const [deptMatched] = await db.select().from(jobPositions).where(
+        and(
+          eq(jobPositions.departmentId, departmentId),
+          ilike(jobPositions.name, jobPosition)
+        )
+      );
+      matched = deptMatched;
+    }
+    if (!matched) {
+      const [anyMatched] = await db.select().from(jobPositions).where(ilike(jobPositions.name, jobPosition));
+      matched = anyMatched;
+    }
     if (matched) {
-      jobPositionId = matched.id;
-      departmentId = matched.departmentId;
-      jobLevelId = matched.jobLevelId;
+      if (matched.departmentId === departmentId || !matched.departmentId) {
+        jobPositionId = matched.id;
+      }
+      if (!departmentId && matched.departmentId) {
+        departmentId = matched.departmentId;
+      }
+      if (!jobLevelId && matched.jobLevelId) {
+        jobLevelId = matched.jobLevelId;
+      }
     }
   }
 
@@ -3285,70 +3324,7 @@ export async function saveImportedMasterTemplateAction(input: {
         .reduce((sum, c) => sum + Number(c.weight || 0), 0)
         .toFixed(4);
 
-      // B. Proteksi Duplikasi Master Template:
-      // Periksa apakah template dengan kombinasi departemen, job level, jabatan, dan nama sudah ada
-      const [existingTemplate] = await tx
-        .select()
-        .from(kpiTemplates)
-        .where(
-          and(
-            eq(kpiTemplates.departmentId, input.departmentId),
-            eq(kpiTemplates.jobLevelId, input.jobLevelId),
-            input.jobPositionId ? eq(kpiTemplates.jobPositionId, input.jobPositionId) : isNull(kpiTemplates.jobPositionId),
-            ilike(kpiTemplates.name, input.name.trim())
-          )
-        )
-        .limit(1);
-
-      let targetTemplateId: number;
-      let isUpdated = false;
-
-      if (existingTemplate) {
-        // Update template yang ada secara in-place (mencegah duplikasi baris master template)
-        const nextVersion = (existingTemplate.version || 1) + 1;
-        await tx
-          .update(kpiTemplates)
-          .set({
-            periodId,
-            description: input.periodYear ? `Periode ${input.periodYear}` : existingTemplate.description,
-            totalWeight: totalWeightStr,
-            isActive: autoPublish ? true : false,
-            version: nextVersion,
-            updatedAt: new Date(),
-          })
-          .where(eq(kpiTemplates.id, existingTemplate.id));
-
-        targetTemplateId = existingTemplate.id;
-        isUpdated = true;
-      } else {
-        // Buat entri template baru
-        const [newTpl] = await tx
-          .insert(kpiTemplates)
-          .values({
-            name: input.name.trim(),
-            departmentId: input.departmentId,
-            jobLevelId: input.jobLevelId,
-            jobPositionId: input.jobPositionId || null,
-            periodId,
-            description: input.periodYear ? `Periode ${input.periodYear}` : undefined,
-            totalWeight: totalWeightStr,
-            isActive: autoPublish ? true : false,
-            version: 1,
-          })
-          .returning();
-
-        targetTemplateId = newTpl.id;
-      }
-
-      // C. Impor struktur kategori, parameter, dan kriteria bands secara atomik dalam tx
-      const importRes = await importTemplateStructure(
-        targetTemplateId,
-        input.categories,
-        "REPLACE",
-        { skipRevalidate: true, tx }
-      );
-
-      // D. Pencocokan & Penugasan Karyawan Default (Appraisal & Appraisal Items)
+      // D. Pencocokan & Penugasan Karyawan Target Terlebih Dahulu
       let assignedEmp: { id: number; nik: string; name: string } | undefined;
       let activeAppraisalId: number | undefined;
 
@@ -3379,6 +3355,157 @@ export async function saveImportedMasterTemplateAction(input: {
           .limit(1);
         targetEmployee = e;
       }
+
+      if (targetEmployee) {
+        assignedEmp = {
+          id: targetEmployee.id,
+          nik: targetEmployee.nik,
+          name: targetEmployee.name,
+        };
+      }
+
+      // B. Proteksi Duplikasi Master Template:
+      // Cari template yang sudah ada agar tidak terjadi duplikasi baris di database
+      let existingTemplate: typeof kpiTemplates.$inferSelect | undefined;
+
+      // 1) Prioritas Utama: Cari berdasarkan karyawan yang terikat (employeeId & periodId)
+      if (targetEmployee) {
+        // Cek langsung pada kolom employeeId di kpiTemplates
+        const empTemplates = await tx
+          .select()
+          .from(kpiTemplates)
+          .where(
+            and(
+              eq(kpiTemplates.employeeId, targetEmployee.id),
+              periodId ? eq(kpiTemplates.periodId, periodId) : sql`1=1`
+            )
+          )
+          .orderBy(desc(kpiTemplates.isActive), desc(kpiTemplates.id))
+          .limit(1);
+
+        if (empTemplates.length > 0) {
+          existingTemplate = empTemplates[0];
+        } else {
+          // Cek via appraisals
+          const [appr] = await tx
+            .select({ templateId: appraisals.templateId })
+            .from(appraisals)
+            .where(
+              and(
+                eq(appraisals.employeeId, targetEmployee.id),
+                periodId ? eq(appraisals.periodId, periodId) : sql`1=1`
+              )
+            )
+            .orderBy(desc(appraisals.id))
+            .limit(1);
+
+          if (appr?.templateId) {
+            const [t] = await tx
+              .select()
+              .from(kpiTemplates)
+              .where(
+                and(
+                  eq(kpiTemplates.id, appr.templateId),
+                  or(isNull(kpiTemplates.employeeId), eq(kpiTemplates.employeeId, targetEmployee.id))
+                )
+              )
+              .limit(1);
+            if (t) existingTemplate = t;
+          }
+        }
+
+        // Cek via nama template yang memuat nama karyawan
+        if (!existingTemplate && targetEmployee.name) {
+          const [tByName] = await tx
+            .select()
+            .from(kpiTemplates)
+            .where(
+              and(
+                ilike(kpiTemplates.name, `%${targetEmployee.name.trim()}%`),
+                or(isNull(kpiTemplates.employeeId), eq(kpiTemplates.employeeId, targetEmployee.id)),
+                periodId ? eq(kpiTemplates.periodId, periodId) : sql`1=1`
+              )
+            )
+            .orderBy(desc(kpiTemplates.id))
+            .limit(1);
+          if (tByName) existingTemplate = tByName;
+        }
+      }
+
+      // 2) Prioritas Kedua: Cari berdasarkan kombinasi jabatan, departemen, job level, dan nama template
+      if (!existingTemplate) {
+        const conditions = [
+          eq(kpiTemplates.departmentId, input.departmentId),
+          eq(kpiTemplates.jobLevelId, input.jobLevelId),
+          input.jobPositionId ? eq(kpiTemplates.jobPositionId, input.jobPositionId) : isNull(kpiTemplates.jobPositionId),
+          ilike(kpiTemplates.name, input.name.trim()),
+        ];
+        if (targetEmployee) {
+          conditions.push(sql`(${kpiTemplates.employeeId} IS NULL OR ${kpiTemplates.employeeId} = ${targetEmployee.id})`);
+        } else {
+          conditions.push(isNull(kpiTemplates.employeeId));
+        }
+        const [tByDeptPos] = await tx
+          .select()
+          .from(kpiTemplates)
+          .where(and(...conditions))
+          .limit(1);
+        if (tByDeptPos) existingTemplate = tByDeptPos;
+      }
+
+      let targetTemplateId: number;
+      let isUpdated = false;
+
+      if (existingTemplate) {
+        // Update template yang ada secara in-place (mencegah duplikasi baris master template)
+        const nextVersion = (existingTemplate.version || 1) + 1;
+        await tx
+          .update(kpiTemplates)
+          .set({
+            name: input.name.trim(),
+            departmentId: input.departmentId,
+            jobLevelId: input.jobLevelId,
+            jobPositionId: input.jobPositionId || existingTemplate.jobPositionId || null,
+            periodId: periodId || existingTemplate.periodId,
+            employeeId: targetEmployee ? targetEmployee.id : existingTemplate.employeeId,
+            description: input.periodYear ? `Periode ${input.periodYear}` : existingTemplate.description,
+            totalWeight: totalWeightStr,
+            isActive: autoPublish ? true : false,
+            version: nextVersion,
+            updatedAt: new Date(),
+          })
+          .where(eq(kpiTemplates.id, existingTemplate.id));
+
+        targetTemplateId = existingTemplate.id;
+        isUpdated = true;
+      } else {
+        // Buat entri template baru
+        const [newTpl] = await tx
+          .insert(kpiTemplates)
+          .values({
+            name: input.name.trim(),
+            departmentId: input.departmentId,
+            jobLevelId: input.jobLevelId,
+            jobPositionId: input.jobPositionId || null,
+            periodId,
+            employeeId: targetEmployee ? targetEmployee.id : null,
+            description: input.periodYear ? `Periode ${input.periodYear}` : undefined,
+            totalWeight: totalWeightStr,
+            isActive: autoPublish ? true : false,
+            version: 1,
+          })
+          .returning();
+
+        targetTemplateId = newTpl.id;
+      }
+
+      // C. Impor struktur kategori, parameter, dan kriteria bands secara atomik dalam tx
+      const importRes = await importTemplateStructure(
+        targetTemplateId,
+        input.categories,
+        "REPLACE",
+        { skipRevalidate: true, tx }
+      );
 
       if (targetEmployee && periodId) {
         const empId = targetEmployee.id;
@@ -3521,6 +3648,288 @@ export async function saveImportedMasterTemplateAction(input: {
   }
 }
 
+export interface CheckExistingTemplateResult {
+  found: boolean;
+  matchedBy?: "EMPLOYEE_ID" | "APPRAISAL" | "EMPLOYEE_NAME" | "POSITION_DEPARTMENT" | "NONE";
+  template?: {
+    id: number;
+    name: string;
+    version: number;
+    totalWeight: string;
+    isActive: boolean;
+    periodYear?: number | null;
+    periodId?: number | null;
+    employeeId?: number | null;
+    employeeName?: string | null;
+    employeeNik?: string | null;
+    departmentName?: string | null;
+    jobPositionName?: string | null;
+    categoryCount?: number;
+    parameterCount?: number;
+  };
+}
+
+export async function checkExistingTemplateForEmployeeAction(input: {
+  employeeNik?: string | null;
+  employeeId?: number | null;
+  employeeName?: string | null;
+  periodYear?: string | number | null;
+  departmentId?: number | null;
+  jobPositionId?: number | null;
+}): Promise<CheckExistingTemplateResult> {
+  try {
+    let emp: typeof employees.$inferSelect | undefined;
+    if (input.employeeId) {
+      const [e] = await db
+        .select()
+        .from(employees)
+        .where(eq(employees.id, input.employeeId))
+        .limit(1);
+      emp = e;
+    } else if (input.employeeNik?.trim()) {
+      const cleanNik = input.employeeNik.trim();
+      const [e] = await db
+        .select()
+        .from(employees)
+        .where(eq(employees.nik, cleanNik))
+        .limit(1);
+      emp = e;
+    } else if (input.employeeName?.trim()) {
+      const cleanName = input.employeeName.trim();
+      const [e] = await db
+        .select()
+        .from(employees)
+        .where(ilike(employees.name, cleanName))
+        .limit(1);
+      emp = e;
+    }
+
+    let periodId: number | null = null;
+    let periodYearNum: number | null = null;
+    if (input.periodYear) {
+      periodYearNum =
+        typeof input.periodYear === "number"
+          ? input.periodYear
+          : parseInt(String(input.periodYear).trim(), 10);
+      if (!isNaN(periodYearNum)) {
+        const [p] = await db
+          .select()
+          .from(kpiPeriods)
+          .where(eq(kpiPeriods.year, periodYearNum))
+          .limit(1);
+        if (p) periodId = p.id;
+      }
+    }
+
+    let tpl: typeof kpiTemplates.$inferSelect | undefined;
+    let matchedBy: CheckExistingTemplateResult["matchedBy"] = "NONE";
+
+    const hasTargetEmployee = Boolean(
+      emp ||
+      (input.employeeNik && input.employeeNik.trim()) ||
+      (input.employeeName && input.employeeName.trim())
+    );
+
+    if (emp) {
+      // 1. Cek langsung via kpiTemplates.employeeId
+      const empTpls = await db
+        .select()
+        .from(kpiTemplates)
+        .where(
+          and(
+            eq(kpiTemplates.employeeId, emp.id),
+            periodId ? eq(kpiTemplates.periodId, periodId) : sql`1=1`
+          )
+        )
+        .orderBy(desc(kpiTemplates.isActive), desc(kpiTemplates.id))
+        .limit(1);
+
+      if (empTpls.length > 0) {
+        tpl = empTpls[0];
+        matchedBy = "EMPLOYEE_ID";
+      } else {
+        // Coba lagi tanpa filter period jika belum ketemu
+        const anyPeriodTpls = await db
+          .select()
+          .from(kpiTemplates)
+          .where(eq(kpiTemplates.employeeId, emp.id))
+          .orderBy(desc(kpiTemplates.isActive), desc(kpiTemplates.id))
+          .limit(1);
+        if (anyPeriodTpls.length > 0) {
+          tpl = anyPeriodTpls[0];
+          matchedBy = "EMPLOYEE_ID";
+        }
+      }
+
+      // 2. Cek via appraisals (hanya template yang dimiliki karyawan ini atau generic)
+      if (!tpl) {
+        const [appr] = await db
+          .select({ templateId: appraisals.templateId })
+          .from(appraisals)
+          .where(
+            and(
+              eq(appraisals.employeeId, emp.id),
+              periodId ? eq(appraisals.periodId, periodId) : sql`1=1`
+            )
+          )
+          .orderBy(desc(appraisals.id))
+          .limit(1);
+
+        if (appr?.templateId) {
+          const [t] = await db
+            .select()
+            .from(kpiTemplates)
+            .where(
+              and(
+                eq(kpiTemplates.id, appr.templateId),
+                or(isNull(kpiTemplates.employeeId), eq(kpiTemplates.employeeId, emp.id))
+              )
+            )
+            .limit(1);
+          if (t) {
+            tpl = t;
+            matchedBy = "APPRAISAL";
+          }
+        }
+      }
+
+      // 3. Cek via nama template yang memuat nama karyawan (pastikan bukan milik karyawan lain)
+      if (!tpl && emp.name) {
+        const [tByName] = await db
+          .select()
+          .from(kpiTemplates)
+          .where(
+            and(
+              ilike(kpiTemplates.name, `%${emp.name.trim()}%`),
+              or(isNull(kpiTemplates.employeeId), eq(kpiTemplates.employeeId, emp.id)),
+              periodId ? eq(kpiTemplates.periodId, periodId) : sql`1=1`
+            )
+          )
+          .orderBy(desc(kpiTemplates.id))
+          .limit(1);
+
+        if (tByName) {
+          tpl = tByName;
+          matchedBy = "EMPLOYEE_NAME";
+        }
+      }
+    } else if (input.employeeName?.trim()) {
+      // Jika karyawan belum terdaftar di tabel employees, cari template yang memuat nama karyawan
+      const [tByName] = await db
+        .select()
+        .from(kpiTemplates)
+        .where(
+          and(
+            ilike(kpiTemplates.name, `%${input.employeeName.trim()}%`),
+            isNull(kpiTemplates.employeeId),
+            periodId ? eq(kpiTemplates.periodId, periodId) : sql`1=1`
+          )
+        )
+        .orderBy(desc(kpiTemplates.id))
+        .limit(1);
+
+      if (tByName) {
+        tpl = tByName;
+        matchedBy = "EMPLOYEE_NAME";
+      }
+    }
+
+    // 4. HANYA jika TIDAK ADA target karyawan sama sekali (template generic/posisi),
+    // cek apakah ada template generic untuk posisi & departemen tersebut.
+    // Jika sedang import/konfigurasi untuk Karyawan tertentu, JANGAN PERNAH mencocokkan template karyawan lain!
+    if (!hasTargetEmployee && !tpl && input.departmentId && input.jobPositionId) {
+      const [tByPos] = await db
+        .select()
+        .from(kpiTemplates)
+        .where(
+          and(
+            isNull(kpiTemplates.employeeId),
+            eq(kpiTemplates.departmentId, input.departmentId),
+            eq(kpiTemplates.jobPositionId, input.jobPositionId),
+            periodId ? eq(kpiTemplates.periodId, periodId) : sql`1=1`
+          )
+        )
+        .orderBy(desc(kpiTemplates.isActive), desc(kpiTemplates.id))
+        .limit(1);
+
+      if (tByPos) {
+        tpl = tByPos;
+        matchedBy = "POSITION_DEPARTMENT";
+      }
+    }
+
+    if (!tpl) {
+      return { found: false, matchedBy: "NONE" };
+    }
+
+    // Resolusi nama pemilik template jika belum ada emp
+    let ownerEmpName = emp?.name ?? null;
+    let ownerEmpNik = emp?.nik ?? null;
+    if (!ownerEmpName && tpl.employeeId) {
+      const [tEmp] = await db
+        .select({ name: employees.name, nik: employees.nik })
+        .from(employees)
+        .where(eq(employees.id, tpl.employeeId))
+        .limit(1);
+      if (tEmp) {
+        ownerEmpName = tEmp.name;
+        ownerEmpNik = tEmp.nik;
+      }
+    }
+
+    const [dept] = tpl.departmentId
+      ? await db
+          .select({ name: departments.name })
+          .from(departments)
+          .where(eq(departments.id, tpl.departmentId))
+          .limit(1)
+      : [null];
+
+    const [pos] = tpl.jobPositionId
+      ? await db
+          .select({ name: jobPositions.name })
+          .from(jobPositions)
+          .where(eq(jobPositions.id, tpl.jobPositionId))
+          .limit(1)
+      : [null];
+
+    const catCountRes = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(kpiCategories)
+      .where(eq(kpiCategories.templateId, tpl.id));
+
+    const paramCountRes = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(kpiParameters)
+      .innerJoin(kpiCategories, eq(kpiParameters.categoryId, kpiCategories.id))
+      .where(eq(kpiCategories.templateId, tpl.id));
+
+    return {
+      found: true,
+      matchedBy,
+      template: {
+        id: tpl.id,
+        name: tpl.name,
+        version: tpl.version || 1,
+        totalWeight: tpl.totalWeight || "1.0000",
+        isActive: tpl.isActive ?? true,
+        periodYear: periodYearNum,
+        periodId: tpl.periodId,
+        employeeId: tpl.employeeId ?? emp?.id ?? null,
+        employeeName: ownerEmpName,
+        employeeNik: ownerEmpNik,
+        departmentName: dept?.name ?? null,
+        jobPositionName: pos?.name ?? null,
+        categoryCount: catCountRes[0]?.count ?? 0,
+        parameterCount: paramCountRes[0]?.count ?? 0,
+      },
+    };
+  } catch (err) {
+    console.error("Gagal memeriksa template eksisting karyawan:", err);
+    return { found: false, matchedBy: "NONE" };
+  }
+}
+
 export interface ExistingTemplateComparisonData {
   found: boolean;
   template?: {
@@ -3559,47 +3968,130 @@ export async function getExistingMasterTemplateForComparisonAction(input: {
   jobLevelId: number;
   jobPositionId?: number | null;
   periodYear?: string;
+  employeeNik?: string | null;
+  employeeId?: number | null;
 }): Promise<ExistingTemplateComparisonData> {
   try {
-    if (!input.departmentId || !input.jobLevelId) {
-      return { found: false };
+    let tpl: typeof kpiTemplates.$inferSelect | undefined;
+
+    // A. Prioritas 1: Jika employeeNik atau employeeId diberikan, cari template milik karyawan tersebut
+    let emp: typeof employees.$inferSelect | undefined;
+    if (input.employeeId) {
+      const [e] = await db
+        .select()
+        .from(employees)
+        .where(eq(employees.id, input.employeeId))
+        .limit(1);
+      emp = e;
+    } else if (input.employeeNik?.trim()) {
+      const cleanNik = input.employeeNik.trim();
+      const [e] = await db
+        .select()
+        .from(employees)
+        .where(eq(employees.nik, cleanNik))
+        .limit(1);
+      emp = e;
     }
 
-    // Jika jobPositionId diberikan, cari template spesifik untuk jabatan tersebut terlebih dahulu
-    let templates = input.jobPositionId
-      ? await db
+    const hasTargetEmployee = Boolean(emp || input.employeeNik?.trim());
+
+    if (emp) {
+      const empTpls = await db
+        .select()
+        .from(kpiTemplates)
+        .where(eq(kpiTemplates.employeeId, emp.id))
+        .orderBy(desc(kpiTemplates.isActive), desc(kpiTemplates.id))
+        .limit(1);
+
+      if (empTpls.length > 0) {
+        tpl = empTpls[0];
+      } else {
+        const [appr] = await db
+          .select({ templateId: appraisals.templateId })
+          .from(appraisals)
+          .where(eq(appraisals.employeeId, emp.id))
+          .orderBy(desc(appraisals.id))
+          .limit(1);
+
+        if (appr?.templateId) {
+          const [t] = await db
+            .select()
+            .from(kpiTemplates)
+            .where(
+              and(
+                eq(kpiTemplates.id, appr.templateId),
+                or(isNull(kpiTemplates.employeeId), eq(kpiTemplates.employeeId, emp.id))
+              )
+            )
+            .limit(1);
+          if (t) tpl = t;
+        }
+      }
+
+      if (!tpl && emp.name) {
+        const [tByName] = await db
           .select()
           .from(kpiTemplates)
           .where(
             and(
-              eq(kpiTemplates.departmentId, input.departmentId),
-              eq(kpiTemplates.jobLevelId, input.jobLevelId),
-              eq(kpiTemplates.jobPositionId, input.jobPositionId)
+              ilike(kpiTemplates.name, `%${emp.name.trim()}%`),
+              or(isNull(kpiTemplates.employeeId), eq(kpiTemplates.employeeId, emp.id))
             )
           )
-          .orderBy(desc(kpiTemplates.isActive), desc(kpiTemplates.id))
-          .limit(1)
-      : [];
-
-    if (templates.length === 0) {
-      templates = await db
-        .select()
-        .from(kpiTemplates)
-        .where(
-          and(
-            eq(kpiTemplates.departmentId, input.departmentId),
-            eq(kpiTemplates.jobLevelId, input.jobLevelId)
-          )
-        )
-        .orderBy(desc(kpiTemplates.isActive), desc(kpiTemplates.id))
-        .limit(1);
+          .orderBy(desc(kpiTemplates.id))
+          .limit(1);
+        if (tByName) tpl = tByName;
+      }
     }
 
-    if (templates.length === 0) {
+    // B. Prioritas 2: Cari template berdasarkan jobPositionId + departmentId + jobLevelId
+    // PENTING: Jika sedang import untuk karyawan tertentu, JANGAN PERNAH mengambil template milik karyawan lain!
+    if (!tpl) {
+      if (!input.departmentId || !input.jobLevelId) {
+        return { found: false };
+      }
+
+      const conditions = [
+        eq(kpiTemplates.departmentId, input.departmentId),
+        eq(kpiTemplates.jobLevelId, input.jobLevelId),
+      ];
+
+      if (hasTargetEmployee) {
+        if (emp) {
+          conditions.push(sql`(${kpiTemplates.employeeId} IS NULL OR ${kpiTemplates.employeeId} = ${emp.id})`);
+        } else {
+          conditions.push(isNull(kpiTemplates.employeeId));
+        }
+      } else {
+        conditions.push(isNull(kpiTemplates.employeeId));
+      }
+
+      let templates = input.jobPositionId
+        ? await db
+            .select()
+            .from(kpiTemplates)
+            .where(and(...conditions, eq(kpiTemplates.jobPositionId, input.jobPositionId)))
+            .orderBy(desc(kpiTemplates.isActive), desc(kpiTemplates.id))
+            .limit(1)
+        : [];
+
+      if (templates.length === 0) {
+        templates = await db
+          .select()
+          .from(kpiTemplates)
+          .where(and(...conditions))
+          .orderBy(desc(kpiTemplates.isActive), desc(kpiTemplates.id))
+          .limit(1);
+      }
+
+      if (templates.length > 0) {
+        tpl = templates[0];
+      }
+    }
+
+    if (!tpl) {
       return { found: false };
     }
-
-    const tpl = templates[0];
 
     const cats = await db
       .select()
@@ -3768,6 +4260,14 @@ export async function resolveExcelHeaderTargetAction(input: {
           .leftJoin(jobPositions, eq(employees.jobPositionId, jobPositions.id))
           .leftJoin(jobLevels, eq(employees.jobLevelId, jobLevels.id))
           .where(ilike(employees.name, `%${cleanName}%`))
+          .orderBy(
+            asc(sql`CASE 
+              WHEN lower(${employees.name}) = lower(${cleanName}) THEN 0 
+              WHEN lower(${employees.name}) LIKE lower(${cleanName}) || '%' THEN 1 
+              ELSE 2 
+            END`),
+            asc(employees.name)
+          )
           .limit(1);
       }
 
@@ -3944,6 +4444,8 @@ export async function createMasterParameterFromImportAction(input: {
   unit?: string;
   description?: string;
   inputType?: string;
+  target?: string;
+  weight?: number | string | null;
   bands?: Array<{
     score: number;
     label: string;
@@ -3961,6 +4463,9 @@ export async function createMasterParameterFromImportAction(input: {
     unit: string | null;
     categoryName: string | null;
     description: string | null;
+    target?: string | null;
+    weight?: string | number | null;
+    defaultBands?: any;
   };
   error?: string;
 }> {
@@ -3995,12 +4500,23 @@ export async function createMasterParameterFromImportAction(input: {
           unit: existing[0].unit,
           categoryName: existing[0].categoryName,
           description: existing[0].description,
+          target: existing[0].target,
+          weight: existing[0].weight,
+          defaultBands: existing[0].defaultBands,
         },
       };
     }
 
     const autoCode = await generateMasterParamCode(input.departmentId);
     const bands = input.bands && input.bands.length > 0 ? sanitizeScoringBands(input.bands) : null;
+
+    let weightVal: string | null = null;
+    if (input.weight != null) {
+      const num = Number(input.weight);
+      if (!isNaN(num)) {
+        weightVal = num > 1 ? (num / 100).toFixed(4) : num.toFixed(4);
+      }
+    }
 
     const [created] = await db
       .insert(masterParameters)
@@ -4015,6 +4531,8 @@ export async function createMasterParameterFromImportAction(input: {
         aggregation: "AVERAGE",
         compareBasis: "ACTUAL",
         picRole: "HEAD_DEPT",
+        target: input.target || null,
+        weight: weightVal as any,
         defaultBands: bands as any,
         isActive: true,
       })
@@ -4038,6 +4556,9 @@ export async function createMasterParameterFromImportAction(input: {
         unit: created.unit,
         categoryName: created.categoryName,
         description: created.description,
+        target: created.target,
+        weight: created.weight,
+        defaultBands: created.defaultBands || bands,
       },
     };
   } catch (err: unknown) {
@@ -4055,6 +4576,8 @@ export async function createBatchMasterParametersFromImportAction(input: {
     unit?: string;
     description?: string;
     inputType?: string;
+    target?: string;
+    weight?: number | string | null;
     bands?: Array<{
       score: number;
       label: string;
@@ -4072,6 +4595,9 @@ export async function createBatchMasterParametersFromImportAction(input: {
     departmentId: number | null;
     unit: string | null;
     categoryName: string | null;
+    target?: string | null;
+    weight?: string | number | null;
+    defaultBands?: any;
   }>;
   error?: string;
 }> {
@@ -4090,6 +4616,9 @@ export async function createBatchMasterParametersFromImportAction(input: {
       departmentId: number | null;
       unit: string | null;
       categoryName: string | null;
+      target?: string | null;
+      weight?: string | number | null;
+      defaultBands?: any;
     }> = [];
 
     for (const it of input.items) {
@@ -4115,12 +4644,23 @@ export async function createBatchMasterParametersFromImportAction(input: {
           departmentId: existing[0].departmentId,
           unit: existing[0].unit,
           categoryName: existing[0].categoryName,
+          target: existing[0].target,
+          weight: existing[0].weight,
+          defaultBands: existing[0].defaultBands,
         });
         continue;
       }
 
       const autoCode = await generateMasterParamCode(input.departmentId);
       const bands = it.bands && it.bands.length > 0 ? sanitizeScoringBands(it.bands) : null;
+
+      let weightVal: string | null = null;
+      if (it.weight != null) {
+        const num = Number(it.weight);
+        if (!isNaN(num)) {
+          weightVal = num > 1 ? (num / 100).toFixed(4) : num.toFixed(4);
+        }
+      }
 
       const [created] = await db
         .insert(masterParameters)
@@ -4135,6 +4675,8 @@ export async function createBatchMasterParametersFromImportAction(input: {
           aggregation: "AVERAGE",
           compareBasis: "ACTUAL",
           picRole: "HEAD_DEPT",
+          target: it.target || null,
+          weight: weightVal as any,
           defaultBands: bands as any,
           isActive: true,
         })
@@ -4147,6 +4689,9 @@ export async function createBatchMasterParametersFromImportAction(input: {
         departmentId: created.departmentId,
         unit: created.unit,
         categoryName: created.categoryName,
+        target: created.target,
+        weight: created.weight,
+        defaultBands: created.defaultBands || bands,
       });
     }
 
@@ -4723,7 +5268,10 @@ export async function getMasterParameters(deptId?: number | null, includeInactiv
       departmentId: masterParameters.departmentId,
       departmentName: departments.name,
       categoryName: masterParameters.categoryName,
+      scope: masterParameters.scope,
       unit: masterParameters.unit,
+      target: masterParameters.target,
+      weight: masterParameters.weight,
       inputType: masterParameters.inputType,
       aggregation: masterParameters.aggregation,
       compareBasis: masterParameters.compareBasis,
@@ -4749,6 +5297,27 @@ export async function createMasterParameter(fd: FormData) {
   const deptId = rawDeptId && rawDeptId !== "0" && rawDeptId !== "null" ? Number(rawDeptId) : null;
   const isGeneral = deptId === null;
 
+  // Validasi duplikasi kalimat/nama indikator dalam cakupan departemen yang sama (atau General)
+  const existingDup = await db
+    .select({ id: masterParameters.id, code: masterParameters.code, name: masterParameters.name })
+    .from(masterParameters)
+    .where(
+      and(
+        ilike(masterParameters.name, name),
+        deptId !== null
+          ? eq(masterParameters.departmentId, deptId)
+          : isNull(masterParameters.departmentId)
+      )
+    )
+    .limit(1);
+
+  if (existingDup.length > 0) {
+    const loc = deptId !== null ? "departemen ini" : "Umum / General";
+    throw new Error(
+      `Indikator dengan nama "${name}" sudah terdaftar di ${loc} dengan kode ${existingDup[0].code}. Harap gunakan nama indikator yang unik agar tidak terjadi duplikasi.`
+    );
+  }
+
   let code = s(fd, "code").trim();
   if (!code) {
     code = await generateMasterParamCode(deptId);
@@ -4764,6 +5333,17 @@ export async function createMasterParameter(fd: FormData) {
     }
   }
 
+  let weightVal: string | null = null;
+  if (fd.has("weight")) {
+    const rawW = s(fd, "weight").trim();
+    if (rawW !== "") {
+      const num = parseFloat(rawW);
+      if (!isNaN(num)) {
+        weightVal = num > 1 ? (num / 100).toFixed(4) : num.toFixed(4);
+      }
+    }
+  }
+
   const [created] = await db
     .insert(masterParameters)
     .values({
@@ -4772,7 +5352,12 @@ export async function createMasterParameter(fd: FormData) {
       description: s(fd, "description") || null,
       departmentId: deptId,
       categoryName: s(fd, "categoryName") || null,
+      scope: fd.has("scope") && s(fd, "scope")
+        ? ((s(fd, "scope")).toUpperCase() === "DEPARTMENT" ? "DEPARTMENT" : "INDIVIDUAL")
+        : (deptId ? "DEPARTMENT" : "INDIVIDUAL"),
       unit: s(fd, "unit") || "%",
+      target: s(fd, "target") || null,
+      weight: weightVal,
       inputType: (s(fd, "inputType") || "PERCENTAGE") as any,
       aggregation: (s(fd, "aggregation") || "AVERAGE") as any,
       compareBasis: (s(fd, "compareBasis") || "ACTUAL") as any,
@@ -4795,6 +5380,28 @@ export async function updateMasterParameter(fd: FormData) {
   const rawDeptId = s(fd, "departmentId");
   const deptId = rawDeptId && rawDeptId !== "0" && rawDeptId !== "null" ? Number(rawDeptId) : null;
 
+  // Validasi duplikasi kalimat/nama indikator dalam cakupan departemen yang sama (kecuali record yang sedang diedit)
+  const existingDup = await db
+    .select({ id: masterParameters.id, code: masterParameters.code, name: masterParameters.name })
+    .from(masterParameters)
+    .where(
+      and(
+        ne(masterParameters.id, id),
+        ilike(masterParameters.name, name),
+        deptId !== null
+          ? eq(masterParameters.departmentId, deptId)
+          : isNull(masterParameters.departmentId)
+      )
+    )
+    .limit(1);
+
+  if (existingDup.length > 0) {
+    const loc = deptId !== null ? "departemen ini" : "Umum / General";
+    throw new Error(
+      `Indikator dengan nama "${name}" sudah digunakan oleh indikator lain di ${loc} dengan kode ${existingDup[0].code}. Harap gunakan nama indikator yang unik.`
+    );
+  }
+
   let defaultBands: SanitizedBand[] | null | undefined = undefined;
   if (fd.has("bands")) {
     try {
@@ -4805,13 +5412,29 @@ export async function updateMasterParameter(fd: FormData) {
     }
   }
 
+  let weightVal: string | null | undefined = undefined;
+  if (fd.has("weight")) {
+    const rawW = s(fd, "weight").trim();
+    if (rawW === "") {
+      weightVal = null;
+    } else {
+      const num = parseFloat(rawW);
+      if (!isNaN(num)) {
+        weightVal = num > 1 ? (num / 100).toFixed(4) : num.toFixed(4);
+      }
+    }
+  }
+
   const data: Partial<typeof masterParameters.$inferInsert> = {
     name,
     code: s(fd, "code") || undefined,
     description: fd.has("description") ? (s(fd, "description") || null) : undefined,
     departmentId: deptId,
     categoryName: fd.has("categoryName") ? (s(fd, "categoryName") || null) : undefined,
+    scope: fd.has("scope") ? ((s(fd, "scope") || "INDIVIDUAL").toUpperCase() === "DEPARTMENT" ? "DEPARTMENT" : "INDIVIDUAL") : undefined,
     unit: fd.has("unit") ? (s(fd, "unit") || "%") : undefined,
+    target: fd.has("target") ? (s(fd, "target") || null) : undefined,
+    ...(weightVal !== undefined ? { weight: weightVal } : {}),
     inputType: fd.has("inputType") ? (s(fd, "inputType") as any) : undefined,
     aggregation: fd.has("aggregation") ? (s(fd, "aggregation") as any) : undefined,
     compareBasis: fd.has("compareBasis") ? (s(fd, "compareBasis") as any) : undefined,
@@ -4822,9 +5445,25 @@ export async function updateMasterParameter(fd: FormData) {
   };
 
   await db.update(masterParameters).set(data).where(eq(masterParameters.id, id));
+  if (data.scope) {
+    try {
+      await db.update(kpiParameters).set({ scope: data.scope }).where(eq(kpiParameters.masterParameterId, id));
+    } catch {
+      // ignore if relation mismatch
+    }
+  }
+  if (weightVal !== undefined && weightVal !== null) {
+    try {
+      await db.update(kpiParameters).set({ weight: weightVal }).where(eq(kpiParameters.masterParameterId, id));
+    } catch {
+      // ignore
+    }
+  }
   safeRevalidate("/setup");
   safeRevalidate("/setup/templates");
   safeRevalidate("/setup/templates/import");
+  safeRevalidate("/input-kpi");
+  safeRevalidate("/dashboard");
 }
 
 export async function deleteMasterParameter(fd: FormData) {
@@ -4997,6 +5636,7 @@ export async function importMasterParametersBulk(
         description: it.description || null,
         departmentId: targetDeptId,
         categoryName: it.categoryName || null,
+        scope: targetDeptId ? "DEPARTMENT" : "INDIVIDUAL",
         unit: it.unit || "%",
         inputType: normalizedInputType,
         aggregation: normalizedAggregation,
@@ -5146,6 +5786,7 @@ export async function resetAndSyncMasterParametersFromTemplatesAction() {
         description: item.description,
         departmentId: item.departmentId,
         categoryName: item.categoryName,
+        scope: item.departmentId ? "DEPARTMENT" : "INDIVIDUAL",
         unit: item.unit,
         inputType: item.inputType,
         aggregation: item.aggregation,
@@ -5162,7 +5803,7 @@ export async function resetAndSyncMasterParametersFromTemplatesAction() {
     if (item.sourceParamIds.length > 0) {
       await db
         .update(kpiParameters)
-        .set({ masterParameterId: newMaster.id })
+        .set({ masterParameterId: newMaster.id, scope: newMaster.scope })
         .where(inArray(kpiParameters.id, item.sourceParamIds));
     }
 
@@ -6554,6 +7195,24 @@ export async function syncTemplateToEmployeeAppraisalsAction(templateId: number)
       bandsByParamMap.set(b.parameterId, list);
     }
 
+    // Ambil target langsung dari Kamus Parameter (Master Parameter)
+    const masterParams = await db
+      .select({
+        id: masterParameters.id,
+        name: masterParameters.name,
+        target: masterParameters.target,
+      })
+      .from(masterParameters);
+
+    const masterParamTargetById = new Map<number, string>();
+    const masterParamTargetByName = new Map<string, string>();
+    for (const mp of masterParams) {
+      if (mp.target) {
+        masterParamTargetById.set(mp.id, mp.target);
+        masterParamTargetByName.set(mp.name.trim().toLowerCase(), mp.target);
+      }
+    }
+
     // 2. Ambil seluruh appraisal karyawan yang menggunakan template ini
     const linkedAppraisals = await db
       .select({
@@ -6671,9 +7330,39 @@ export async function syncTemplateToEmployeeAppraisalsAction(templateId: number)
         .where(eq(appraisalItems.appraisalId, appr.id));
 
       const existingParamMap = new Map<number, (typeof existingItems)[0]>();
+      const unlinkedItems: (typeof existingItems)[0][] = [];
+
       for (const it of existingItems) {
-        if (it.parameterId) {
+        if (it.parameterId && templateParamIdsSet.has(it.parameterId)) {
           existingParamMap.set(it.parameterId, it);
+        } else {
+          unlinkedItems.push(it);
+        }
+      }
+
+      const cleanTitleForSync = (s?: string | null): string => {
+        return String(s || "")
+          .toLowerCase()
+          .replace(/^[0-9]+(?:\.[0-9]+)*\s*[-.]?\s*/, "")
+          .replace(/[^a-z0-9]/g, "")
+          .trim();
+      };
+
+      // Re-link unlinked/orphaned items by matching indicator name to template parameters
+      for (const p of paramsList) {
+        if (!existingParamMap.has(p.id) && unlinkedItems.length > 0) {
+          const pClean = cleanTitleForSync(p.name);
+          const matchIdx = unlinkedItems.findIndex((it) => {
+            const itClean = cleanTitleForSync(it.indicatorNameSnapshot);
+            return itClean === pClean || (itClean.length > 3 && (itClean.includes(pClean) || pClean.includes(itClean)));
+          });
+
+          if (matchIdx >= 0) {
+            const matchedItem = unlinkedItems[matchIdx];
+            unlinkedItems.splice(matchIdx, 1);
+            matchedItem.parameterId = p.id;
+            existingParamMap.set(p.id, matchedItem);
+          }
         }
       }
 
@@ -6682,22 +7371,27 @@ export async function syncTemplateToEmployeeAppraisalsAction(templateId: number)
         const bandsSnapshot = bandsByParamMap.get(p.id) || [];
         const paramWeightSnapshot = catWeightMap.get(p.categoryId) ?? null;
 
+        // Ambil target langsung dari Kamus Parameter (Master Parameter) sebagai prioritas utama
+        const effectiveTarget =
+          (p.masterParameterId ? masterParamTargetById.get(p.masterParameterId) : null) ||
+          masterParamTargetByName.get(p.name.trim().toLowerCase()) ||
+          p.target ||
+          null;
+
         if (existingParamMap.has(p.id)) {
           const ex = existingParamMap.get(p.id)!;
           const updatePayload: Record<string, any> = {
+            parameterId: p.id,
             indicatorNameSnapshot: p.name,
             indicatorDescriptionSnapshot: p.description,
             unitSnapshot: p.unit,
             weightSnapshot: p.weight,
             parameterWeightSnapshot: paramWeightSnapshot,
-            targetSnapshot: p.target,
+            targetSnapshot: effectiveTarget,
+            target: effectiveTarget,
             scoringRulesSnapshot: bandsSnapshot,
             updatedAt: new Date(),
           };
-
-          if (ex.target === null || ex.target === undefined || ex.target === "") {
-            updatePayload.target = p.target;
-          }
 
           await db
             .update(appraisalItems)
@@ -6710,31 +7404,25 @@ export async function syncTemplateToEmployeeAppraisalsAction(templateId: number)
             indicatorNameSnapshot: p.name,
             indicatorDescriptionSnapshot: p.description,
             parameterWeightSnapshot: paramWeightSnapshot,
-            target: p.target,
-            targetSnapshot: p.target,
+            target: effectiveTarget,
+            targetSnapshot: effectiveTarget,
             unitSnapshot: p.unit,
             weightSnapshot: p.weight,
             scoringRulesSnapshot: bandsSnapshot,
             monthlyTargets:
-              p.target !== null && p.target !== undefined
-                ? Array(12).fill(Number(p.target))
+              effectiveTarget !== null && effectiveTarget !== undefined && !isNaN(Number(effectiveTarget))
+                ? Array(12).fill(Number(effectiveTarget))
                 : null,
             updatedAt: new Date(),
           });
         }
       }
 
-      // Hapus parameter usang yang sudah dihapus dari master template HANYA jika belum memiliki nilai aktual
+      // Hapus parameter usang yang sudah dihapus dari master template atau unlinked orphans
       for (const ex of existingItems) {
-        if (ex.parameterId && !templateParamIdsSet.has(ex.parameterId)) {
-          const hasActual =
-            ex.actual !== null ||
-            ex.annualActual !== null ||
-            (ex.monthlyActuals && ex.monthlyActuals.some((v) => v !== null));
-
-          if (!hasActual) {
-            await db.delete(appraisalItems).where(eq(appraisalItems.id, ex.id));
-          }
+        const isObsolete = !ex.parameterId || !templateParamIdsSet.has(ex.parameterId);
+        if (isObsolete) {
+          await db.delete(appraisalItems).where(eq(appraisalItems.id, ex.id));
         }
       }
 
@@ -6792,5 +7480,445 @@ export async function syncAppraisalWithTemplateAction(appraisalId: number) {
     return await syncTemplateToEmployeeAppraisalsAction(appr.templateId);
   } catch (err: any) {
     return { success: false, error: err?.message || "Gagal menyinkronkan penilaian." };
+  }
+}
+
+/**
+ * Mengambil data detail penilaian & template untuk batch export Excel (Rekap + Sheet Per Nama)
+ */
+export async function getBatchAssessmentExportDataAction(params: {
+  year: number;
+  month?: number;
+  employeeIds: number[];
+}) {
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    return { success: false, error: "Unauthorized: Sesi login diperlukan." };
+  }
+
+  const { year, month = 1, employeeIds } = params;
+  if (!employeeIds || employeeIds.length === 0) {
+    return { success: false, error: "Tidak ada karyawan yang dipilih." };
+  }
+
+  try {
+    const details = await Promise.all(
+      employeeIds.map(async (empId) => {
+        try {
+          let detail = await getMonthlyAssessmentDetail({
+            year,
+            month,
+            employeeId: empId,
+            currentUser,
+          });
+
+          // Self-healing: jika penilaian ada tapi items-nya belum tersinkron dengan master template
+          if (detail && detail.categories.length === 0 && detail.templateId) {
+            const tId = detail.templateId;
+            try {
+              await syncTemplateToEmployeeAppraisalsAction(tId);
+              const refreshed = await getMonthlyAssessmentDetail({
+                year,
+                month,
+                employeeId: empId,
+                currentUser,
+              });
+              if (refreshed) {
+                detail = refreshed;
+              }
+            } catch (syncErr) {
+              console.warn(`Could not sync template ${tId} for employee ${empId}:`, syncErr);
+            }
+          }
+
+          return detail;
+        } catch (e) {
+          console.error(`Error fetching detail for employee ${empId}:`, e);
+          return null;
+        }
+      })
+    );
+
+    return {
+      success: true,
+      data: details.filter((d): d is NonNullable<typeof d> => d !== null),
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Gagal mengambil data penilaian." };
+  }
+}
+
+// =============================================================================
+// DEPARTMENT KPI REALIZATION ACTIONS (TAB PENILAIAN DEPARTEMEN)
+// =============================================================================
+
+export interface DepartmentKpiParamItem {
+  masterParameterId: number;
+  code: string | null;
+  name: string;
+  description?: string | null;
+  categoryName: string | null;
+  unit: string | null;
+  inputType: string;
+  aggregation: string;
+  compareBasis: string;
+  target?: string | null;
+  annualActual: number | null;
+  monthlyActuals: (number | null)[];
+  notes?: string | null;
+  updatedAt?: Date | string | null;
+}
+
+export interface DepartmentEmployeeItem {
+  id: number;
+  name: string;
+  nik: string;
+  jobPosition: string | null;
+  jobLevel: string | null;
+}
+
+export async function getDepartmentKpiParametersAction(params: {
+  departmentId: number;
+  year?: number;
+}): Promise<{
+  success: boolean;
+  departmentName?: string;
+  periodYear?: number;
+  periodId?: number;
+  parameters: DepartmentKpiParamItem[];
+  employees?: DepartmentEmployeeItem[];
+  error?: string;
+}> {
+  try {
+    const { departmentId, year } = params;
+
+    const [dept] = await db
+      .select({ id: departments.id, name: departments.name })
+      .from(departments)
+      .where(eq(departments.id, departmentId))
+      .limit(1);
+
+    if (!dept) {
+      return { success: false, parameters: [], error: "Departemen tidak ditemukan." };
+    }
+
+    // Determine period
+    const pList = await db.select().from(kpiPeriods).orderBy(desc(kpiPeriods.year));
+    const targetPeriod = year
+      ? pList.find((p) => p.year === year)
+      : pList.find((p) => p.status === "ACTIVE") || pList[0];
+
+    if (!targetPeriod) {
+      return { success: false, parameters: [], error: "Periode aktif tidak ditemukan." };
+    }
+
+    // 1. Fetch master parameters with scope = 'DEPARTMENT' for this department or general
+    const rawParams = await db
+      .select({
+        id: masterParameters.id,
+        code: masterParameters.code,
+        name: masterParameters.name,
+        description: masterParameters.description,
+        categoryName: masterParameters.categoryName,
+        unit: masterParameters.unit,
+        inputType: masterParameters.inputType,
+        aggregation: masterParameters.aggregation,
+        compareBasis: masterParameters.compareBasis,
+        scope: masterParameters.scope,
+        target: masterParameters.target,
+      })
+      .from(masterParameters)
+      .where(
+        and(
+          eq(masterParameters.isActive, true),
+          eq(masterParameters.scope, "DEPARTMENT"),
+          or(eq(masterParameters.departmentId, departmentId), isNull(masterParameters.departmentId))
+        )
+      )
+      .orderBy(asc(masterParameters.code), asc(masterParameters.name));
+
+    // 2. Fetch existing department actuals
+    const existingActuals = await db
+      .select()
+      .from(departmentKpiActuals)
+      .where(
+        and(
+          eq(departmentKpiActuals.departmentId, departmentId),
+          eq(departmentKpiActuals.periodId, targetPeriod.id)
+        )
+      );
+
+    const actualMap = new Map<number, typeof existingActuals[0]>();
+    for (const act of existingActuals) {
+      actualMap.set(act.masterParameterId, act);
+    }
+
+    const items: DepartmentKpiParamItem[] = rawParams.map((rp) => {
+      const act = actualMap.get(rp.id);
+      const monthlyActuals: (number | null)[] = Array.isArray(act?.monthlyActuals)
+        ? act.monthlyActuals.map((v) => (v !== null && v !== undefined && !isNaN(Number(v)) ? Number(v) : null))
+        : Array(12).fill(null);
+
+      while (monthlyActuals.length < 12) {
+        monthlyActuals.push(null);
+      }
+
+      return {
+        masterParameterId: rp.id,
+        code: rp.code,
+        name: rp.name,
+        description: rp.description,
+        categoryName: rp.categoryName,
+        unit: rp.unit,
+        inputType: rp.inputType,
+        aggregation: rp.aggregation,
+        compareBasis: rp.compareBasis,
+        target: rp.target ?? null,
+        annualActual: act?.annualActual !== null && act?.annualActual !== undefined ? Number(act.annualActual) : null,
+        monthlyActuals,
+        notes: act?.notes ?? null,
+        updatedAt: act?.updatedAt ?? null,
+      };
+    });
+
+    // 3. Fetch active employees in this department
+    const deptEmployees: DepartmentEmployeeItem[] = await db
+      .select({
+        id: employees.id,
+        name: employees.name,
+        nik: employees.nik,
+        jobPosition: employees.jobPosition,
+        jobLevel: jobLevels.name,
+      })
+      .from(employees)
+      .leftJoin(jobLevels, eq(employees.jobLevelId, jobLevels.id))
+      .where(
+        and(
+          eq(employees.departmentId, departmentId),
+          eq(employees.isActive, true)
+        )
+      )
+      .orderBy(asc(employees.name));
+
+    return {
+      success: true,
+      departmentName: dept.name,
+      periodYear: targetPeriod.year,
+      periodId: targetPeriod.id,
+      parameters: items,
+      employees: deptEmployees,
+    };
+  } catch (err: any) {
+    return { success: false, parameters: [], error: err?.message || "Gagal memuat parameter departemen." };
+  }
+}
+
+export async function saveDepartmentKpiActualsAction(payload: {
+  departmentId: number;
+  periodId: number;
+  items: Array<{
+    masterParameterId: number;
+    annualActual?: number | null;
+    monthlyActuals?: (number | null)[];
+    notes?: string | null;
+  }>;
+}): Promise<{ success: boolean; count: number; error?: string }> {
+  try {
+    const user = await getCurrentUser();
+    const actor = user?.name || "Admin/HeadDept";
+    const { departmentId, periodId, items } = payload;
+
+    if (!items || items.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    let savedCount = 0;
+
+    for (const it of items) {
+      const annualActualNum =
+        it.annualActual !== null && it.annualActual !== undefined && !isNaN(Number(it.annualActual))
+          ? String(it.annualActual)
+          : null;
+
+      const monthlyArr = Array.isArray(it.monthlyActuals)
+        ? it.monthlyActuals.map((v) => (v !== null && v !== undefined && !isNaN(Number(v)) ? Number(v) : null))
+        : Array(12).fill(null);
+
+      const [existing] = await db
+        .select({ id: departmentKpiActuals.id })
+        .from(departmentKpiActuals)
+        .where(
+          and(
+            eq(departmentKpiActuals.departmentId, departmentId),
+            eq(departmentKpiActuals.masterParameterId, it.masterParameterId),
+            eq(departmentKpiActuals.periodId, periodId)
+          )
+        )
+        .limit(1);
+
+      if (existing) {
+        await db
+          .update(departmentKpiActuals)
+          .set({
+            annualActual: annualActualNum,
+            monthlyActuals: monthlyArr,
+            notes: it.notes ?? undefined,
+            updatedBy: actor,
+            updatedAt: new Date(),
+          })
+          .where(eq(departmentKpiActuals.id, existing.id));
+      } else {
+        await db.insert(departmentKpiActuals).values({
+          departmentId,
+          masterParameterId: it.masterParameterId,
+          periodId,
+          annualActual: annualActualNum,
+          monthlyActuals: monthlyArr,
+          notes: it.notes ?? null,
+          updatedBy: actor,
+        });
+      }
+      savedCount++;
+    }
+
+    revalidatePath("/input-kpi");
+    revalidatePath("/kpi/assessments/monthly");
+    return { success: true, count: savedCount };
+  } catch (err: any) {
+    return { success: false, count: 0, error: err?.message || "Gagal menyimpan realisasi departemen." };
+  }
+}
+
+export async function saveDepartmentKpiTargetAction(payload: {
+  masterParameterId: number;
+  target: string;
+  notes?: string | null;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { masterParameterId, target, notes } = payload;
+    const cleanTarget = target.trim();
+
+    // 1. Update target & description (if provided) in masterParameters (Kamus Parameter)
+    await db
+      .update(masterParameters)
+      .set({
+        target: cleanTarget || null,
+        description: notes !== undefined && notes !== null ? notes.trim() || null : undefined,
+        updatedAt: new Date(),
+      })
+      .where(eq(masterParameters.id, masterParameterId));
+
+    // 2. Cascade target to kpiParameters referencing this masterParameterId
+    await db
+      .update(kpiParameters)
+      .set({
+        target: cleanTarget || null,
+      })
+      .where(eq(kpiParameters.masterParameterId, masterParameterId));
+
+    // 3. Cascade target and targetSnapshot to appraisalItems referencing those kpiParameters
+    const linkedParams = await db
+      .select({ id: kpiParameters.id })
+      .from(kpiParameters)
+      .where(eq(kpiParameters.masterParameterId, masterParameterId));
+
+    if (linkedParams.length > 0) {
+      const pIds = linkedParams.map((p) => p.id);
+      await db
+        .update(appraisalItems)
+        .set({
+          target: cleanTarget || null,
+          targetSnapshot: cleanTarget || null,
+          updatedAt: new Date(),
+        })
+        .where(inArray(appraisalItems.parameterId, pIds));
+    }
+
+    revalidatePath("/input-kpi");
+    revalidatePath("/kpi/assessments/monthly");
+    revalidatePath("/setup/master");
+    revalidatePath("/setup/templates");
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Gagal menyimpan target parameter." };
+  }
+}
+
+export async function saveBatchDepartmentKpisFromExcelAction(params: {
+  year: number;
+  items: Array<{
+    departmentName: string;
+    parameterName: string;
+    annualActual: number | null;
+    monthlyActuals: (number | null)[];
+    notes?: string;
+  }>;
+}): Promise<{ success: boolean; count: number; error?: string }> {
+  try {
+    const { year, items } = params;
+    if (!items || items.length === 0) return { success: true, count: 0 };
+
+    const [period] = await db
+      .select({ id: kpiPeriods.id })
+      .from(kpiPeriods)
+      .where(eq(kpiPeriods.year, year))
+      .limit(1);
+
+    if (!period) {
+      return { success: false, count: 0, error: `Periode KPI tahun ${year} tidak ditemukan.` };
+    }
+
+    const allDepts = await db.select({ id: departments.id, name: departments.name }).from(departments);
+    const allMasters = await db
+      .select({ id: masterParameters.id, name: masterParameters.name })
+      .from(masterParameters);
+
+    const deptMap = new Map<string, number>();
+    allDepts.forEach((d) => deptMap.set(d.name.trim().toLowerCase(), d.id));
+
+    const masterMap = new Map<string, number>();
+    allMasters.forEach((m) => masterMap.set(m.name.trim().toLowerCase(), m.id));
+
+    let savedTotal = 0;
+    const byDept = new Map<
+      number,
+      Array<{
+        masterParameterId: number;
+        annualActual?: number | null;
+        monthlyActuals?: (number | null)[];
+        notes?: string | null;
+      }>
+    >();
+
+    for (const it of items) {
+      const deptId = deptMap.get(it.departmentName.trim().toLowerCase());
+      const masterId = masterMap.get(it.parameterName.trim().toLowerCase());
+      if (deptId && masterId) {
+        const list = byDept.get(deptId) || [];
+        list.push({
+          masterParameterId: masterId,
+          annualActual: it.annualActual,
+          monthlyActuals: it.monthlyActuals,
+          notes: it.notes,
+        });
+        byDept.set(deptId, list);
+      }
+    }
+
+    for (const [deptId, deptItems] of byDept.entries()) {
+      const res = await saveDepartmentKpiActualsAction({
+        departmentId: deptId,
+        periodId: period.id,
+        items: deptItems,
+      });
+      if (res.success) {
+        savedTotal += res.count;
+      }
+    }
+
+    return { success: true, count: savedTotal };
+  } catch (err: any) {
+    return { success: false, count: 0, error: err?.message || "Gagal menyimpan realisasi departemen dari Excel." };
   }
 }

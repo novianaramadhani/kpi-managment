@@ -193,11 +193,12 @@ const styleScoreCell = {
 };
 
 /**
- * Memeriksa apakah suatu satuan tergolong angka/numerik (% atau Rp).
- * Pokoknya selain angka (% atau Rp), tipe datanya berarti teks!
+ * Memeriksa apakah suatu satuan tergolong angka/numerik.
  */
 export function isNumericUnit(unit: string | null | undefined): boolean {
-  const u = (unit || "").trim().toLowerCase();
+  if (!unit) return false;
+  const u = unit.trim().toLowerCase();
+  if (u === "-" || u === "teks" || u === "text" || u === "string") return false;
   return (
     u === "%" ||
     u === "persen" ||
@@ -206,21 +207,61 @@ export function isNumericUnit(unit: string | null | undefined): boolean {
     u === "idr" ||
     u === "rupiah" ||
     u.includes("rp/") ||
-    u.includes("rp /")
+    u.includes("rp /") ||
+    u === "hari" ||
+    u === "days" ||
+    u === "day" ||
+    u === "jam" ||
+    u === "hours" ||
+    u === "hour" ||
+    u === "unit" ||
+    u === "bcm/jam" ||
+    u === "bcm / jam" ||
+    u === "ltr/bcm" ||
+    u === "ltr / bcm" ||
+    u === "kasus" ||
+    u === "case" ||
+    u === "dokumen" ||
+    u === "dok" ||
+    u === "orang" ||
+    u === "kali" ||
+    u === "x" ||
+    u === "bcm" ||
+    u === "ton" ||
+    u === "liter" ||
+    u === "ltr" ||
+    u === "ritase" ||
+    u === "rit" ||
+    u === "km" ||
+    u === "meter" ||
+    u === "m" ||
+    u === "bulan" ||
+    u === "sp"
   );
 }
 
 /**
- * Menormalisasi satuan indikator:
- * Pokoknya selain angka (% atau Rp), satuan dan tipe datanya adalah 'teks'!
+ * Menormalisasi satuan indikator agar mempertahankan satuan riil.
+ * Satuan 'teks' atau kosong dinormalisasi menjadi '-'.
  */
 export function normalizeIndicatorUnit(unit: string | null | undefined): string {
-  const u = (unit || "").trim().toLowerCase();
+  if (!unit) return "-";
+  const u = unit.trim().toLowerCase();
   if (u === "%" || u === "persen" || u === "percentage") return "%";
   if (u === "rp" || u === "idr" || u === "rupiah") return "Rp";
-  if (u.includes("rp/") || u.includes("rp /")) return (unit || "").trim();
-  // Pokoknya selain angka, satuannya adalah 'teks'
-  return "teks";
+  if (u.includes("rp/") || u.includes("rp /")) return unit.trim();
+  if (u === "hari" || u === "days" || u === "day") return "Hari";
+  if (u === "jam" || u === "hours" || u === "hour") return "Jam";
+  if (u === "bcm/jam" || u === "bcm / jam") return "Bcm/Jam";
+  if (u === "ltr/bcm" || u === "ltr / bcm") return "Ltr/Bcm";
+  if (u === "unit") return "Unit";
+  if (u === "kasus" || u === "case") return "Kasus";
+  if (u === "dokumen" || u === "dok") return "Dokumen";
+  if (u === "orang") return "Orang";
+  if (u === "kali" || u === "x") return "Kali";
+  if (u === "sp") return "SP";
+  if (u === "teks" || u === "text" || u === "string") return "-";
+  return unit.trim();
 }
 
 /**
@@ -229,12 +270,12 @@ export function normalizeIndicatorUnit(unit: string | null | undefined): string 
  *   tampil sebagai 95% (bukan 9500%) dan nilai aslinya tetap 95 untuk evaluasi kriteria skor.
  * - Untuk rupiah (Rp): `"Rp "#,##0;("Rp "#,##0);"-"`
  * - Untuk Rp/Bcm: `"Rp "#,##0" /Bcm";("Rp "#,##0" /Bcm");"-"`
- * - Pokoknya selain angka, formatnya adalah integer skor ("0").
+ * - Mendukung satuan umum KPI: Jam, Hari, Bcm/Jam, Ltr/Bcm, dsb.
  */
 export function getExcelNumberFormatForUnit(unit: string | null | undefined): string {
   const u = (unit || "").trim().toLowerCase();
   if (u === "%" || u === "persen" || u === "percentage") {
-    return `#,##0.##"%"`;
+    return `#,##0.0"%"`;
   }
   if (u === "rp" || u === "idr" || u === "rupiah") {
     return `"Rp "#,##0;("Rp "#,##0);"-"`;
@@ -251,9 +292,230 @@ export function getExcelNumberFormatForUnit(unit: string | null | undefined): st
     const denom = origU.substring(slashIdx).trim();
     return `"Rp "#,##0" /${denom}";("Rp "#,##0" /${denom}");"-"`;
   }
+  if (u.includes("bcm/jam") || u.includes("bcm / jam")) {
+    return `#,##0.##" Bcm/Jam"`;
+  }
+  if (u.includes("ltr/bcm") || u.includes("ltr / bcm")) {
+    return `#,##0.##" Ltr/Bcm"`;
+  }
+  if (u === "jam" || u === "hours" || u === "hour") {
+    return `#,##0.##" Jam"`;
+  }
+  if (u === "hari" || u === "days" || u === "day") {
+    return `#,##0" Hari"`;
+  }
+  if (u === "x" || u === "kali") {
+    return `#,##0"x"`;
+  }
+  if (u === "sp" || u === "kasus" || u === "dokumen" || u === "unit" || u === "orang") {
+    return `#,##0`;
+  }
 
-  // Pokoknya selain angka (% atau Rp), formatnya adalah integer skor (0)
-  return "0";
+  return `#,##0.##`;
+}
+
+/**
+ * Format angka untuk sel bulanan di tabel rincian (lebar kolom terbatas).
+ * Memastikan nilai angka tidak terpotong menjadi '###' pada kolom sempit.
+ */
+export function getMonthlyCellNumberFormat(unit: string | null | undefined): string {
+  const u = (unit || "").trim().toLowerCase();
+  if (u === "%" || u === "persen" || u === "percentage") {
+    return `#,##0.0"%"`;
+  }
+  if (u === "rp" || u === "idr" || u === "rupiah") {
+    return `"Rp "#,##0;("Rp "#,##0);"-"`;
+  }
+  return `#,##0.##`;
+}
+
+export interface ResolvedIndicatorTargetAndUnit {
+  resolvedTarget: string;
+  resolvedUnit: string;
+  numTarget: number;
+  isTargetNumeric: boolean;
+  finalTargetVal: string;
+  numFmt: string;
+  topBandScore: number;
+}
+
+/**
+ * Menyelesaikan nilai Target dan Satuan indikator secara dinamis:
+ * 1. Tidak memaksakan default 100% jika indikator memiliki kriteria target tersendiri.
+ * 2. Membaca batas target utama dari kriteria penilaian Band 1 (Skor Tertinggi).
+ * 3. Mempertahankan satuan riil dari Master Kamus Parameter atau kriteria (Jam, Hari, Rp, %, dsb).
+ */
+export function resolveIndicatorTargetAndUnit(
+  ind: {
+    name?: string | null;
+    indicatorName?: string | null;
+    unit?: string | null;
+    target?: number | string | null;
+    scoringRules?: any[] | null;
+  },
+  bands: Array<{
+    score: number | string;
+    operator?: string | null;
+    minValue?: number | string | null;
+    maxValue?: number | string | null;
+    label?: string | null;
+  }>,
+  masterParam?: {
+    unit?: string | null;
+    name?: string | null;
+    target?: string | number | null;
+    defaultBands?: any;
+  } | null
+): ResolvedIndicatorTargetAndUnit {
+  // 1. Resolve unit
+  let rawUnit = (ind.unit || "").trim();
+  if ((!rawUnit || rawUnit === "%") && masterParam?.unit && masterParam.unit.trim() !== "%") {
+    rawUnit = masterParam.unit.trim();
+  }
+
+  const nameStr = (ind.name || ind.indicatorName || "").toLowerCase();
+  const sortedBands = [...(bands || [])].sort(
+    (a, b) => (Number(b.score) || 0) - (Number(a.score) || 0)
+  );
+  const b1 = sortedBands[0];
+  const b1Label = b1?.label ? b1.label.toLowerCase() : "";
+
+  if (!rawUnit || rawUnit === "%") {
+    if (b1Label.includes("jam") || nameStr.includes("jam")) {
+      rawUnit = "Jam";
+    } else if (b1Label.includes("hari") || nameStr.includes("hari") || nameStr.includes("lead time")) {
+      rawUnit = "Hari";
+    } else if (b1Label.includes("bcm/jam") || b1Label.includes("bcm / jam") || nameStr.includes("bcm/jam")) {
+      rawUnit = "Bcm/Jam";
+    } else if (b1Label.includes("ltr/bcm") || nameStr.includes("fuel ratio")) {
+      rawUnit = "Ltr/Bcm";
+    } else if (
+      b1Label.includes("rp") ||
+      b1Label.includes("miliar") ||
+      b1Label.includes("milyar") ||
+      b1Label.match(/\b[0-9]+\s*m\b/i) ||
+      nameStr.includes("cost") ||
+      nameStr.includes("biaya") ||
+      nameStr.includes("stock on hand")
+    ) {
+      rawUnit = "Rp";
+    }
+  }
+
+  const resolvedUnit = normalizeIndicatorUnit(rawUnit || "%");
+  const isTextInd = !isNumericUnit(resolvedUnit);
+
+  // 2. Resolve target from bands or explicit value
+  const topBandScore = sortedBands.length > 0 ? Number(sortedBands[0].score) || 25 : 25;
+
+  let b1Threshold: number | null = null;
+  let b1TextTarget: string | null = null;
+
+  if (b1) {
+    let op = String(b1.operator || "").toUpperCase();
+    let min =
+      b1.minValue !== null && b1.minValue !== undefined && b1.minValue !== ""
+        ? Number(b1.minValue)
+        : null;
+    let max =
+      b1.maxValue !== null && b1.maxValue !== undefined && b1.maxValue !== ""
+        ? Number(b1.maxValue)
+        : null;
+    if (isNaN(min as number)) min = null;
+    if (isNaN(max as number)) max = null;
+
+    if ((!op || op === "TEXT" || (min === null && max === null)) && b1.label) {
+      const parsed = parseConditionString(b1.label);
+      if (parsed.operator !== "TEXT") {
+        op = parsed.operator;
+        if (min === null) min = parsed.minValue;
+        if (max === null) max = parsed.maxValue;
+      }
+    }
+
+    if ((op === "LTE" || op === "LT" || op === "<=" || op === "<") && max !== null) {
+      b1Threshold = max;
+    } else if ((op === "GTE" || op === "GT" || op === ">=" || op === ">") && min !== null) {
+      b1Threshold = min;
+    } else if ((op === "EQ" || op === "=") && min !== null) {
+      b1Threshold = min;
+    } else if ((op === "EQ" || op === "=") && max !== null) {
+      b1Threshold = max;
+    } else if (b1.label) {
+      const numMatch = b1.label.match(/([0-9]+(?:[\.,][0-9]+)?)/);
+      if (numMatch) {
+        b1Threshold = parseFloat(numMatch[1].replace(",", "."));
+      } else {
+        b1TextTarget = b1.label.trim();
+      }
+    }
+  }
+
+  const masterTarget =
+    masterParam?.target !== null && masterParam?.target !== undefined
+      ? String(masterParam.target).trim()
+      : "";
+  const masterTargetNum =
+    masterTarget !== "" && !isNaN(Number(masterTarget)) ? Number(masterTarget) : null;
+
+  const rawTarget =
+    masterTarget !== ""
+      ? masterTarget
+      : ind.target !== null && ind.target !== undefined
+      ? String(ind.target).trim()
+      : "";
+  const hasRawTarget = rawTarget !== "";
+  const rawTargetNum = hasRawTarget && !isNaN(Number(rawTarget)) ? Number(rawTarget) : null;
+
+  let finalTargetVal = "";
+  let numTarget = NaN;
+  let isTargetNumeric = false;
+
+  if (masterTargetNum !== null) {
+    // Prioritas Utama: Ambil target langsung dari Kamus Parameter
+    numTarget = masterTargetNum;
+    isTargetNumeric = true;
+    finalTargetVal = masterTarget;
+  } else if (rawTargetNum !== null && rawTargetNum !== 100) {
+    // Explicit user/template target (e.g. 3, 25, 0, 95)
+    numTarget = rawTargetNum;
+    isTargetNumeric = true;
+    finalTargetVal = String(rawTargetNum);
+  } else if (b1Threshold !== null) {
+    // Jika raw target default 100 atau kosong, namun Band 1 memiliki batasan khusus
+    numTarget = b1Threshold;
+    isTargetNumeric = true;
+    finalTargetVal = String(b1Threshold);
+  } else if (rawTargetNum === 100) {
+    numTarget = 100;
+    isTargetNumeric = true;
+    finalTargetVal = "100";
+  } else if (hasRawTarget && !isNaN(Number(rawTarget))) {
+    numTarget = Number(rawTarget);
+    isTargetNumeric = true;
+    finalTargetVal = rawTarget;
+  } else if (b1TextTarget || isTextInd) {
+    numTarget = topBandScore;
+    isTargetNumeric = true;
+    finalTargetVal = String(topBandScore);
+  } else {
+    // Default fallback
+    numTarget = 100;
+    isTargetNumeric = true;
+    finalTargetVal = "100";
+  }
+
+  const numFmt = isTextInd ? "0" : getExcelNumberFormatForUnit(resolvedUnit);
+
+  return {
+    resolvedTarget: finalTargetVal,
+    resolvedUnit,
+    numTarget,
+    isTargetNumeric,
+    finalTargetVal,
+    numFmt,
+    topBandScore,
+  };
 }
 
 /**
@@ -320,11 +582,20 @@ export function buildIndicatorScoreExpression(
     return normalized[0].scoreRef;
   }
 
-  const isNumeric = isNumericUnit(unit);
-  const isQualitativeOrScoreInput = !isNumeric;
+  const hasNumericConditions = normalized.some(
+    (b) =>
+      b.min !== null ||
+      b.max !== null ||
+      ["LT", "LTE", "GT", "GTE", "BETWEEN", "<", "<=", ">", ">="].includes(b.op) ||
+      (b.op === "EQ" && (b.min !== null || b.max !== null || !isNaN(Number(b.label))))
+  );
+
+  const isNumeric = isNumericUnit(unit) || hasNumericConditions;
+  const isQualitativeOrScoreInput = !hasNumericConditions;
 
   if (isQualitativeOrScoreInput) {
-    // 1. Numeric score matching (descending by score: e.g. J8=20, J9=15, J10=0)
+    // 1. Numeric score matching (descending by score: e.g. J8=25, J9=15, J10=5)
+    // Mendukung input langsung nilai skor (misal 25, 15, 5) atau 0 jika tidak tercapai
     const fallbackScoreRef = normalized[normalized.length - 1].scoreRef;
     let numScoreFormula = fallbackScoreRef;
     for (let i = normalized.length - 2; i >= 0; i--) {
@@ -336,7 +607,10 @@ export function buildIndicatorScoreExpression(
       }
     }
 
-    // 2. Text keyword matching if user typed textual label in Form Actual
+    // Jika user menginput 0 pada indikator kualitatif, hasilkan skor 0
+    numScoreFormula = `IF(OR(${cellRefH}=0,${cellRefH}="0"),0,${numScoreFormula})`;
+
+    // 2. Text keyword matching if user typed textual label in Form Actual (e.g. "Tercapai", "Kurang")
     let textScoreFormula = fallbackScoreRef;
     let hasTextCond = false;
     for (let i = normalized.length - 2; i >= 0; i--) {
@@ -804,19 +1078,24 @@ export function buildFormRealisasiActualWorksheet(data: KpiMatrixSheetData): {
       const noStr = hasSubIndicators ? `${cat.number}.${indIdx + 1}` : `${cat.number}`;
       const indKey = ind.id ?? `${cat.number}_${indIdx}`;
       const indWeightFrac = ind.weight > 1 ? ind.weight / 100 : ind.weight;
-      const hasTarget = ind.target !== null && ind.target !== undefined && String(ind.target).trim() !== "";
-      const targetVal = hasTarget ? String(ind.target).trim() : "";
-      const unitVal = normalizeIndicatorUnit(ind.unit);
-      const isTextInd = !isNumericUnit(unitVal);
       const bands = [...(ind.scoringRules || [])].sort(
         (a, b) => (Number(b.score) || 0) - (Number(a.score) || 0)
       );
 
-      const topBandScore = bands.length > 0 ? Number(bands[0].score) : 25;
-      const numTarget = hasTarget ? Number(targetVal) : isTextInd ? topBandScore : NaN;
-      const isTargetNumeric = (hasTarget && !isNaN(Number(targetVal))) || (!hasTarget && isTextInd);
-      const finalTargetVal = hasTarget ? targetVal : isTextInd ? String(topBandScore) : "";
-      const numFmt = isTextInd ? "0" : getExcelNumberFormatForUnit(unitVal);
+      const res = resolveIndicatorTargetAndUnit(ind, bands);
+      const {
+        resolvedTarget,
+        resolvedUnit: unitVal,
+        numTarget,
+        isTargetNumeric,
+        finalTargetVal,
+        numFmt,
+        topBandScore,
+      } = res;
+      const hasTarget = Boolean(finalTargetVal);
+      const targetVal = finalTargetVal;
+      const isTextInd = !isNumericUnit(unitVal);
+      const monthlyFmt = getMonthlyCellNumberFormat(unitVal);
 
       const targetRowExcel = currentR + 1; // 1-indexed
       const actualRowExcel = currentR + 2; // 1-indexed
@@ -868,7 +1147,7 @@ export function buildFormRealisasiActualWorksheet(data: KpiMatrixSheetData): {
         setCell(currentR, 6 + m, {
           t: isMTargetNum ? "n" : "s",
           v: mTargetVal,
-          z: numFmt,
+          z: monthlyFmt,
           s: styleTargetRowCenter,
         });
       }
@@ -1005,6 +1284,7 @@ export function buildFormPenilaianWorksheet(
   const merges: any[] = [];
   const rowsHeight: Record<number, { hpt: number }> = {};
   const nilaiAkhirCellRefs: string[] = [];
+  const precalculatedNilaiAkhirList: number[] = [];
 
   const setCell = (r: number, c: number, cell: any) => {
     const cellRef = XLSX.utils.encode_cell({ r, c });
@@ -1077,10 +1357,6 @@ export function buildFormPenilaianWorksheet(
       const noStr = hasSubIndicators ? `${cat.number}.${indIdx + 1}` : `${cat.number}`;
       const indKey = ind.id ?? `${cat.number}_${indIdx}`;
       const indWeightFrac = ind.weight > 1 ? ind.weight / 100 : ind.weight;
-      const hasTarget = ind.target !== null && ind.target !== undefined && String(ind.target).trim() !== "";
-      const targetVal = hasTarget ? String(ind.target).trim() : "";
-      const unitVal = normalizeIndicatorUnit(ind.unit);
-      const isTextInd = !isNumericUnit(unitVal);
 
       // Find the row number of this indicator's Target & Actual row in Form Realisasi Actual
       const actRowExcel = indicatorActualRowMap.get(indKey) || currentR + 1;
@@ -1099,14 +1375,22 @@ export function buildFormPenilaianWorksheet(
         );
       }
 
-      const topBandScore = bands.length > 0 ? Number(bands[0].score) : 25;
-      const numTarget = hasTarget ? Number(targetVal) : isTextInd ? topBandScore : NaN;
-      const isTargetNumeric = (hasTarget && !isNaN(Number(targetVal))) || (!hasTarget && isTextInd);
-      const finalTargetVal = hasTarget ? targetVal : isTextInd ? String(topBandScore) : "";
-      const numFmt = isTextInd ? "0" : getExcelNumberFormatForUnit(unitVal);
+      const res = resolveIndicatorTargetAndUnit(ind, bands);
+      const {
+        resolvedTarget,
+        resolvedUnit: unitVal,
+        numTarget,
+        isTargetNumeric,
+        finalTargetVal,
+        numFmt,
+        topBandScore,
+      } = res;
+      const hasTarget = Boolean(finalTargetVal);
+      const targetVal = finalTargetVal;
+      const isTextInd = !isNumericUnit(unitVal);
 
       const b1 = bands[0];
-      const maxScoreVal = ind.maxScore || 25;
+      const maxScoreVal = ind.maxScore || topBandScore;
       const hasInitialScore = typeof ind.score === "number" && !isNaN(ind.score);
 
       const excelR1 = currentR + 1; // 1-indexed row number
@@ -1172,16 +1456,24 @@ export function buildFormPenilaianWorksheet(
         s: styleScoreCell,
       });
 
-      // Col K (10): Nilai Akhir = (Realisasi Skor / MaxScore) * BobotIndikator * BobotParameter (Dihitung dari Skor Col H)
+      // Col K (10): Nilai Akhir = (Skor Aktual / Skor Maksimal) * Bobot
+      // Jika memiliki subindikator -> pakai Bobot Indikator (Col E)
+      // Jika parameter tunggal -> pakai Bobot Parameter (Col C)
+      const weightCellRef = hasSubIndicators ? `E${excelR1}` : `C${excelR1}`;
+      const weightFrac = hasSubIndicators ? indWeightFrac : catWeightFrac;
+
       nilaiAkhirCellRefs.push(`K${excelR1}`);
       const precalcNilaiAkhir =
         hasInitialScore
-          ? (Number(ind.score) / maxScoreVal) * indWeightFrac * catWeightFrac
+          ? parseFloat(((Number(ind.score) / topBandScore) * weightFrac).toFixed(4))
           : "";
+      if (typeof precalcNilaiAkhir === "number") {
+        precalculatedNilaiAkhirList.push(precalcNilaiAkhir);
+      }
 
       setCell(currentR, 10, {
         t: hasInitialScore && precalcNilaiAkhir !== "" ? "n" : "s",
-        f: `IF(OR(H${excelR1}="",ISBLANK(H${excelR1})),"",(H${excelR1}/${maxScoreVal})*E${excelR1}*C${excelR1})`,
+        f: `IF(OR(H${excelR1}="",ISBLANK(H${excelR1})),"",(H${excelR1}/${topBandScore})*${weightCellRef})`,
         v: hasInitialScore ? precalcNilaiAkhir : "",
         z: "0.0%",
         s: styleCellBoldCenter,
@@ -1267,14 +1559,15 @@ export function buildFormPenilaianWorksheet(
     nilaiAkhirCellRefs.length > 0
       ? `IF(COUNT(${nilaiAkhirCellRefs.join(",")})=0,"",SUM(${nilaiAkhirCellRefs.join(",")}))`
       : '""';
-  const overallPrecalc = data.summary?.overallScoreDisplay
-    ? parseFloat(data.summary.overallScoreDisplay) / 100
-    : "";
+  const totalMatrixScore =
+    precalculatedNilaiAkhirList.length > 0
+      ? parseFloat(precalculatedNilaiAkhirList.reduce((acc, v) => acc + v, 0).toFixed(4))
+      : "";
 
   setCell(currentR, 10, {
-    t: overallPrecalc !== "" ? "n" : "s",
+    t: totalMatrixScore !== "" ? "n" : "s",
     f: sumFormula,
-    v: overallPrecalc,
+    v: totalMatrixScore,
     z: "0.0%",
     s: styleTableHeaderTotal,
   });

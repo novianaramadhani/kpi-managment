@@ -266,9 +266,9 @@ export function TemplateEditor({
   };
 
   return (
-    <div className="w-full max-w-6xl mx-auto space-y-3 pb-12">
+    <div className="w-full max-w-6xl mx-auto space-y-3 pb-12 min-w-0 max-w-full overflow-x-hidden">
       {/* 1. HEADER HALAMAN (Baris Judul + Metadata & Ubah Info) */}
-      <div className="bg-white rounded-xl p-4 sm:p-5 border border-slate-200/80 shadow-2xs">
+      <div className="bg-[#FFFFFF] rounded-xl px-4 py-3.5 sm:px-5 sm:py-4 border border-[#E2E8F0] shadow-2xs">
         <TemplateHeader
           template={template}
           templateName={templateName}
@@ -288,7 +288,6 @@ export function TemplateEditor({
           onSyncToEmployees={handleSyncToEmployees}
           isSyncingToEmployees={isSyncingToEmployees}
           onExportExcel={handleExportExcel}
-          onImportExcel={() => setIsExcelModalOpen(true)}
         />
       </div>
 

@@ -13,10 +13,8 @@ import { PageHeader } from "@/components/ui";
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
-import { TemplateAssignmentManager } from "@/components/assignment/template-assignment-manager";
 import { AssessorMatrixManager } from "@/components/assignment/assessor-matrix-manager";
 import { DelegationManager } from "@/components/assignment/delegation-manager";
-import { FileSpreadsheet, UserCheck, ShieldAlert } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -30,13 +28,11 @@ export default async function AssignmentsPage({
   const currentUser = await getCurrentUser();
   if (!currentUser) redirect("/login");
 
-  const { tab = "template" } = await searchParams;
+  const { tab = "asesor" } = await searchParams;
 
-  // Normalize tab: "template" | "asesor" | "delegasi"
-  let activeTab: "template" | "asesor" | "delegasi" = "template";
-  if (tab === "asesor" || tab === "penilai") {
-    activeTab = "asesor";
-  } else if (tab === "delegasi") {
+  // Normalize tab: "asesor" | "delegasi"
+  let activeTab: "asesor" | "delegasi" = "asesor";
+  if (tab === "delegasi") {
     activeTab = "delegasi";
   }
 
@@ -87,10 +83,15 @@ export default async function AssignmentsPage({
       .select({
         id: kpiTemplates.id,
         name: kpiTemplates.name,
+        code: kpiTemplates.code,
+        departmentId: kpiTemplates.departmentId,
+        jobLevelId: kpiTemplates.jobLevelId,
+        jobPositionId: kpiTemplates.jobPositionId,
+        employeeId: kpiTemplates.employeeId,
+        isCustom: kpiTemplates.isCustom,
       })
       .from(kpiTemplates)
-      .where(eq(kpiTemplates.isActive, true))
-      .orderBy(asc(kpiTemplates.name)),
+      .orderBy(asc(kpiTemplates.departmentId), asc(kpiTemplates.name)),
     db
       .select({
         id: kpiPeriods.id,
@@ -114,28 +115,18 @@ export default async function AssignmentsPage({
 
   const tabsConfig = [
     {
-      id: "template",
-      label: "Penugasan Template KPI",
-      icon: FileSpreadsheet,
-      title: "Penugasan Template KPI",
-      subtitle:
-        "Atur Employee menggunakan KPI Template apa berdasarkan Periode, Department, Job Level, Jabatan, atau Employee spesifik.",
-    },
-    {
       id: "asesor",
       label: "Penugasan Asesor KPI",
-      icon: UserCheck,
       title: "Penugasan Asesor KPI",
       subtitle:
-        "Atur siapa yang menilai siapa (Employee, Asesor, Role, Tahap Penilaian, dan Periode).",
+        "Daftar seluruh Template KPI yang tersedia untuk pengaturan penilai (asesor), role, dan tahap penilaian.",
     },
     {
       id: "delegasi",
       label: "Delegasi Penilaian",
-      icon: ShieldAlert,
       title: "Delegasi Penilaian",
       subtitle:
-        "Atur pelimpahan kewenangan sementara dari Asesor kepada Delegate tanpa mengganti asesor utama dan otomatis expired.",
+        "Kelola pelimpahan wewenang penilaian sementara antar asesor.",
     },
   ];
 
@@ -143,7 +134,6 @@ export default async function AssignmentsPage({
 
   return (
     <div className="space-y-4">
-      {/* Header Halaman (Single Back Navigation) */}
       <PageHeader
         title={currentTab.title}
         subtitle={currentTab.subtitle}
@@ -151,41 +141,31 @@ export default async function AssignmentsPage({
         backLabel="Kembali ke Workspace"
       />
 
-      {/* Navigation Tabs (Soft Light-Blue Active State) */}
-      <div className="flex flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 max-w-fit">
+      {/* Navigation Tabs */}
+      <div
+        data-tour="step-4-assign-tabs"
+        className="flex flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 max-w-fit shadow-2xs"
+      >
         {tabsConfig.map((t) => {
-          const Icon = t.icon;
           const isActive = activeTab === t.id;
           return (
             <Link
               key={t.id}
               href={`/setup/assignments?tab=${t.id}`}
               prefetch={false}
-              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs transition ${
+              className={`inline-flex items-center rounded-lg px-3.5 py-1.5 text-xs transition ${
                 isActive
-                  ? "bg-sky-100/90 text-sky-950 font-semibold border border-sky-200/80"
+                  ? "bg-blue-600 text-white font-semibold shadow-2xs"
                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900 font-medium"
               }`}
             >
-              <Icon className={`h-3.5 w-3.5 ${isActive ? "text-sky-800" : "text-slate-400"}`} />
               <span>{t.label}</span>
             </Link>
           );
         })}
       </div>
 
-      {/* Sub-menu 1: Penugasan Template KPI */}
-      {activeTab === "template" && (
-        <TemplateAssignmentManager
-          periods={periods}
-          departments={deps}
-          jobLevels={lvls}
-          jobPositions={positions}
-          templates={tpls}
-        />
-      )}
-
-      {/* Sub-menu 2: Penugasan Asesor KPI */}
+      {/* Tab 1: Penugasan Asesor KPI (Berdasarkan Daftar Template yang Sudah Ada) */}
       {activeTab === "asesor" && (
         <AssessorMatrixManager
           periods={periods}
@@ -193,16 +173,18 @@ export default async function AssignmentsPage({
           jobLevels={lvls}
           jobPositions={positions}
           employees={emps}
+          templates={tpls}
           parameters={categories}
         />
       )}
 
-      {/* Sub-menu 3: Delegasi Penilaian */}
+      {/* Tab 2: Delegasi Penilaian */}
       {activeTab === "delegasi" && (
         <DelegationManager
           periods={periods}
           departments={deps}
           employees={emps}
+          templates={tpls}
           parameters={categories}
         />
       )}

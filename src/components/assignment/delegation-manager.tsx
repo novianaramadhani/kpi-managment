@@ -3,19 +3,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Swal from "sweetalert2";
 import {
-  Filter,
-  UserCheck,
-  Plus,
   RefreshCw,
-  AlertCircle,
-  Calendar,
-  CheckCircle2,
-  Clock,
-  Ban,
-  ArrowRight,
-  ShieldAlert,
-  FileText,
-  UserX,
   Search,
 } from "lucide-react";
 
@@ -47,6 +35,11 @@ interface ParameterOption {
   templateName: string;
 }
 
+interface TemplateOption {
+  id: number;
+  name: string;
+}
+
 interface AssessorDelegationRow {
   id: number;
   periodId: number;
@@ -69,6 +62,8 @@ interface AssessorDelegationRow {
   departmentName: string | null;
   categoryId: number | null;
   categoryName: string | null;
+  templateId?: number | null;
+  templateName?: string | null;
   isActive: boolean;
   createdAt: string;
 }
@@ -77,6 +72,7 @@ interface Props {
   periods: KpiPeriod[];
   departments: Department[];
   employees: EmployeeOption[];
+  templates: TemplateOption[];
   parameters: ParameterOption[];
 }
 
@@ -90,6 +86,7 @@ export function DelegationManager({
   periods,
   departments,
   employees,
+  templates,
   parameters,
 }: Props) {
   // Filters
@@ -297,334 +294,190 @@ export function DelegationManager({
   const revokedCount = delegations.filter((d) => !d.isActive).length;
 
   return (
-    <div className="space-y-5">
-      {/* Metric Cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Surat Tugas</span>
-            <span className="rounded-lg bg-slate-100 p-2 text-slate-600">
-              <FileText className="h-4 w-4" />
-            </span>
+    <div className="space-y-4">
+      {/* Compact Single-Row Toolbar */}
+      <div
+        data-tour="step-4-assign-toolbar"
+        className="flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-slate-200 bg-white p-3 shadow-2xs"
+      >
+        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[260px]">
+          {/* Search */}
+          <div className="relative w-full sm:w-56">
+            <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Cari nama, NIK, atau alasan..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 bg-slate-50/60 pl-8 pr-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:bg-white focus:outline-hidden"
+            />
           </div>
-          <div className="mt-2 text-2xl font-bold text-slate-900">{delegations.length}</div>
-          <p className="mt-1 text-xs text-slate-500">Seluruh riwayat pendelegasian wewenang</p>
-        </div>
 
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-emerald-800 uppercase tracking-wider">Wewenang Aktif</span>
-            <span className="rounded-lg bg-emerald-100 p-2 text-emerald-700">
-              <CheckCircle2 className="h-4 w-4" />
-            </span>
-          </div>
-          <div className="mt-2 text-2xl font-bold text-emerald-700">{activeCount}</div>
-          <p className="mt-1 text-xs text-emerald-600">Delegate sah menilai penilaian KPI saat ini</p>
-        </div>
-
-        <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-amber-800 uppercase tracking-wider">Otomatis Expired</span>
-            <span className="rounded-lg bg-amber-100 p-2 text-amber-700">
-              <Clock className="h-4 w-4" />
-            </span>
-          </div>
-          <div className="mt-2 text-2xl font-bold text-amber-700">{expiredCount}</div>
-          <p className="mt-1 text-xs text-amber-600">Masa penugasan delegasi telah usai</p>
-        </div>
-
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-700 uppercase tracking-wider">Dicabut / Dibatalkan</span>
-            <span className="rounded-lg bg-slate-200 p-2 text-slate-600">
-              <Ban className="h-4 w-4" />
-            </span>
-          </div>
-          <div className="mt-2 text-2xl font-bold text-slate-700">{revokedCount}</div>
-          <p className="mt-1 text-xs text-slate-500">Wewenang dikembalikan sebelum batas waktu</p>
-        </div>
-      </div>
-
-      {/* Filter Toolbar */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Filter className="h-4 w-4 text-slate-500" />
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
-              Filter Delegasi Penilaian
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => fetchDelegations()}
-              disabled={loading}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-              Segarkan
-            </button>
-            <button
-              onClick={() => setIsAddModalOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition shadow-xs"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Tambah Delegasi
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-7">
           {/* Periode */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Periode</label>
-            <select
-              value={selectedPeriodId}
-              onChange={(e) => setSelectedPeriodId(Number(e.target.value))}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-            >
-              {periods.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.year})
-                </option>
-              ))}
-            </select>
-          </div>
+          <select
+            value={selectedPeriodId}
+            onChange={(e) => setSelectedPeriodId(Number(e.target.value))}
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-blue-500 focus:outline-hidden"
+          >
+            {periods.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} ({p.year})
+              </option>
+            ))}
+          </select>
 
           {/* Department */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Departemen</label>
-            <select
-              value={selectedDeptId}
-              onChange={(e) => setSelectedDeptId(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-            >
-              <option value="ALL">Semua Departemen</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Delegator */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Pemberi (Delegator)</label>
-            <select
-              value={selectedDelegatorId}
-              onChange={(e) => setSelectedDelegatorId(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-            >
-              <option value="ALL">Semua Delegator</option>
-              {employees.slice(0, 100).map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.name} ({e.nik})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Delegate */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Penerima (Delegate)</label>
-            <select
-              value={selectedDelegateeId}
-              onChange={(e) => setSelectedDelegateeId(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-            >
-              <option value="ALL">Semua Penerima</option>
-              {employees.slice(0, 100).map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.name} ({e.nik})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Tahap Penilaian */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Tahap Penilaian</label>
-            <select
-              value={selectedStage}
-              onChange={(e) => setSelectedStage(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-            >
-              <option value="ALL">Semua Tahap</option>
-              <option value="MONTHLY">Bulanan (Monthly)</option>
-              <option value="SEMESTER">Semester</option>
-              <option value="ANNUAL">Tahunan (Annual)</option>
-            </select>
-          </div>
+          <select
+            value={selectedDeptId}
+            onChange={(e) => setSelectedDeptId(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-blue-500 focus:outline-hidden"
+          >
+            <option value="ALL">Semua Departemen</option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
 
           {/* Status */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Status</label>
-            <select
-              value={selectedStatus}
-              onChange={(e) => setSelectedStatus(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-            >
-              <option value="ALL">Semua Status</option>
-              <option value="ACTIVE">Aktif</option>
-              <option value="EXPIRED">Kedaluwarsa (Expired)</option>
-              <option value="REVOKED">Dicabut (Revoked)</option>
-            </select>
-          </div>
-
-          {/* Search */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Pencarian</label>
-            <div className="relative">
-              <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Nama / NIK / Alasan..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white pl-8 pr-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-hidden"
-              />
-            </div>
-          </div>
+          <select
+            value={selectedStatus}
+            onChange={(e) => setSelectedStatus(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-blue-500 focus:outline-hidden"
+          >
+            <option value="ALL">Semua Status ({delegations.length})</option>
+            <option value="ACTIVE">Aktif ({activeCount})</option>
+            <option value="EXPIRED">Expired ({expiredCount})</option>
+            <option value="REVOKED">Dicabut ({revokedCount})</option>
+          </select>
         </div>
-      </div>
 
-      {/* Relasi Banner */}
-      <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-        <span className="font-semibold text-slate-700">Relasi Delegasi:</span>
-        <span className="font-medium text-slate-900">Delegator (Asesor Utama)</span>
-        <ArrowRight className="h-3 w-3 text-slate-400" />
-        <span className="font-medium text-blue-700">Delegate (Penerima Tugas)</span>
-        <ArrowRight className="h-3 w-3 text-slate-400" />
-        <span className="font-medium text-indigo-700">Cakupan & Tahap</span>
-        <ArrowRight className="h-3 w-3 text-slate-400" />
-        <span className="font-medium text-emerald-700">Rentang Waktu</span>
-        <ArrowRight className="h-3 w-3 text-slate-400" />
-        <span className="font-medium text-slate-800">Status Kedaluwarsa Otomatis</span>
+        <div className="flex items-center gap-2">
+          <button
+            data-tour="step-4-assign-btn"
+            onClick={() => setIsAddModalOpen(true)}
+            className="inline-flex items-center rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition shadow-2xs"
+          >
+            + Tambah Delegasi
+          </button>
+        </div>
       </div>
 
       {/* Table */}
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs">
+      <div
+        data-tour="step-4-assign-table"
+        className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xs"
+      >
         {loading ? (
           <div className="flex flex-col items-center justify-center p-12 text-center">
-            <RefreshCw className="h-8 w-8 animate-spin text-blue-600 mb-2" />
-            <p className="text-sm font-semibold text-slate-700">Memuat data delegasi penilaian...</p>
+            <RefreshCw className="h-6 w-6 animate-spin text-blue-600 mb-2" />
+            <p className="text-xs font-medium text-slate-600">Memuat data delegasi penilaian...</p>
           </div>
         ) : error ? (
           <div className="flex flex-col items-center justify-center p-12 text-center">
-            <AlertCircle className="h-8 w-8 text-rose-500 mb-2" />
-            <p className="text-sm font-semibold text-rose-700">{error}</p>
+            <p className="text-xs font-semibold text-rose-700">{error}</p>
             <button
               onClick={() => fetchDelegations()}
-              className="mt-3 rounded-lg bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition"
+              className="mt-3 rounded-lg bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition"
             >
               Coba Lagi
             </button>
           </div>
         ) : processedRows.length === 0 ? (
           <div className="flex flex-col items-center justify-center p-12 text-center">
-            <FileText className="h-10 w-10 text-slate-300 mb-3" />
-            <p className="text-sm font-bold text-slate-700">Tidak ada delegasi penilaian terdaftar</p>
+            <p className="text-sm font-semibold text-slate-700">Tidak ada delegasi penilaian terdaftar</p>
             <p className="text-xs text-slate-400 max-w-md mt-1">
-              Surat tugas pelimpahan kewenangan sementara dari asesor kepada delegate akan muncul di sini.
+              Klik tombol &quot;+ Tambah Delegasi&quot; untuk membuat surat pelimpahan wewenang sementara.
             </p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-600">
-                  <th className="py-2.5 px-3">Pemberi (Delegator)</th>
-                  <th className="py-2.5 px-3">Penerima (Delegate)</th>
-                  <th className="py-2.5 px-3">Cakupan & Tahap</th>
-                  <th className="py-2.5 px-3">Masa Berlaku</th>
-                  <th className="py-2.5 px-3">Alasan Delegasi</th>
-                  <th className="py-2.5 px-3">Status</th>
-                  <th className="py-2.5 px-3 text-right">Aksi</th>
+                <tr className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <th className="py-2.5 px-3.5">Pemberi (Delegator)</th>
+                  <th className="py-2.5 px-3.5">Penerima (Delegate)</th>
+                  <th className="py-2.5 px-3.5">Cakupan & Tahap</th>
+                  <th className="py-2.5 px-3.5">Masa Berlaku</th>
+                  <th className="py-2.5 px-3.5">Alasan Delegasi</th>
+                  <th className="py-2.5 px-3.5">Status</th>
+                  <th className="py-2.5 px-3.5 text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {processedRows.map((row) => (
-                  <tr key={row.id} className="hover:bg-slate-50/80 transition-colors">
+                  <tr key={row.id} className="hover:bg-slate-50/70 transition-colors">
                     {/* Delegator */}
-                    <td className="py-2 px-3">
+                    <td className="py-2.5 px-3.5">
                       <div className="font-semibold text-slate-900">{row.delegatorName}</div>
                       <div className="text-[11px] font-mono text-slate-500">{row.delegatorNik}</div>
-                      <div className="text-[10px] text-slate-400">
-                        {row.delegatorPosition} • {row.delegatorDepartment}
+                      <div className="text-[11px] text-slate-400">
+                        {row.delegatorPosition}
                       </div>
                     </td>
 
                     {/* Delegate */}
-                    <td className="py-2 px-3">
-                      <div className="font-semibold text-blue-900">{row.delegateeName}</div>
+                    <td className="py-2.5 px-3.5">
+                      <div className="font-semibold text-slate-900">{row.delegateeName}</div>
                       <div className="text-[11px] font-mono text-slate-500">{row.delegateeNik}</div>
-                      <div className="text-[10px] text-slate-400">
-                        {row.delegateePosition} • {row.delegateeDepartment}
+                      <div className="text-[11px] text-slate-400">
+                        {row.delegateePosition}
                       </div>
                     </td>
 
                     {/* Cakupan & Tahap */}
-                    <td className="py-2 px-3">
+                    <td className="py-2.5 px-3.5">
                       <div className="font-medium text-slate-800">
                         {row.scopeType === "ALL" && "Semua Penilaian"}
                         {row.scopeType === "DEPARTMENT" && `Dept: ${row.departmentName}`}
-                        {row.scopeType === "PARAMETER" && `Parameter: ${row.categoryName}`}
+                        {row.scopeType === "PARAMETER" && `Template: ${row.templateName || row.categoryName || "-"}`}
                       </div>
-                      <div className="text-[10px] text-slate-500">
+                      <div className="text-[11px] text-slate-400">
                         Tahap: {STAGE_LABELS[row.stage || ""] || row.stage || "Bulanan"}
                       </div>
                     </td>
 
                     {/* Masa Berlaku */}
-                    <td className="py-2 px-3">
+                    <td className="py-2.5 px-3.5">
                       <div className="font-mono text-slate-800 text-[11px]">
                         {row.startDate} s/d {row.endDate}
-                      </div>
-                      <div className="text-[10px] text-slate-400">
-                        {row.statusKey === "ACTIVE"
-                          ? "Berlaku saat ini"
-                          : row.statusKey === "EXPIRED"
-                          ? "Otomatis kedaluwarsa"
-                          : "Telah dibatalkan"}
                       </div>
                     </td>
 
                     {/* Alasan */}
-                    <td className="py-2 px-3 max-w-xs">
-                      <div className="text-slate-700 italic truncate" title={row.reason}>
-                        &ldquo;{row.reason}&rdquo;
+                    <td className="py-2.5 px-3.5 max-w-xs">
+                      <div className="text-slate-600 truncate" title={row.reason}>
+                        {row.reason}
                       </div>
                     </td>
 
                     {/* Status */}
-                    <td className="py-2 px-3">
+                    <td className="py-2.5 px-3.5">
                       {row.statusKey === "ACTIVE" && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold text-emerald-800">
-                          <CheckCircle2 className="h-3 w-3" />
+                        <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-700 border border-emerald-200">
                           Aktif
                         </span>
                       )}
                       {row.statusKey === "EXPIRED" && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold text-amber-800">
-                          <Clock className="h-3 w-3" />
+                        <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-[10px] font-semibold text-amber-700 border border-amber-200">
                           Expired
                         </span>
                       )}
                       {row.statusKey === "REVOKED" && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2.5 py-0.5 text-[10px] font-bold text-slate-700">
-                          <Ban className="h-3 w-3" />
+                        <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 border border-slate-200">
                           Dicabut
                         </span>
                       )}
                     </td>
 
                     {/* Aksi */}
-                    <td className="py-2 px-3 text-right">
+                    <td className="py-2.5 px-3.5 text-right">
                       {row.statusKey === "ACTIVE" && (
                         <button
                           onClick={() => handleRevoke(row)}
                           title="Cabut Delegasi Sekarang"
-                          className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 transition"
+                          className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 transition"
                         >
                           Cabut
                         </button>
@@ -710,7 +563,7 @@ export function DelegationManager({
                   >
                     <option value="ALL">Semua Penilaian (Seluruh Tim)</option>
                     <option value="DEPARTMENT">Satu Departemen Tertentu</option>
-                    <option value="PARAMETER">Parameter KPI Tertentu</option>
+                    <option value="PARAMETER">Template KPI Tertentu</option>
                   </select>
                 </div>
 
@@ -756,7 +609,7 @@ export function DelegationManager({
               {modalScopeType === "PARAMETER" && (
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                    Pilih Parameter KPI <span className="text-rose-500">*</span>
+                    Pilih Template KPI <span className="text-rose-500">*</span>
                   </label>
                   <select
                     value={modalCategoryId || ""}
@@ -764,13 +617,17 @@ export function DelegationManager({
                     className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-800 focus:outline-hidden"
                   >
                     <option value="" disabled>
-                      Pilih parameter...
+                      Pilih template KPI...
                     </option>
-                    {parameters.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.templateName})
-                      </option>
-                    ))}
+                    {templates.map((tpl) => {
+                      const firstCat = parameters.find((p) => p.templateId === tpl.id);
+                      if (!firstCat) return null;
+                      return (
+                        <option key={tpl.id} value={firstCat.id}>
+                          {tpl.name}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
               )}
@@ -832,9 +689,9 @@ export function DelegationManager({
                 type="button"
                 onClick={handleSubmitAdd}
                 disabled={isSubmitting}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50 transition shadow-xs"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 transition shadow-2xs"
               >
-                {isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                {isSubmitting && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
                 Terbitkan Delegasi
               </button>
             </div>

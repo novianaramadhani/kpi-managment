@@ -211,6 +211,18 @@ export function MasterParameterPickerModal({
                           • {p.categoryName}
                         </span>
                       )}
+
+                      {p.weight != null && !isNaN(Number(p.weight)) && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                          Bobot: {Math.round(Number(p.weight) <= 1 ? Number(p.weight) * 100 : Number(p.weight))}%
+                        </span>
+                      )}
+
+                      {p.target && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          Target: {p.target}
+                        </span>
+                      )}
                     </div>
 
                     <div className="font-bold text-slate-800 text-xs">{p.name}</div>

@@ -2,22 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Swal from "sweetalert2";
-import {
-  Search,
-  Filter,
-  Users,
-  UserCheck,
-  Plus,
-  RefreshCw,
-  Trash2,
-  AlertCircle,
-  Briefcase,
-  Layers,
-  ArrowRight,
-  ShieldCheck,
-  Calendar,
-  CheckCircle2,
-} from "lucide-react";
+import { Search, RefreshCw } from "lucide-react";
 
 interface Department {
   id: number;
@@ -58,6 +43,17 @@ interface ParameterOption {
   templateName: string;
 }
 
+interface TemplateOption {
+  id: number;
+  name: string;
+  code?: string | null;
+  departmentId?: number;
+  jobLevelId?: number;
+  jobPositionId?: number | null;
+  employeeId?: number | null;
+  isCustom?: boolean;
+}
+
 interface AssessorAssignmentRow {
   id: number;
   periodId: number;
@@ -85,12 +81,18 @@ interface AssessorAssignmentRow {
   createdAt: string;
 }
 
+interface GroupedTemplateAssessorRow extends AssessorAssignmentRow {
+  assignmentIds: number[];
+  categoryCount: number;
+}
+
 interface Props {
   periods: KpiPeriod[];
   departments: Department[];
   jobLevels: JobLevel[];
   jobPositions: JobPosition[];
   employees: EmployeeOption[];
+  templates: TemplateOption[];
   parameters: ParameterOption[];
 }
 
@@ -112,8 +114,8 @@ export function AssessorMatrixManager({
   periods,
   departments,
   jobLevels,
-  jobPositions,
   employees,
+  templates,
   parameters,
 }: Props) {
   // Filters
@@ -121,10 +123,7 @@ export function AssessorMatrixManager({
     periods.find((p) => p.status === "ACTIVE")?.id || periods[0]?.id || 0
   );
   const [selectedDeptId, setSelectedDeptId] = useState<string>("ALL");
-  const [selectedJobLevelId, setSelectedJobLevelId] = useState<string>("ALL");
-  const [selectedJobPositionId, setSelectedJobPositionId] = useState<string>("ALL");
-  const [selectedRole, setSelectedRole] = useState<string>("ALL");
-  const [selectedStage, setSelectedStage] = useState<string>("ALL");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "ASSIGNED" | "UNASSIGNED">("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
   // Data State
@@ -137,17 +136,66 @@ export function AssessorMatrixManager({
   const [modalAssessorId, setModalAssessorId] = useState<number>(employees[0]?.id || 0);
   const [modalRole, setModalRole] = useState<string>("PENILAI_1");
   const [modalStage, setModalStage] = useState<string>("MONTHLY");
-  const [modalCategoryIds, setModalCategoryIds] = useState<number[]>(
-    parameters.length > 0 ? [parameters[0].id] : []
+  const [modalTemplateId, setModalTemplateId] = useState<number | "ALL">(
+    templates.length > 0 ? templates[0].id : "ALL"
   );
-  const [modalScopeType, setModalScopeType] = useState<"INDIVIDUAL" | "DEPARTMENT" | "GLOBAL">("INDIVIDUAL");
+  const [modalScopeType, setModalScopeType] = useState<"INDIVIDUAL" | "DEPARTMENT" | "GLOBAL">(
+    "INDIVIDUAL"
+  );
   const [modalDeptId, setModalDeptId] = useState<number | null>(null);
   const [modalSelectedTargetEmpIds, setModalSelectedTargetEmpIds] = useState<number[]>([]);
   const [modalTargetEmpSearch, setModalTargetEmpSearch] = useState<string>("");
   const [modalNotes, setModalNotes] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // Fetch Assessor Assignments
+  // Lookup maps
+  const deptMap = useMemo(
+    () => new Map(departments.map((d) => [d.id, d])),
+    [departments]
+  );
+  const levelMap = useMemo(
+    () => new Map(jobLevels.map((l) => [l.id, l])),
+    [jobLevels]
+  );
+  const employeeMap = useMemo(
+    () => new Map(employees.map((e) => [e.id, e])),
+    [employees]
+  );
+
+  // Group raw category-level rows into 1 row per Template KPI assignment
+  const groupedAssignments = useMemo<GroupedTemplateAssessorRow[]>(() => {
+    const map = new Map<string, GroupedTemplateAssessorRow>();
+    for (const row of assignments) {
+      const key = `${row.periodId}|${row.templateId}|${row.assessorId}|${row.scopeType}|${
+        row.targetEmployeeId ?? "NULL"
+      }|${row.targetDepartmentId ?? "NULL"}|${row.roleAssessor ?? ""}|${row.stage ?? ""}`;
+      const existing = map.get(key);
+      if (existing) {
+        existing.assignmentIds.push(row.id);
+        existing.categoryCount += 1;
+      } else {
+        map.set(key, {
+          ...row,
+          assignmentIds: [row.id],
+          categoryCount: 1,
+        });
+      }
+    }
+    return Array.from(map.values());
+  }, [assignments]);
+
+  // Map templateId -> list of grouped assessor assignments
+  const assessorsByTemplateMap = useMemo(() => {
+    const map = new Map<number, GroupedTemplateAssessorRow[]>();
+    for (const grp of groupedAssignments) {
+      const arr = map.get(grp.templateId) || [];
+      arr.push(grp);
+      map.set(grp.templateId, arr);
+    }
+    return map;
+  }, [groupedAssignments]);
+
+  // Fetch Assessor Assignments for selected period
   const fetchAssignments = useCallback(async () => {
     if (!selectedPeriodId) return;
     setLoading(true);
@@ -157,13 +205,6 @@ export function AssessorMatrixManager({
       const params = new URLSearchParams({
         periodId: String(selectedPeriodId),
       });
-      if (selectedDeptId !== "ALL") params.append("departmentId", selectedDeptId);
-      if (selectedJobLevelId !== "ALL") params.append("jobLevelId", selectedJobLevelId);
-      if (selectedJobPositionId !== "ALL") params.append("jobPositionId", selectedJobPositionId);
-      if (selectedRole !== "ALL") params.append("roleAssessor", selectedRole);
-      if (selectedStage !== "ALL") params.append("stage", selectedStage);
-      if (searchQuery.trim()) params.append("search", searchQuery.trim());
-
       const res = await fetch(`/api/admin/assessor-assignments?${params.toString()}`);
       const data = await res.json();
 
@@ -178,19 +219,101 @@ export function AssessorMatrixManager({
     } finally {
       setLoading(false);
     }
-  }, [selectedPeriodId, selectedDeptId, selectedJobLevelId, selectedJobPositionId, selectedRole, selectedStage, searchQuery]);
+  }, [selectedPeriodId]);
 
   useEffect(() => {
     fetchAssignments();
   }, [fetchAssignments]);
 
-  // Delete Assignment
-  const handleDelete = async (row: AssessorAssignmentRow) => {
+  // Enrich templates with owner employee, department, and assigned assessors
+  const enrichedTemplateRows = useMemo(() => {
+    return templates.map((tpl) => {
+      const dept = tpl.departmentId ? deptMap.get(tpl.departmentId) || null : null;
+      const jobLevel = tpl.jobLevelId ? levelMap.get(tpl.jobLevelId) || null : null;
+      const ownerEmp = tpl.employeeId ? employeeMap.get(tpl.employeeId) || null : null;
+      const tplAssessors = assessorsByTemplateMap.get(tpl.id) || [];
+
+      return {
+        tpl,
+        dept,
+        jobLevel,
+        ownerEmp,
+        tplAssessors,
+        hasAssessor: tplAssessors.length > 0,
+      };
+    });
+  }, [templates, deptMap, levelMap, employeeMap, assessorsByTemplateMap]);
+
+  const counts = useMemo(() => {
+    let assigned = 0;
+    let unassigned = 0;
+    for (const item of enrichedTemplateRows) {
+      if (item.hasAssessor) assigned++;
+      else unassigned++;
+    }
+    return {
+      total: enrichedTemplateRows.length,
+      assigned,
+      unassigned,
+    };
+  }, [enrichedTemplateRows]);
+
+  // Filter template rows
+  const filteredTemplateRows = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return enrichedTemplateRows.filter((item) => {
+      if (selectedDeptId !== "ALL" && String(item.tpl.departmentId) !== selectedDeptId) {
+        return false;
+      }
+      if (statusFilter === "ASSIGNED" && !item.hasAssessor) return false;
+      if (statusFilter === "UNASSIGNED" && item.hasAssessor) return false;
+
+      if (q) {
+        const matchTpl = item.tpl.name.toLowerCase().includes(q);
+        const matchDept = item.dept
+          ? item.dept.name.toLowerCase().includes(q) || item.dept.code.toLowerCase().includes(q)
+          : false;
+        const matchOwner = item.ownerEmp
+          ? item.ownerEmp.name.toLowerCase().includes(q) ||
+            item.ownerEmp.nik.toLowerCase().includes(q)
+          : false;
+        const matchAssessor = item.tplAssessors.some(
+          (a) =>
+            a.assessorName.toLowerCase().includes(q) ||
+            a.assessorNik.toLowerCase().includes(q) ||
+            (a.targetEmployeeName && a.targetEmployeeName.toLowerCase().includes(q))
+        );
+        if (!matchTpl && !matchDept && !matchOwner && !matchAssessor) return false;
+      }
+
+      return true;
+    });
+  }, [enrichedTemplateRows, selectedDeptId, statusFilter, searchQuery]);
+
+  // Open Assign Modal for a specific Template KPI row
+  const handleOpenAssignForTemplate = (tpl: TemplateOption) => {
+    setModalTemplateId(tpl.id);
+    if (tpl.employeeId) {
+      setModalScopeType("INDIVIDUAL");
+      setModalSelectedTargetEmpIds([tpl.employeeId]);
+    } else if (tpl.departmentId) {
+      setModalScopeType("DEPARTMENT");
+      setModalDeptId(tpl.departmentId);
+      setModalSelectedTargetEmpIds([]);
+    } else {
+      setModalScopeType("GLOBAL");
+      setModalSelectedTargetEmpIds([]);
+    }
+    setModalTargetEmpSearch("");
+    setModalNotes("");
+    setIsAddModalOpen(true);
+  };
+
+  // Delete Template Assignment (deletes all category rows belonging to this template assignment)
+  const handleDelete = async (row: GroupedTemplateAssessorRow) => {
     const result = await Swal.fire({
-      title: "Hapus Penugasan Asesor?",
-      html: `Apakah Anda yakin ingin menghapus penugasan asesor <b>${row.assessorName}</b> untuk menilai <b>${
-        row.targetEmployeeName || row.targetDepartmentName || "Semua Karyawan"
-      }</b>?`,
+      title: "Hapus Penugasan Penilai?",
+      html: `Apakah Anda yakin ingin menghapus penugasan penilai <b>${row.assessorName}</b> pada template <b>${row.templateName}</b>?`,
       icon: "warning",
       showCancelButton: true,
       confirmButtonColor: "#d33",
@@ -202,7 +325,8 @@ export function AssessorMatrixManager({
     if (!result.isConfirmed) return;
 
     try {
-      const res = await fetch(`/api/admin/assessor-assignments?id=${row.id}`, {
+      const idsParam = row.assignmentIds.join(",");
+      const res = await fetch(`/api/admin/assessor-assignments?ids=${idsParam}`, {
         method: "DELETE",
       });
       const data = await res.json();
@@ -211,8 +335,8 @@ export function AssessorMatrixManager({
       Swal.fire({
         icon: "success",
         title: "Terhapus",
-        text: "Penugasan asesor berhasil dihapus.",
-        timer: 1500,
+        text: "Penugasan penilai berhasil dihapus.",
+        timer: 1400,
         showConfirmButton: false,
       });
       fetchAssignments();
@@ -222,22 +346,44 @@ export function AssessorMatrixManager({
     }
   };
 
-  // Submit Modal Tambah Asesor
+  // Submit Modal Assign Penilai (per Template KPI)
   const handleSubmitAdd = async () => {
     if (!modalAssessorId) {
-      Swal.fire({ icon: "warning", title: "Pilih Asesor", text: "Silakan pilih karyawan yang bertindak sebagai asesor." });
+      Swal.fire({
+        icon: "warning",
+        title: "Pilih Asesor Penilai",
+        text: "Silakan pilih karyawan yang bertindak sebagai penilai.",
+      });
       return;
     }
-    if (modalCategoryIds.length === 0) {
-      Swal.fire({ icon: "warning", title: "Pilih Parameter", text: "Pilih minimal satu parameter KPI yang akan dinilai." });
+
+    const resolvedCategoryIds =
+      modalTemplateId === "ALL"
+        ? parameters.map((p) => p.id)
+        : parameters.filter((p) => p.templateId === modalTemplateId).map((p) => p.id);
+
+    if (resolvedCategoryIds.length === 0) {
+      Swal.fire({
+        icon: "warning",
+        title: "Template Belum Memiliki Parameter",
+        text: "Template KPI yang dipilih belum memiliki parameter/kategori aktif.",
+      });
       return;
     }
     if (modalScopeType === "INDIVIDUAL" && modalSelectedTargetEmpIds.length === 0) {
-      Swal.fire({ icon: "warning", title: "Pilih Target", text: "Pilih minimal satu karyawan target yang akan dinilai." });
+      Swal.fire({
+        icon: "warning",
+        title: "Pilih Karyawan Dinilai",
+        text: "Pilih minimal satu karyawan yang akan dinilai.",
+      });
       return;
     }
     if (modalScopeType === "DEPARTMENT" && !modalDeptId) {
-      Swal.fire({ icon: "warning", title: "Pilih Departemen", text: "Pilih departemen target yang akan dinilai." });
+      Swal.fire({
+        icon: "warning",
+        title: "Pilih Departemen",
+        text: "Pilih departemen target yang akan dinilai.",
+      });
       return;
     }
 
@@ -245,7 +391,7 @@ export function AssessorMatrixManager({
     try {
       const payload = {
         periodId: selectedPeriodId,
-        categoryIds: modalCategoryIds,
+        categoryIds: resolvedCategoryIds,
         assessorEmployeeIds: [modalAssessorId],
         scopeType: modalScopeType,
         roleAssessor: modalRole,
@@ -262,13 +408,13 @@ export function AssessorMatrixManager({
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Gagal menyimpan penugasan asesor.");
+      if (!res.ok) throw new Error(data.error || "Gagal menyimpan penugasan penilai.");
 
       Swal.fire({
         icon: "success",
-        title: "Penugasan Berhasil",
-        text: `Berhasil menambahkan ${data.count || 1} aturan penugasan asesor.`,
-        timer: 1500,
+        title: "Penilai Berhasil Ditugaskan",
+        text: "Penugasan penilai pada Template KPI berhasil disimpan.",
+        timer: 1400,
         showConfirmButton: false,
       });
 
@@ -287,7 +433,7 @@ export function AssessorMatrixManager({
   // Filter candidates for target employee in modal
   const modalTargetCandidates = useMemo(() => {
     return employees.filter((e) => {
-      if (e.id === modalAssessorId) return false; // cannot assess self
+      if (e.id === modalAssessorId) return false;
       if (!modalTargetEmpSearch.trim()) return true;
       const q = modalTargetEmpSearch.toLowerCase();
       return (
@@ -298,335 +444,231 @@ export function AssessorMatrixManager({
     });
   }, [employees, modalAssessorId, modalTargetEmpSearch]);
 
-  const currentPeriodName = periods.find((p) => p.id === selectedPeriodId)?.name || "Periode";
-
   return (
-    <div className="space-y-5">
-      {/* Metric Cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Penugasan</span>
-            <span className="rounded-lg bg-slate-100 p-2 text-slate-600">
-              <Users className="h-4 w-4" />
-            </span>
+    <div className="space-y-4">
+      {/* Compact Single-Row Toolbar */}
+      <div
+        data-tour="step-4-assign-toolbar"
+        className="flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-slate-200 bg-white p-3 shadow-2xs"
+      >
+        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[260px]">
+          {/* Search */}
+          <div className="relative w-full sm:w-64">
+            <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Cari nama template, karyawan, atau penilai..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 bg-slate-50/60 pl-8 pr-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:bg-white focus:outline-hidden"
+            />
           </div>
-          <div className="mt-2 text-2xl font-bold text-slate-900">{assignments.length}</div>
-          <p className="mt-1 text-xs text-slate-500">Aturan penilai aktif pada {currentPeriodName}</p>
-        </div>
 
-        <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-4 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-blue-800 uppercase tracking-wider">Asesor Unik</span>
-            <span className="rounded-lg bg-blue-100 p-2 text-blue-700">
-              <UserCheck className="h-4 w-4" />
-            </span>
-          </div>
-          <div className="mt-2 text-2xl font-bold text-blue-700">
-            {new Set(assignments.map((a) => a.assessorId)).size}
-          </div>
-          <p className="mt-1 text-xs text-blue-600">Pejabat/karyawan yang bertindak sebagai asesor</p>
-        </div>
-
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-4 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-indigo-800 uppercase tracking-wider">Karyawan Dinilai</span>
-            <span className="rounded-lg bg-indigo-100 p-2 text-indigo-700">
-              <Briefcase className="h-4 w-4" />
-            </span>
-          </div>
-          <div className="mt-2 text-2xl font-bold text-indigo-700">
-            {new Set(assignments.map((a) => a.targetEmployeeId).filter(Boolean)).size}
-          </div>
-          <p className="mt-1 text-xs text-indigo-600">Target penugasan individual terdaftar</p>
-        </div>
-
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-emerald-800 uppercase tracking-wider">Parameter Terhubung</span>
-            <span className="rounded-lg bg-emerald-100 p-2 text-emerald-700">
-              <Layers className="h-4 w-4" />
-            </span>
-          </div>
-          <div className="mt-2 text-2xl font-bold text-emerald-700">
-            {new Set(assignments.map((a) => a.categoryId)).size}
-          </div>
-          <p className="mt-1 text-xs text-emerald-600">Kategori/parameter KPI berpenilai</p>
-        </div>
-      </div>
-
-      {/* Filter Toolbar */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Filter className="h-4 w-4 text-slate-500" />
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
-              Filter Penugasan Asesor
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => fetchAssignments()}
-              disabled={loading}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-              Segarkan
-            </button>
-            <button
-              onClick={() => setIsAddModalOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition shadow-xs"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Tambah Asesor
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-7">
           {/* Periode */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Periode</label>
-            <select
-              value={selectedPeriodId}
-              onChange={(e) => setSelectedPeriodId(Number(e.target.value))}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-            >
-              {periods.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.year})
-                </option>
-              ))}
-            </select>
-          </div>
+          <select
+            value={selectedPeriodId}
+            onChange={(e) => setSelectedPeriodId(Number(e.target.value))}
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-blue-500 focus:outline-hidden"
+          >
+            {periods.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} ({p.year})
+              </option>
+            ))}
+          </select>
 
           {/* Department */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Departemen</label>
-            <select
-              value={selectedDeptId}
-              onChange={(e) => setSelectedDeptId(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-            >
-              <option value="ALL">Semua Departemen</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <select
+            value={selectedDeptId}
+            onChange={(e) => setSelectedDeptId(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-blue-500 focus:outline-hidden"
+          >
+            <option value="ALL">Semua Departemen</option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
 
-          {/* Job Level */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Job Level</label>
-            <select
-              value={selectedJobLevelId}
-              onChange={(e) => setSelectedJobLevelId(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-            >
-              <option value="ALL">Semua Job Level</option>
-              {jobLevels.map((jl) => (
-                <option key={jl.id} value={jl.id}>
-                  {jl.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* Status Filter */}
+          <select
+            value={statusFilter}
+            onChange={(e) =>
+              setStatusFilter(e.target.value as "ALL" | "ASSIGNED" | "UNASSIGNED")
+            }
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-blue-500 focus:outline-hidden"
+          >
+            <option value="ALL">Semua Template ({counts.total})</option>
+            <option value="ASSIGNED">Sudah Ada Penilai ({counts.assigned})</option>
+            <option value="UNASSIGNED">Belum Ada Penilai ({counts.unassigned})</option>
+          </select>
+        </div>
 
-          {/* Jabatan */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Jabatan</label>
-            <select
-              value={selectedJobPositionId}
-              onChange={(e) => setSelectedJobPositionId(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-            >
-              <option value="ALL">Semua Jabatan</option>
-              {jobPositions.map((jp) => (
-                <option key={jp.id} value={jp.id}>
-                  {jp.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Role Asesor */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Role Asesor</label>
-            <select
-              value={selectedRole}
-              onChange={(e) => setSelectedRole(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-            >
-              <option value="ALL">Semua Role</option>
-              <option value="ATASAN_LANGSUNG">Atasan Langsung</option>
-              <option value="PENILAI_1">Penilai 1</option>
-              <option value="PENILAI_2">Penilai 2</option>
-              <option value="REVIEWER">Reviewer</option>
-              <option value="HRD">HR / Verifikator</option>
-            </select>
-          </div>
-
-          {/* Tahap Penilaian */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Tahap Penilaian</label>
-            <select
-              value={selectedStage}
-              onChange={(e) => setSelectedStage(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-            >
-              <option value="ALL">Semua Tahap</option>
-              <option value="MONTHLY">Bulanan (Monthly)</option>
-              <option value="SEMESTER">Semester</option>
-              <option value="ANNUAL">Tahunan (Annual)</option>
-            </select>
-          </div>
-
-          {/* Search */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Pencarian</label>
-            <div className="relative">
-              <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Target / Asesor / NIK..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white pl-8 pr-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-hidden"
-              />
-            </div>
-          </div>
+        <div className="flex items-center gap-2">
+          <button
+            data-tour="step-4-assign-btn"
+            onClick={() => {
+              if (templates.length > 0) {
+                handleOpenAssignForTemplate(templates[0]);
+              } else {
+                setIsAddModalOpen(true);
+              }
+            }}
+            className="inline-flex items-center rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition shadow-2xs cursor-pointer"
+          >
+            + Assign Penilai
+          </button>
         </div>
       </div>
 
-      {/* Relasi Banner: Employee → Asesor → Role → Tahap Penilaian → Periode */}
-      <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-        <span className="font-semibold text-slate-700">Relasi Asesor:</span>
-        <span className="font-medium text-slate-900">Employee (Target)</span>
-        <ArrowRight className="h-3 w-3 text-slate-400" />
-        <span className="font-medium text-blue-700">Asesor Penilai</span>
-        <ArrowRight className="h-3 w-3 text-slate-400" />
-        <span className="font-medium text-indigo-700">Role Asesor</span>
-        <ArrowRight className="h-3 w-3 text-slate-400" />
-        <span className="font-medium text-emerald-700">Tahap Penilaian</span>
-        <ArrowRight className="h-3 w-3 text-slate-400" />
-        <span className="font-medium text-slate-800">Periode KPI</span>
-      </div>
-
-      {/* Table */}
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs">
+      {/* Table of All Existing Templates & Their Assigned Assessors */}
+      <div
+        data-tour="step-4-assign-table"
+        className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xs"
+      >
         {loading ? (
           <div className="flex flex-col items-center justify-center p-12 text-center">
-            <RefreshCw className="h-8 w-8 animate-spin text-blue-600 mb-2" />
-            <p className="text-sm font-semibold text-slate-700">Memuat matriks penugasan asesor...</p>
+            <RefreshCw className="h-6 w-6 animate-spin text-blue-600 mb-2" />
+            <p className="text-xs font-medium text-slate-600">
+              Memuat daftar template &amp; penugasan penilai...
+            </p>
           </div>
         ) : error ? (
           <div className="flex flex-col items-center justify-center p-12 text-center">
-            <AlertCircle className="h-8 w-8 text-rose-500 mb-2" />
-            <p className="text-sm font-semibold text-rose-700">{error}</p>
+            <p className="text-xs font-semibold text-rose-700">{error}</p>
             <button
               onClick={() => fetchAssignments()}
-              className="mt-3 rounded-lg bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition"
+              className="mt-3 rounded-lg bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition"
             >
               Coba Lagi
             </button>
           </div>
-        ) : assignments.length === 0 ? (
+        ) : filteredTemplateRows.length === 0 ? (
           <div className="flex flex-col items-center justify-center p-12 text-center">
-            <Users className="h-10 w-10 text-slate-300 mb-3" />
-            <p className="text-sm font-bold text-slate-700">Belum ada penugasan asesor yang terdaftar</p>
+            <p className="text-sm font-semibold text-slate-700">
+              Tidak ada Template KPI yang sesuai filter
+            </p>
             <p className="text-xs text-slate-400 max-w-md mt-1">
-              Gunakan tombol &quot;Tambah Asesor&quot; untuk menetapkan penilai bagi karyawan atau departemen pada periode ini.
+              Silakan sesuaikan filter departemen atau kata kunci pencarian.
             </p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-600">
-                  <th className="py-2.5 px-3">Target (Karyawan / Dept)</th>
-                  <th className="py-2.5 px-3">Asesor Penilai</th>
-                  <th className="py-2.5 px-3">Role Asesor</th>
-                  <th className="py-2.5 px-3">Tahap</th>
-                  <th className="py-2.5 px-3">Parameter KPI</th>
-                  <th className="py-2.5 px-3">Cakupan</th>
-                  <th className="py-2.5 px-3 text-right">Aksi</th>
+                <tr className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <th className="py-2.5 px-3.5">Template KPI &amp; Karyawan Dinilai</th>
+                  <th className="py-2.5 px-3.5">Departemen</th>
+                  <th className="py-2.5 px-3.5">Asesor Penilai</th>
+                  <th className="py-2.5 px-3.5">Role &amp; Tahap</th>
+                  <th className="py-2.5 px-3.5">Status</th>
+                  <th className="py-2.5 px-3.5 text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {assignments.map((row) => (
-                  <tr key={row.id} className="hover:bg-slate-50/80 transition-colors">
-                    {/* Target */}
-                    <td className="py-2 px-3">
-                      {row.scopeType === "INDIVIDUAL" && row.targetEmployeeName ? (
-                        <div>
-                          <div className="font-semibold text-slate-900">{row.targetEmployeeName}</div>
-                          <div className="text-[11px] font-mono text-slate-500">{row.targetEmployeeNik}</div>
-                          <div className="text-[10px] text-slate-400">
-                            {row.targetEmployeePosition} • {row.targetEmployeeJobLevelName}
-                          </div>
-                        </div>
-                      ) : row.scopeType === "DEPARTMENT" ? (
-                        <div>
-                          <div className="font-semibold text-slate-900">
-                            Departemen: {row.targetDepartmentName || row.assessorDepartmentName || "Semua Departemen"}
-                          </div>
-                          <div className="text-[10px] text-slate-500">Seluruh karyawan dalam lingkup unit</div>
+                {filteredTemplateRows.map(({ tpl, dept, jobLevel, ownerEmp, tplAssessors }) => (
+                  <tr key={tpl.id} className="hover:bg-slate-50/70 transition-colors">
+                    {/* Template KPI & Owner Employee */}
+                    <td className="py-3 px-3.5">
+                      <div className="font-semibold text-slate-900">{tpl.name}</div>
+                      {ownerEmp ? (
+                        <div className="text-[11px] text-slate-500 mt-0.5">
+                          <span className="font-medium text-slate-700">{ownerEmp.name}</span>{" "}
+                          <span className="font-mono text-slate-400">({ownerEmp.nik})</span>
+                          {ownerEmp.jobPosition ? ` • ${ownerEmp.jobPosition}` : ""}
                         </div>
                       ) : (
-                        <div className="font-semibold text-slate-900">Semua Karyawan (Global)</div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">
+                          Template Standar Departemen
+                        </div>
                       )}
                     </td>
 
-                    {/* Asesor */}
-                    <td className="py-2 px-3">
-                      <div className="font-semibold text-blue-900">{row.assessorName}</div>
-                      <div className="text-[11px] font-mono text-slate-500">{row.assessorNik}</div>
-                      <div className="text-[10px] text-slate-400">{row.assessorPosition}</div>
+                    {/* Departemen */}
+                    <td className="py-3 px-3.5">
+                      <div className="font-medium text-slate-800">{dept?.name || "-"}</div>
+                      <div className="text-[11px] text-slate-400">{jobLevel?.name || "-"}</div>
                     </td>
 
-                    {/* Role */}
-                    <td className="py-2 px-3">
-                      <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700 border border-indigo-200">
-                        <ShieldCheck className="h-3 w-3" />
-                        {ROLE_LABELS[row.roleAssessor || ""] || row.roleAssessor || "Penilai"}
-                      </span>
+                    {/* Asesor Penilai */}
+                    <td className="py-3 px-3.5">
+                      {tplAssessors.length === 0 ? (
+                        <span className="text-slate-400">-</span>
+                      ) : (
+                        <div className="space-y-2">
+                          {tplAssessors.map((a) => (
+                            <div key={a.id}>
+                              <div className="font-semibold text-slate-900">
+                                {a.assessorName}
+                              </div>
+                              <div className="text-[11px] text-slate-400">
+                                <span className="font-mono">{a.assessorNik}</span>
+                                {a.assessorPosition ? ` • ${a.assessorPosition}` : ""}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </td>
 
-                    {/* Tahap */}
-                    <td className="py-2 px-3">
-                      <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">
-                        <Calendar className="h-3 w-3" />
-                        {STAGE_LABELS[row.stage || ""] || row.stage || "Bulanan"}
-                      </span>
+                    {/* Role & Tahap */}
+                    <td className="py-3 px-3.5">
+                      {tplAssessors.length === 0 ? (
+                        <span className="text-slate-400">-</span>
+                      ) : (
+                        <div className="space-y-2">
+                          {tplAssessors.map((a) => (
+                            <div key={a.id} className="flex flex-wrap items-center gap-1.5">
+                              <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 border border-blue-200">
+                                {ROLE_LABELS[a.roleAssessor || ""] ||
+                                  a.roleAssessor ||
+                                  "Penilai"}
+                              </span>
+                              <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                                {STAGE_LABELS[a.stage || ""] || a.stage || "Bulanan"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </td>
 
-                    {/* Parameter */}
-                    <td className="py-2 px-3">
-                      <div className="font-medium text-slate-800">{row.categoryName}</div>
-                      <div className="text-[10px] text-slate-400">
-                        Template: {row.templateName}
-                        {row.categoryWeight ? ` (${row.categoryWeight}%)` : ""}
-                      </div>
-                    </td>
-
-                    {/* Cakupan */}
-                    <td className="py-2 px-3">
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700 uppercase">
-                        {row.scopeType}
-                      </span>
+                    {/* Status */}
+                    <td className="py-3 px-3.5">
+                      {tplAssessors.length > 0 ? (
+                        <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-700 border border-emerald-200">
+                          ASSIGNED ({tplAssessors.length})
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-[10px] font-semibold text-amber-700 border border-amber-200">
+                          BELUM ADA PENILAI
+                        </span>
+                      )}
                     </td>
 
                     {/* Aksi */}
-                    <td className="py-2 px-3 text-right">
-                      <button
-                        onClick={() => handleDelete(row)}
-                        title="Hapus Penugasan Asesor"
-                        className="rounded-md border border-rose-200 bg-rose-50 p-1.5 text-rose-600 hover:bg-rose-100 transition"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                    <td className="py-3 px-3.5 text-right">
+                      <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenAssignForTemplate(tpl)}
+                          className="rounded-lg border border-blue-200 bg-blue-50/70 px-2.5 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 transition cursor-pointer"
+                        >
+                          + Assign Penilai
+                        </button>
+                        {tplAssessors.map((a) => (
+                          <button
+                            key={a.id}
+                            type="button"
+                            onClick={() => handleDelete(a)}
+                            title={`Hapus penilai ${a.assessorName}`}
+                            className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 transition cursor-pointer"
+                          >
+                            Hapus
+                          </button>
+                        ))}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -636,27 +678,63 @@ export function AssessorMatrixManager({
         )}
       </div>
 
-      {/* Modal Tambah Asesor */}
+      {/* Modal Assign Penilai */}
       {isAddModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto">
           <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
-                <h3 className="text-base font-bold text-slate-900">Tambah Penugasan Asesor KPI</h3>
+                <h3 className="text-base font-bold text-slate-900">
+                  Assign Penilai (Asesor KPI)
+                </h3>
                 <p className="text-xs text-slate-500">
-                  Tentukan siapa penilai (Asesor) dan siapa karyawan yang dinilai pada tahap evaluasi tertentu.
+                  Tentukan asesor penilai untuk Template KPI yang dipilih.
                 </p>
               </div>
               <button
                 onClick={() => setIsAddModalOpen(false)}
-                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
             <div className="space-y-4 text-xs">
-              {/* Periode & Asesor */}
+              {/* Template KPI */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Template KPI <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={modalTemplateId}
+                  onChange={(e) => {
+                    if (e.target.value === "ALL") {
+                      setModalTemplateId("ALL");
+                    } else {
+                      const tplId = Number(e.target.value);
+                      setModalTemplateId(tplId);
+                      const found = templates.find((t) => t.id === tplId);
+                      if (found?.employeeId) {
+                        setModalScopeType("INDIVIDUAL");
+                        setModalSelectedTargetEmpIds([found.employeeId]);
+                      } else if (found?.departmentId) {
+                        setModalScopeType("DEPARTMENT");
+                        setModalDeptId(found.departmentId);
+                      }
+                    }
+                  }}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-900 focus:border-blue-500 focus:outline-hidden"
+                >
+                  <option value="ALL">Semua Template KPI</option>
+                  {templates.map((tpl) => (
+                    <option key={tpl.id} value={tpl.id}>
+                      {tpl.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Asesor & Role */}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -693,7 +771,7 @@ export function AssessorMatrixManager({
                 </div>
               </div>
 
-              {/* Tahap Penilaian & Parameter */}
+              {/* Tahap Penilaian & Cakupan */}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -712,83 +790,112 @@ export function AssessorMatrixManager({
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Parameter KPI <span className="text-rose-500">*</span>
+                    Cakupan Penilaian
                   </label>
-                  <select
-                    value={modalCategoryIds[0] || ""}
-                    onChange={(e) => {
-                      if (e.target.value === "ALL") {
-                        setModalCategoryIds(parameters.map((p) => p.id));
-                      } else {
-                        setModalCategoryIds([Number(e.target.value)]);
-                      }
-                    }}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-                  >
-                    <option value="ALL">Semua Parameter KPI</option>
-                    {parameters.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.templateName})
-                      </option>
-                    ))}
-                  </select>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setModalScopeType("INDIVIDUAL")}
+                      className={`rounded-lg border px-2.5 py-2 text-[11px] font-semibold text-center transition cursor-pointer ${
+                        modalScopeType === "INDIVIDUAL"
+                          ? "border-blue-600 bg-blue-50 text-blue-800"
+                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      Individu
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setModalScopeType("DEPARTMENT")}
+                      className={`rounded-lg border px-2.5 py-2 text-[11px] font-semibold text-center transition cursor-pointer ${
+                        modalScopeType === "DEPARTMENT"
+                          ? "border-blue-600 bg-blue-50 text-blue-800"
+                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      Departemen
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setModalScopeType("GLOBAL")}
+                      className={`rounded-lg border px-2.5 py-2 text-[11px] font-semibold text-center transition cursor-pointer ${
+                        modalScopeType === "GLOBAL"
+                          ? "border-blue-600 bg-blue-50 text-blue-800"
+                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      Global
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              {/* Scope Type */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">Cakupan Penilaian</label>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setModalScopeType("INDIVIDUAL")}
-                    className={`rounded-lg border px-3 py-2 text-xs font-semibold text-center transition ${
-                      modalScopeType === "INDIVIDUAL"
-                        ? "border-blue-600 bg-blue-50 text-blue-800"
-                        : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                    }`}
-                  >
-                    Karyawan Tertentu
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setModalScopeType("DEPARTMENT")}
-                    className={`rounded-lg border px-3 py-2 text-xs font-semibold text-center transition ${
-                      modalScopeType === "DEPARTMENT"
-                        ? "border-blue-600 bg-blue-50 text-blue-800"
-                        : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                    }`}
-                  >
-                    Satu Departemen
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setModalScopeType("GLOBAL")}
-                    className={`rounded-lg border px-3 py-2 text-xs font-semibold text-center transition ${
-                      modalScopeType === "GLOBAL"
-                        ? "border-blue-600 bg-blue-50 text-blue-800"
-                        : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                    }`}
-                  >
-                    Global (Semua)
-                  </button>
+              {/* Target Karyawan (jika INDIVIDUAL) */}
+              {modalScopeType === "INDIVIDUAL" && (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700">
+                      Karyawan Dinilai ({modalSelectedTargetEmpIds.length} dipilih)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Cari karyawan..."
+                      value={modalTargetEmpSearch}
+                      onChange={(e) => setModalTargetEmpSearch(e.target.value)}
+                      className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs"
+                    />
+                  </div>
+                  <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-100 p-1">
+                    {modalTargetCandidates.slice(0, 60).map((emp) => {
+                      const checked = modalSelectedTargetEmpIds.includes(emp.id);
+                      return (
+                        <label
+                          key={emp.id}
+                          className={`flex items-center justify-between px-2.5 py-1.5 text-xs cursor-pointer rounded ${
+                            checked ? "bg-blue-50 font-semibold" : "hover:bg-slate-50"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setModalSelectedTargetEmpIds((prev) => [...prev, emp.id]);
+                                } else {
+                                  setModalSelectedTargetEmpIds((prev) =>
+                                    prev.filter((id) => id !== emp.id)
+                                  );
+                                }
+                              }}
+                              className="rounded border-slate-300 text-blue-600"
+                            />
+                            <span>
+                              {emp.name} ({emp.nik})
+                            </span>
+                          </div>
+                          <span className="text-[11px] text-slate-400">
+                            {emp.jobPosition || "-"}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
 
-              {/* Scope Specific Inputs */}
+              {/* Target Departemen (jika DEPARTMENT) */}
               {modalScopeType === "DEPARTMENT" && (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                    Pilih Departemen Target <span className="text-rose-500">*</span>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Pilih Departemen Dinilai <span className="text-rose-500">*</span>
                   </label>
                   <select
-                    value={modalDeptId || ""}
-                    onChange={(e) => setModalDeptId(Number(e.target.value))}
-                    className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-800 focus:outline-hidden"
+                    value={modalDeptId ?? ""}
+                    onChange={(e) => setModalDeptId(Number(e.target.value) || null)}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900"
                   >
-                    <option value="" disabled>
-                      Pilih departemen...
-                    </option>
+                    <option value="">-- Pilih Departemen --</option>
                     {departments.map((d) => (
                       <option key={d.id} value={d.id}>
                         {d.name} ({d.code})
@@ -797,84 +904,23 @@ export function AssessorMatrixManager({
                   </select>
                 </div>
               )}
-
-              {modalScopeType === "INDIVIDUAL" && (
-                <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-semibold text-slate-700">
-                      Pilih Karyawan Target ({modalSelectedTargetEmpIds.length} dipilih)
-                    </span>
-                    <input
-                      type="text"
-                      placeholder="Cari target..."
-                      value={modalTargetEmpSearch}
-                      onChange={(e) => setModalTargetEmpSearch(e.target.value)}
-                      className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800 focus:outline-hidden w-48"
-                    />
-                  </div>
-                  <div className="max-h-44 overflow-y-auto rounded border border-slate-200 bg-white divide-y divide-slate-100">
-                    {modalTargetCandidates.slice(0, 100).map((e) => {
-                      const isChecked = modalSelectedTargetEmpIds.includes(e.id);
-                      return (
-                        <label
-                          key={e.id}
-                          className="flex items-center gap-2.5 px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={(ev) => {
-                              if (ev.target.checked) {
-                                setModalSelectedTargetEmpIds((prev) => [...prev, e.id]);
-                              } else {
-                                setModalSelectedTargetEmpIds((prev) => prev.filter((id) => id !== e.id));
-                              }
-                            }}
-                            className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                          />
-                          <div className="flex-1">
-                            <span className="font-semibold text-slate-900">{e.name}</span>
-                            <span className="ml-1 text-[11px] text-slate-500 font-mono">({e.nik})</span>
-                            <span className="ml-2 text-[11px] text-slate-400">
-                              - {e.jobPosition || "Karyawan"}
-                            </span>
-                          </div>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Catatan */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Catatan / Alasan Penugasan</label>
-                <textarea
-                  value={modalNotes}
-                  onChange={(e) => setModalNotes(e.target.value)}
-                  placeholder="Misal: Penugasan atasan langsung untuk evaluasi bulanan 2026..."
-                  rows={2}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-                />
-              </div>
             </div>
 
             <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
               <button
                 type="button"
                 onClick={() => setIsAddModalOpen(false)}
-                className="rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition cursor-pointer"
               >
                 Batal
               </button>
               <button
                 type="button"
-                onClick={handleSubmitAdd}
                 disabled={isSubmitting}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50 transition shadow-xs"
+                onClick={handleSubmitAdd}
+                className="rounded-lg bg-blue-600 px-5 py-2 text-xs font-semibold text-white hover:bg-blue-700 transition disabled:opacity-50 cursor-pointer"
               >
-                {isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                Simpan Penugasan
+                {isSubmitting ? "Menyimpan..." : "Simpan Penilai"}
               </button>
             </div>
           </div>

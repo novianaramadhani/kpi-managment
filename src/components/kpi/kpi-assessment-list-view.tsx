@@ -5,9 +5,17 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import Swal from "sweetalert2";
-import { deleteAppraisalById, deleteAppraisalsByIds, generateAppraisalsBatchAction } from "@/lib/actions";
+import {
+  deleteAppraisalById,
+  deleteAppraisalsByIds,
+  generateAppraisalsBatchAction,
+  getBatchAssessmentExportDataAction,
+} from "@/lib/actions";
+import { exportCombinedBatchKpiExcel } from "@/lib/excel-batch-export";
 import type { EmployeeProgressItem } from "@/types/monthly-assessment";
 import { HeaderFilterSelect } from "@/components/ui/header-filter-select";
+import { Building2, Users } from "lucide-react";
+import { DepartmentKpiAssessmentView } from "./department-kpi-assessment-view";
 
 export type StagingTabKey = "ALL" | "DRAFT" | "IN_REVIEW" | "REVISION" | "APPROVED" | "FINAL";
 
@@ -145,6 +153,29 @@ export function KpiAssessmentListView({
 }: KpiAssessmentListViewProps) {
   const router = useRouter();
 
+  // Primary Tab: Penilaian Departemen vs Penilaian Employee
+  const [mainTab, setMainTab] = useState<"EMPLOYEE" | "DEPARTMENT">("EMPLOYEE");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get("tab") === "department") {
+        setMainTab("DEPARTMENT");
+      }
+    }
+  }, []);
+
+  const handleSwitchToDepartmentTab = () => {
+    if (selectedDept === "ALL" && departments.length > 0) {
+      setSelectedDept(String(departments[0].id));
+    }
+    setMainTab("DEPARTMENT");
+  };
+
+  const handleSwitchToEmployeeTab = () => {
+    setMainTab("EMPLOYEE");
+  };
+
   // State Filter & Staging
   const [activeStaging, setActiveStaging] = useState<StagingTabKey>("DRAFT");
   const [searchQuery, setSearchQuery] = useState("");
@@ -160,7 +191,6 @@ export function KpiAssessmentListView({
   // State Checkbox Selection & Actions
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [isActionsDropdownOpen, setIsActionsDropdownOpen] = useState(false);
-  const [openRowActionId, setOpenRowActionId] = useState<number | null>(null);
 
   const actionsDropdownRef = useRef<HTMLDivElement>(null);
   const headerCheckboxRef = useRef<HTMLInputElement>(null);
@@ -175,7 +205,6 @@ export function KpiAssessmentListView({
       ) {
         setIsActionsDropdownOpen(false);
       }
-      setOpenRowActionId(null);
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -309,7 +338,7 @@ export function KpiAssessmentListView({
     });
   };
 
-  const handleExportExcel = (targetList?: EmployeeProgressItem[]) => {
+  const handleExportExcel = async (targetList?: EmployeeProgressItem[]) => {
     const list =
       targetList && targetList.length > 0
         ? targetList
@@ -318,62 +347,57 @@ export function KpiAssessmentListView({
         : filteredEmployees;
 
     if (list.length === 0) return;
+    setIsActionsDropdownOpen(false);
 
-    const wb = XLSX.utils.book_new();
-    const headers = [
-      "No",
-      "NIK",
-      "Nama Karyawan",
-      "Jabatan",
-      "Departemen",
-      "Penilai",
-      "Template KPI",
-      "Status Workflow",
-      "Progress Parameter",
-      "Skor Akhir (%)",
-      "Grade",
-    ];
-
-    const rows = list.map((emp, idx) => {
-      const stage = getEmployeeStagingKey(emp);
-      const stageConfig = STAGING_CONFIGS[stage];
-      const filledP = emp.filledParameters ?? emp.filledCount ?? 0;
-      const totalP = emp.totalParameters ?? 5;
-      return [
-        idx + 1,
-        emp.nik,
-        emp.name,
-        emp.jobPosition,
-        emp.departmentName || "-",
-        emp.appraiserName || "-",
-        emp.templateName || "-",
-        stageConfig.label,
-        `${filledP}/${totalP}`,
-        emp.finalScore !== null && emp.finalScore !== undefined ? `${emp.finalScore}%` : "-",
-        emp.grade || "-",
-      ];
+    Swal.fire({
+      title: "Menyiapkan File Excel...",
+      html: `Sedang memproses <b>Rekap</b> dan lembar template untuk <b>${list.length} karyawan terpilih</b>...`,
+      allowOutsideClick: false,
+      didOpen: () => {
+        Swal.showLoading();
+      },
     });
 
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-    ws["!cols"] = [
-      { wch: 6 },
-      { wch: 15 },
-      { wch: 28 },
-      { wch: 24 },
-      { wch: 22 },
-      { wch: 24 },
-      { wch: 28 },
-      { wch: 16 },
-      { wch: 18 },
-      { wch: 14 },
-      { wch: 10 },
-    ];
+    try {
+      // Ambil detail indikator, scoring rules, dan breakdown bulanan per karyawan
+      const employeeIds = list.map((e) => e.employeeId);
+      const res = await getBatchAssessmentExportDataAction({
+        year: currentYear,
+        month: typeof selectedMonth === "number" ? selectedMonth : 1,
+        employeeIds,
+      });
 
-    const stageSuffix = activeStaging !== "ALL" ? `_${activeStaging}` : "";
-    XLSX.utils.book_append_sheet(wb, ws, `KPI_${currentYear}`);
-    const dateStr = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(wb, `Rekap_KPI_${currentYear}${stageSuffix}_${dateStr}.xlsx`);
-    setIsActionsDropdownOpen(false);
+      if (!res.success) {
+        throw new Error(res.error || "Gagal mengambil detail template karyawan.");
+      }
+
+      const stageSuffix = activeStaging !== "ALL" ? `_${activeStaging}` : "";
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const filename = `Rekap_KPI_${currentYear}${stageSuffix}_${list.length}_Karyawan_${dateStr}.xlsx`;
+
+      await exportCombinedBatchKpiExcel({
+        year: currentYear,
+        activeStaging,
+        rekapList: list,
+        employeeDetails: res.data || [],
+        filename,
+      });
+
+      Swal.fire({
+        icon: "success",
+        title: "Download Berhasil",
+        text: `File Excel gabungan berhasil dibuat dengan 1 Sheet Rekap dan ${list.length} Sheet KPI Karyawan.`,
+        timer: 1600,
+        showConfirmButton: false,
+      });
+    } catch (err: any) {
+      console.error("Gagal melakukan batch export Excel:", err);
+      Swal.fire({
+        icon: "error",
+        title: "Export Gagal",
+        text: err?.message || "Terjadi kesalahan saat memproses file Excel.",
+      });
+    }
   };
 
   const handleExportCSV = (targetList?: EmployeeProgressItem[]) => {
@@ -564,9 +588,9 @@ export function KpiAssessmentListView({
   return (
     <div className="space-y-6 pb-24 text-slate-800 antialiased">
       {/* ================================================== */}
-      {/* 1. HEADER (Breadcrumbs, Judul & Subtitle) */}
+      {/* 1. HEADER (Breadcrumbs, Judul & Filter Pojok Kanan Atas) */}
       {/* ================================================== */}
-      <div>
+      <div data-tour="step-5-header-filter">
         <div className="flex items-center gap-2 text-xs text-slate-400 font-medium mb-1.5">
           <span>KPI System</span>
           <span>/</span>
@@ -582,119 +606,40 @@ export function KpiAssessmentListView({
             </p>
           </div>
 
-          {userRole === "HEAD_DEPT" && userDeptName && (
-            <div className="inline-flex items-center gap-2 rounded-xl bg-indigo-50 border border-indigo-200 px-3.5 py-1.5 text-xs font-semibold text-indigo-700 self-start sm:self-auto">
-              <span>Departemen:</span>
-              <span className="font-bold">{userDeptName}</span>
-            </div>
-          )}
+          <div className="self-start sm:self-auto shrink-0">
+            {userRole === "ADMIN" ? (
+              <div className="relative">
+                <select
+                  value={selectedDept}
+                  onChange={(e) => setSelectedDept(e.target.value)}
+                  aria-label="Filter Department"
+                  className="h-10 rounded-xl border border-slate-200 bg-white pl-3.5 pr-9 text-xs font-semibold text-slate-700 shadow-2xs hover:border-slate-300 focus:border-blue-600 focus:outline-none transition cursor-pointer"
+                >
+                  <option value="ALL">Semua Department ({departments.length})</option>
+                  {departments.map((d) => (
+                    <option key={d.id} value={String(d.id)}>
+                      {d.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : userRole === "HEAD_DEPT" && userDeptName ? (
+              <div className="inline-flex items-center gap-2 rounded-xl bg-indigo-50 border border-indigo-200 px-3.5 py-2 text-xs font-semibold text-indigo-700">
+                <span>Departemen:</span>
+                <span className="font-bold">{userDeptName}</span>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
 
       {/* ================================================== */}
-      {/* 2. TOP FILTER BAR (1 Baris Sejajar Horizontal) */}
+      {/* 2. STAGING TABS (100% Flex Row Horizontal Kesamping) */}
       {/* ================================================== */}
-      <div className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200/90 bg-white px-5 py-3.5 shadow-xs overflow-x-auto whitespace-nowrap">
-        <div className="flex items-center gap-5 text-sm shrink-0">
-          {/* Periode Selector */}
-          <HeaderFilterSelect
-            label="Periode"
-            value={currentYear}
-            onChange={(e) => {
-              const yr = e.target.value;
-              const mParam = selectedMonth !== "ALL" ? `&month=${selectedMonth}` : "";
-              router.push(`/input-kpi?year=${yr}${mParam}`);
-            }}
-            className="max-w-[210px]"
-            leftIcon={
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 9v7.5" />
-              </svg>
-            }
-          >
-            {availableYears.map((yr) => (
-              <option key={yr} value={yr}>
-                KPI Tahun {yr} {yr === currentYear ? "(Aktif)" : ""}
-              </option>
-            ))}
-          </HeaderFilterSelect>
-
-          {/* Bulan Selector */}
-          <HeaderFilterSelect
-            label="Bulan"
-            value={selectedMonth}
-            onChange={(e) => {
-              const m = e.target.value;
-              setSelectedMonth(m);
-              if (m !== "ALL") {
-                router.push(`/input-kpi?year=${currentYear}&month=${m}`);
-              } else {
-                router.push(`/input-kpi?year=${currentYear}`);
-              }
-            }}
-            className="max-w-[190px]"
-            leftIcon={
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 9v7.5" />
-              </svg>
-            }
-          >
-            <option value="ALL">Semua Bulan (YTD)</option>
-            <option value="1">Januari</option>
-            <option value="2">Februari</option>
-            <option value="3">Maret</option>
-            <option value="4">April</option>
-            <option value="5">Mei</option>
-            <option value="6">Juni</option>
-            <option value="7">Juli</option>
-            <option value="8">Agustus</option>
-            <option value="9">September</option>
-            <option value="10">Oktober</option>
-            <option value="11">November</option>
-            <option value="12">Desember</option>
-          </HeaderFilterSelect>
-
-          {/* Department Filter (Admin & Management) */}
-          {userRole === "ADMIN" && (
-            <HeaderFilterSelect
-              label="Department"
-              value={selectedDept}
-              onChange={(e) => setSelectedDept(e.target.value)}
-              className="max-w-[220px]"
-              leftIcon={
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
-                </svg>
-              }
-            >
-              <option value="ALL">Semua Department</option>
-              {departments.map((d) => (
-                <option key={d.id} value={String(d.id)}>
-                  {d.name}
-                </option>
-              ))}
-            </HeaderFilterSelect>
-          )}
-        </div>
-
-        {/* Reset Filter Button */}
-        <button
-          type="button"
-          onClick={handleResetFilters}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-600 shadow-2xs transition active:scale-95 cursor-pointer shrink-0"
-          title="Reset semua filter ke default"
-        >
-          <svg className="h-4 w-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-          </svg>
-          <span>Reset Filter</span>
-        </button>
-      </div>
-
-      {/* ================================================== */}
-      {/* 3. STAGING TABS (100% Flex Row Horizontal Kesamping) */}
-      {/* ================================================== */}
-      <div className="flex flex-row flex-nowrap items-center gap-2.5 w-full overflow-x-auto pb-1">
+      <div
+        data-tour="step-6-staging-tabs"
+        className="flex flex-row flex-nowrap items-center gap-2.5 w-full overflow-x-auto pb-1"
+      >
         {(
           [
             "ALL",
@@ -755,7 +700,10 @@ export function KpiAssessmentListView({
       {/* ================================================== */}
       {/* 4. AREA STAGING AKTIF (Card Container Sesuai Referensi) */}
       {/* ================================================== */}
-      <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-xs space-y-6">
+      <div
+        data-tour="step-5-kpi-table"
+        className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-xs space-y-6"
+      >
         {/* Header Staging Aktif */}
         <div className="flex items-center gap-3.5">
           <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${activeConfig.badgeBg} ${activeConfig.badgeText} border border-slate-200/80`}>
@@ -900,10 +848,11 @@ export function KpiAssessmentListView({
           </div>
 
         {/* ================================================== */}
-        {/* 5. TABEL DAFTAR KARYAWAN (SPACIOUS & CLEAN SESUAI REFERENSI) */}
+        {/* 5. DAFTAR KARYAWAN: TABEL DESKTOP & KARTU MOBILE  */}
         {/* ================================================== */}
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xs">
-          <div className="overflow-x-auto">
+          {/* TAMPILAN DESKTOP: TABEL LEBAR (hidden md:block) */}
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50/70 text-slate-600">
@@ -940,10 +889,13 @@ export function KpiAssessmentListView({
                     const stageConfig = STAGING_CONFIGS[rowStage];
 
                     // Hitung progress
-                    const filledParams = emp.filledParameters ?? emp.filledCount ?? 0;
+                    const isFinal = rowStage === "FINAL" || emp.appraisalStatus === "FINAL";
                     const totalParams = emp.totalParameters ?? 5;
+                    const filledParams = isFinal ? totalParams : (emp.filledParameters ?? emp.filledCount ?? 0);
                     const progressPercent =
-                      typeof emp.completionRate === "number" && !isNaN(emp.completionRate) && emp.completionRate > 0
+                      isFinal
+                        ? 100
+                        : typeof emp.completionRate === "number" && !isNaN(emp.completionRate) && emp.completionRate > 0
                         ? Math.round(emp.completionRate)
                         : totalParams > 0
                         ? Math.min(100, Math.round((filledParams / totalParams) * 100))
@@ -1044,69 +996,23 @@ export function KpiAssessmentListView({
                               {actionLabel}
                             </Link>
 
-                            {/* Secondary 3-Dots Menu */}
-                            <div className="relative">
+                            {/* Tombol Hapus Langsung */}
+                            {Boolean(emp.appraisalId) && (userRole === "ADMIN" || userRole === "HR" || userRole === "ASSESSOR") && (
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setOpenRowActionId((prev) => (prev === emp.employeeId ? null : emp.employeeId));
+                                  handleDeleteSingle(emp);
                                 }}
-                                className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 hover:bg-slate-50 hover:text-slate-700 transition cursor-pointer"
-                                title="Opsi aksi lainnya"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 transition shadow-2xs cursor-pointer active:scale-95"
+                                title={`Hapus data penilaian ${emp.name}`}
+                                aria-label={`Hapus data penilaian ${emp.name}`}
                               >
-                                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z" />
+                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
                                 </svg>
                               </button>
-
-                              {openRowActionId === emp.employeeId && (
-                                <div className="absolute right-0 mt-1.5 w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-lg ring-1 ring-black/5 z-20">
-                                  <Link
-                                    href={targetUrl}
-                                    className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition"
-                                  >
-                                    <svg className="h-4 w-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
-                                    </svg>
-                                    <span>Buka Penilaian</span>
-                                  </Link>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setOpenRowActionId(null);
-                                      handleExportExcel([emp]);
-                                    }}
-                                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition"
-                                  >
-                                    <svg className="h-4 w-4 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                                    </svg>
-                                    <span>Export Excel</span>
-                                  </button>
-
-                                  {userRole === "ADMIN" && (
-                                    <>
-                                      <div className="my-1 border-t border-slate-100" />
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setOpenRowActionId(null);
-                                          handleDeleteSingle(emp);
-                                        }}
-                                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-rose-600 hover:bg-rose-50 transition"
-                                      >
-                                        <svg className="h-4 w-4 text-rose-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                          <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                                        </svg>
-                                        <span>Hapus Data</span>
-                                      </button>
-                                    </>
-                                  )}
-                                </div>
-                              )}
-                            </div>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -1140,6 +1046,152 @@ export function KpiAssessmentListView({
                 )}
               </tbody>
             </table>
+          </div>
+
+          {/* TAMPILAN MOBILE: KARTU KARYAWAN ADAPTIF (md:hidden) */}
+          <div className="md:hidden p-3 space-y-3">
+            {paginatedEmployees.length > 0 ? (
+              paginatedEmployees.map((emp) => {
+                const isSelected = selectedIds.includes(emp.employeeId);
+                const rowStage = getEmployeeStagingKey(emp);
+                const stageConfig = STAGING_CONFIGS[rowStage];
+
+                const isFinal = rowStage === "FINAL" || emp.appraisalStatus === "FINAL";
+                const totalParams = emp.totalParameters ?? 5;
+                const filledParams = isFinal ? totalParams : (emp.filledParameters ?? emp.filledCount ?? 0);
+                const progressPercent =
+                  isFinal
+                    ? 100
+                    : typeof emp.completionRate === "number" && !isNaN(emp.completionRate) && emp.completionRate > 0
+                    ? Math.round(emp.completionRate)
+                    : totalParams > 0
+                    ? Math.min(100, Math.round((filledParams / totalParams) * 100))
+                    : 0;
+
+                let actionLabel = stageConfig.actionText;
+                let actionBtnClass = stageConfig.actionClass;
+                if (activeStaging !== "ALL") {
+                  actionLabel = activeConfig.actionText;
+                  actionBtnClass = activeConfig.actionClass;
+                }
+
+                const targetUrl = `/input-kpi?employeeId=${emp.employeeId}&year=${currentYear}${
+                  selectedMonth !== "ALL" ? `&month=${selectedMonth}` : ""
+                }`;
+
+                return (
+                  <div
+                    key={emp.appraisalId || emp.employeeId}
+                    className={`rounded-xl border p-4 shadow-2xs space-y-3 transition-colors ${
+                      isSelected
+                        ? "border-blue-300 bg-blue-50/40"
+                        : "border-slate-200/90 bg-white"
+                    }`}
+                  >
+                    {/* Header Kartu: Nama & Badge Status */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2.5 min-w-0">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleSelect(emp.employeeId)}
+                          className="h-4 w-4 mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer shrink-0"
+                          title={`Pilih ${emp.name}`}
+                        />
+                        <div className="min-w-0">
+                          <Link
+                            href={targetUrl}
+                            className="font-bold text-slate-900 hover:text-blue-600 transition-colors text-sm block truncate"
+                          >
+                            {emp.name}
+                          </Link>
+                          <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5 font-mono">
+                            <span>NIK: {emp.nik}</span>
+                            <span>•</span>
+                            <span className="font-sans truncate">{emp.departmentName || "-"}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Badge Status Staging */}
+                      <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border shrink-0 ${stageConfig.badgeBg} ${stageConfig.badgeText}`}>
+                        {stageConfig.label}
+                      </span>
+                    </div>
+
+                    {/* Jabatan & Progress Bar */}
+                    <div className="space-y-1.5 pt-1 border-t border-slate-100">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-500 truncate">{emp.jobPosition}</span>
+                        <span className="font-bold text-slate-800">{progressPercent}%</span>
+                      </div>
+                      <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            progressPercent >= 100
+                              ? "bg-emerald-500"
+                              : progressPercent >= 50
+                              ? "bg-blue-500"
+                              : "bg-amber-500"
+                          }`}
+                          style={{ width: `${progressPercent}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Tombol Aksi Sentuh Besar */}
+                    <div className="pt-1 flex items-center gap-2">
+                      <Link
+                        href={targetUrl}
+                        className={`flex-1 flex items-center justify-center py-2.5 px-4 rounded-xl text-xs font-bold shadow-2xs transition active:scale-95 ${actionBtnClass}`}
+                      >
+                        {actionLabel}
+                      </Link>
+
+                      {Boolean(emp.appraisalId) && (userRole === "ADMIN" || userRole === "HR" || userRole === "ASSESSOR") && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteSingle(emp);
+                          }}
+                          className="h-10 w-10 flex items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 transition shadow-2xs cursor-pointer active:scale-95 shrink-0"
+                          title={`Hapus data penilaian ${emp.name}`}
+                          aria-label={`Hapus data penilaian ${emp.name}`}
+                        >
+                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="py-12 text-center text-slate-400">
+                <div className="flex flex-col items-center justify-center">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-400 mb-3">
+                    {renderStagingIcon(activeConfig.iconType, "h-6 w-6")}
+                  </div>
+                  <div className="text-sm font-semibold text-slate-700">
+                    Tidak ada karyawan di status {activeConfig.label}
+                  </div>
+                  <div className="text-xs text-slate-400 mt-1 max-w-sm">
+                    Tidak ada lembar penilaian yang cocok dengan filter saat ini.
+                  </div>
+                  {(searchQuery || selectedDept !== "ALL") && (
+                    <button
+                      type="button"
+                      onClick={handleResetFilters}
+                      className="mt-3.5 inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                    >
+                      <span>Reset Filter</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* ================================================== */}

@@ -36,6 +36,17 @@ export function BulkTemplateAssigner({
   const deptMap = useMemo(() => new Map(departments.map((d) => [d.id, d.name])), [departments]);
   const levelMap = useMemo(() => new Map(jobLevels.map((l) => [l.id, l.name])), [jobLevels]);
 
+  // Map karyawan yang sudah memiliki template KPI
+  const employeeTemplateMap = useMemo(() => {
+    const map = new Map<number, KpiTemplate>();
+    for (const t of templates) {
+      if (t.employeeId) {
+        map.set(t.employeeId, t);
+      }
+    }
+    return map;
+  }, [templates]);
+
   const filteredEmployees = useMemo(() => {
     return employees.filter((emp) => {
       if (!emp.isActive) return false;
@@ -53,19 +64,24 @@ export function BulkTemplateAssigner({
     });
   }, [employees, selectedDeptId, selectedLevelId, searchQuery]);
 
+  const availableEmployees = useMemo(() => {
+    return filteredEmployees.filter((emp) => !employeeTemplateMap.has(emp.id));
+  }, [filteredEmployees, employeeTemplateMap]);
+
   const isAllSelected =
-    filteredEmployees.length > 0 &&
-    filteredEmployees.every((emp) => selectedEmployeeIds.includes(emp.id));
+    availableEmployees.length > 0 &&
+    availableEmployees.every((emp) => selectedEmployeeIds.includes(emp.id));
 
   const handleToggleSelectAll = () => {
     if (isAllSelected) {
       setSelectedEmployeeIds([]);
     } else {
-      setSelectedEmployeeIds(filteredEmployees.map((e) => e.id));
+      setSelectedEmployeeIds(availableEmployees.map((e) => e.id));
     }
   };
 
   const handleToggleSelectEmp = (id: number) => {
+    if (employeeTemplateMap.has(id)) return;
     setSelectedEmployeeIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
@@ -281,19 +297,27 @@ export function BulkTemplateAssigner({
             ) : (
               filteredEmployees.map((emp) => {
                 const isChecked = selectedEmployeeIds.includes(emp.id);
+                const existingTpl = employeeTemplateMap.get(emp.id);
+                const isDisabled = Boolean(existingTpl);
+
                 return (
                   <tr
                     key={emp.id}
-                    onClick={() => handleToggleSelectEmp(emp.id)}
-                    className={`cursor-pointer transition-colors ${
-                      isChecked ? "bg-teal-50/50 hover:bg-teal-50" : "hover:bg-slate-50/80"
+                    onClick={() => !isDisabled && handleToggleSelectEmp(emp.id)}
+                    className={`transition-colors ${
+                      isDisabled
+                        ? "opacity-60 bg-slate-50 cursor-not-allowed select-none"
+                        : isChecked
+                        ? "bg-teal-50/50 hover:bg-teal-50 cursor-pointer"
+                        : "hover:bg-slate-50/80 cursor-pointer"
                     }`}
                   >
                     <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                       <button
                         type="button"
+                        disabled={isDisabled}
                         onClick={() => handleToggleSelectEmp(emp.id)}
-                        className="rounded text-teal-600 focus:outline-none"
+                        className="rounded text-teal-600 focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         {isChecked ? (
                           <CheckSquare className="h-4 w-4 text-teal-700" />
@@ -303,7 +327,19 @@ export function BulkTemplateAssigner({
                       </button>
                     </td>
                     <td className={td}>
-                      <div className="font-semibold text-slate-900">{emp.name}</div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`font-semibold ${isDisabled ? "text-slate-600" : "text-slate-900"}`}>
+                          {emp.name}
+                        </span>
+                        {isDisabled && existingTpl && (
+                          <span
+                            className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200"
+                            title={`Template aktif: ${existingTpl.name}`}
+                          >
+                            Sudah Ada Template
+                          </span>
+                        )}
+                      </div>
                       <div className="font-mono text-xs text-slate-500">{emp.nik}</div>
                     </td>
                     <td className={`${td} text-slate-700`}>

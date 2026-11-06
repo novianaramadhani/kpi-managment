@@ -48,7 +48,7 @@ export default async function TemplateDetailPage({ params }: { params: Promise<{
   const templateTargetPct = Number(maxKpiWeight) || 115;
 
   return (
-    <div className="w-full min-w-0">
+    <div className="w-full min-w-0 max-w-full overflow-x-hidden">
       <TemplateWizardEditor
         template={tpl}
         employee={employeeRecord}

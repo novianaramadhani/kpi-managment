@@ -215,86 +215,28 @@ export function MeasurementTypeManager({ initialData = [] }: Props) {
     }
   };
 
-  const numericCount = data.filter((d) => d.isNumeric).length;
-  const nonNumericCount = data.filter((d) => !d.isNumeric).length;
-
   return (
     <div className="space-y-3.5">
-      {/* Compact Summary */}
-      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-        <span className="inline-flex items-center gap-1">
-          <strong className="font-semibold text-slate-900">{data.length}</strong>
-          <span>Total Measurement Type</span>
-        </span>
-        <span className="text-slate-300">·</span>
-        <span className="inline-flex items-center gap-1">
-          <strong className="font-semibold text-slate-900">{numericCount}</strong>
-          <span>Numerik/Kalkulatif</span>
-        </span>
-        <span className="text-slate-300">·</span>
-        <span className="inline-flex items-center gap-1">
-          <strong className="font-semibold text-slate-900">{nonNumericCount}</strong>
-          <span>Kualitatif/Biner</span>
-        </span>
-      </div>
-
-      {/* Filter Toolbar */}
+      {/* Simple Toolbar */}
       <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap items-center gap-2 flex-1">
-          {/* Search */}
-          <div className="relative min-w-[200px] max-w-xs flex-1">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Cari tipe atau kode..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-md border border-slate-200 bg-white pl-8 pr-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-hidden transition"
-            />
-          </div>
-
-          {/* Sifat Nilai */}
-          <select
-            value={filterNumeric}
-            onChange={(e) => setFilterNumeric(e.target.value)}
-            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-slate-900 focus:outline-hidden transition"
-          >
-            <option value="ALL">Semua Sifat Nilai</option>
-            <option value="NUMERIC">Numerik / Kalkulatif</option>
-            <option value="NON_NUMERIC">Kualitatif / Biner</option>
-          </select>
-
-          {/* Status */}
-          <select
-            value={filterActive}
-            onChange={(e) => setFilterActive(e.target.value)}
-            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-slate-900 focus:outline-hidden transition"
-          >
-            <option value="ALL">Semua Status</option>
-            <option value="ACTIVE">Aktif Saja</option>
-            <option value="INACTIVE">Nonaktif Saja</option>
-          </select>
+        <div className="relative min-w-[220px] max-w-sm flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Cari tipe atau kode..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full rounded-md border border-slate-200 bg-white pl-8 pr-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-hidden transition"
+          />
         </div>
 
-        {/* Actions */}
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => fetchData()}
-            disabled={loading}
-            className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition disabled:opacity-50"
-            title="Segarkan data"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin text-slate-500" : "text-slate-500"}`} />
-            <span>Segarkan</span>
-          </button>
-          <button
-            onClick={openCreateModal}
-            className="inline-flex items-center gap-1.5 rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            <span>Tambah Measurement Type</span>
-          </button>
-        </div>
+        <button
+          onClick={openCreateModal}
+          className="inline-flex items-center gap-1.5 rounded-md bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition shrink-0"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          <span>Tambah Measurement Type</span>
+        </button>
       </div>
 
       {/* Main Table */}
@@ -320,7 +262,7 @@ export function MeasurementTypeManager({ initialData = [] }: Props) {
             <Layers className="h-8 w-8 text-slate-300 mb-2" />
             <p className="text-xs font-semibold text-slate-700">Tidak ada tipe pengukuran yang ditemukan</p>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              Coba sesuaikan kata kunci pencarian atau ubah filter sifat nilai / status.
+              Coba sesuaikan kata kunci pencarian.
             </p>
           </div>
         ) : (
@@ -328,77 +270,40 @@ export function MeasurementTypeManager({ initialData = [] }: Props) {
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-600">
-                  <th className="py-2.5 px-3">Tipe &amp; Kode</th>
-                  <th className="py-2.5 px-3">Format Pola Tampilan</th>
-                  <th className="py-2.5 px-3">Satuan Default</th>
-                  <th className="py-2.5 px-3">Sifat Nilai</th>
+                  <th className="py-2.5 px-3.5 w-64">Tipe &amp; Kode</th>
+                  <th className="py-2.5 px-3 w-28">Satuan</th>
                   <th className="py-2.5 px-3">Deskripsi</th>
-                  <th className="py-2.5 px-3">Status</th>
-                  <th className="py-2.5 px-3 text-right">Aksi</th>
+                  <th className="py-2.5 px-3.5 text-right w-20">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredData.map((item) => (
                   <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
                     {/* Tipe & Kode */}
-                    <td className="py-2.5 px-3">
-                      <div className="flex items-center gap-2">
-                        <div className="rounded-lg bg-slate-100 p-1.5">{getTypeIcon(item.code)}</div>
+                    <td className="py-2.5 px-3.5">
+                      <div className="flex items-center gap-2.5">
+                        <div className="rounded-lg bg-slate-100 p-2 shrink-0">{getTypeIcon(item.code)}</div>
                         <div>
-                          <div className="font-semibold text-slate-900">{item.name}</div>
-                          <div className="text-[10px] font-mono text-slate-500 uppercase">{item.code}</div>
+                          <div className="font-semibold text-slate-900 text-xs">{item.name}</div>
+                          <div className="text-[10px] font-mono text-slate-400 uppercase">{item.code}</div>
                         </div>
                       </div>
                     </td>
 
-                    {/* Format Pola */}
+                    {/* Satuan */}
                     <td className="py-2.5 px-3">
-                      <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 font-mono text-[11px] text-slate-700 border border-slate-200">
-                        {item.formatPattern || "-"}
-                      </span>
-                    </td>
-
-                    {/* Satuan Default */}
-                    <td className="py-2.5 px-3">
-                      <span className="font-medium text-slate-800">{item.defaultUnit || "-"}</span>
-                    </td>
-
-                    {/* Sifat Nilai */}
-                    <td className="py-2.5 px-3">
-                      {item.isNumeric ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-800">
-                          Numerik
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-700">
-                          Non-Numerik
-                        </span>
-                      )}
+                      <span className="font-medium text-slate-700">{item.defaultUnit || "-"}</span>
                     </td>
 
                     {/* Deskripsi */}
-                    <td className="py-2.5 px-3 max-w-xs">
-                      <div className="text-slate-600 truncate" title={item.description || ""}>
-                        {item.description || "-"}
-                      </div>
-                    </td>
-
-                    {/* Status */}
                     <td className="py-2.5 px-3">
-                      {item.isActive ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
-                          <CheckCircle2 className="h-3 w-3" />
-                          Aktif
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-800">
-                          Nonaktif
-                        </span>
-                      )}
+                      <p className="text-xs text-slate-600 leading-relaxed max-w-xl">
+                        {item.description || "-"}
+                      </p>
                     </td>
 
                     {/* Aksi */}
-                    <td className="py-2.5 px-3 text-right">
+                    <td className="py-2.5 px-3.5 text-right">
                       <div className="flex items-center justify-end gap-1.5">
                         <button
                           onClick={() => openEditModal(item)}
@@ -411,7 +316,7 @@ export function MeasurementTypeManager({ initialData = [] }: Props) {
                           <button
                             onClick={() => handleDelete(item)}
                             className="rounded-md border border-rose-200 bg-rose-50 p-1 text-rose-600 hover:bg-rose-100 transition"
-                            title="Nonaktifkan"
+                            title="Hapus"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>

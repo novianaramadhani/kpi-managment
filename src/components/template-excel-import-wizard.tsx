@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useTransition, useMemo } from "react";
+import React, { useState, useRef, useTransition, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Swal from "sweetalert2";
 import {
@@ -37,6 +37,7 @@ import {
   type WorkbookInfo,
   type ParsedCategory,
   type ParsedParam,
+  type ParsedBand,
   type KpiValidationFinding,
   type MasterParamItem,
   type DetectedTargetMetadata,
@@ -46,8 +47,10 @@ import {
   createMasterParameterFromImportAction,
   createBatchMasterParametersFromImportAction,
   getExistingMasterTemplateForComparisonAction,
+  checkExistingTemplateForEmployeeAction,
   resolveExcelHeaderTargetAction,
   type ExistingTemplateComparisonData,
+  type CheckExistingTemplateResult,
   type ResolvedExcelTargetResult,
 } from "@/lib/actions";
 import {
@@ -161,6 +164,11 @@ export function TemplateExcelImportWizard({
   const [createdTemplateId, setCreatedTemplateId] = useState<number | null>(null);
   const [createdTemplateName, setCreatedTemplateName] = useState<string>("");
 
+  // Pengecekan Template Eksisting untuk Proteksi Duplikasi
+  const [existingEmployeeTemplate, setExistingEmployeeTemplate] =
+    useState<CheckExistingTemplateResult | null>(null);
+  const [isCheckingExistingTemplate, setIsCheckingExistingTemplate] = useState<boolean>(false);
+
   // Resolusi Objek Konfigurasi
   const selectedDept = departments.find((d) => d.id === Number(departmentId));
   const selectedLevel = jobLevels.find((l) => l.id === Number(jobLevelId));
@@ -174,6 +182,12 @@ export function TemplateExcelImportWizard({
       return true;
     });
   }, [jobPositions, departmentId, jobLevelId]);
+
+  // Daftar Karyawan terfilter sesuai Departemen (jika dipilih)
+  const filteredEmployees = useMemo(() => {
+    if (!departmentId) return employees;
+    return employees.filter((e) => e.departmentId === Number(departmentId));
+  }, [employees, departmentId]);
 
   // Handler sinkronisasi pemilihan Job Position -> Otomatis lengkapi Departemen & Level
   const handlePositionChange = (posId: number | "") => {
@@ -200,7 +214,7 @@ export function TemplateExcelImportWizard({
     const emp = employees.find((e) => e.nik === nik);
     if (emp) {
       setEmployeeName(emp.name);
-      if (emp.departmentId) {
+      if (emp.departmentId && (!departmentId || departmentId !== emp.departmentId)) {
         setDepartmentId(emp.departmentId);
         setDetectedFields((prev) => ({ ...prev, department: true }));
       }
@@ -253,20 +267,66 @@ export function TemplateExcelImportWizard({
     );
   }, [selectedPosition, resolvedHeader, workbookInfo]);
 
-  // Nama Master Template Otomatis berdasarkan Nama Karyawan dan Periode Tahun
+  // Nama Master Template Otomatis: [Nama] - [Job Position] - [Tahun]
   const templateName = useMemo(() => {
     const yearPart = periodYear.trim() || "2026";
     const empPart = (employeeName || detectedEmployeeName || "").trim();
+    const posPart = (selectedPosition?.name || detectedJobPosition || "").trim();
     if (empPart) {
-      return `Template KPI ${empPart} - ${yearPart}`;
+      return posPart ? `${empPart} - ${posPart} - ${yearPart}` : `${empPart} - ${yearPart}`;
     }
     if (selectedPosition) {
-      return `Template KPI ${selectedPosition.name} - ${yearPart}`;
+      return `${selectedPosition.name} - ${yearPart}`;
     }
     const deptPart = selectedDept?.name || "Departemen";
     const levelPart = selectedLevel?.name || "Job Level";
-    return `Template KPI ${deptPart} - ${levelPart} - ${yearPart}`;
-  }, [employeeName, detectedEmployeeName, selectedPosition, selectedDept, selectedLevel, periodYear]);
+    return `${deptPart} - ${levelPart} - ${yearPart}`;
+  }, [employeeName, detectedEmployeeName, selectedPosition, detectedJobPosition, selectedDept, selectedLevel, periodYear]);
+
+  // Pengecekan real-time apakah master template untuk NIK / karyawan ini sudah ada di database
+  const activeNik = selectedNik || detectedEmployeeNik || "";
+  const activeEmpName = employeeName || detectedEmployeeName || "";
+
+  useEffect(() => {
+    let isCancelled = false;
+    async function checkExisting() {
+      if (!activeNik && !activeEmpName && !departmentId) {
+        setExistingEmployeeTemplate(null);
+        return;
+      }
+      setIsCheckingExistingTemplate(true);
+      try {
+        const res = await checkExistingTemplateForEmployeeAction({
+          employeeNik: activeNik || null,
+          employeeName: activeEmpName || null,
+          periodYear: periodYear || null,
+          departmentId: departmentId ? Number(departmentId) : null,
+          jobPositionId: jobPositionId ? Number(jobPositionId) : null,
+        });
+        if (!isCancelled) {
+          setExistingEmployeeTemplate(res);
+        }
+      } catch (err) {
+        console.warn("Gagal mengecek template eksisting:", err);
+        if (!isCancelled) {
+          setExistingEmployeeTemplate(null);
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsCheckingExistingTemplate(false);
+        }
+      }
+    }
+
+    const timer = setTimeout(() => {
+      checkExisting();
+    }, 200);
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(timer);
+    };
+  }, [activeNik, activeEmpName, periodYear, departmentId, jobPositionId]);
 
   // Evaluasi Hasil Validasi (5 Pilar: Kelengkapan, Duplikasi, Kriteria, Skor, Bobot)
   const validationResult = useMemo(() => {
@@ -487,21 +547,36 @@ export function TemplateExcelImportWizard({
         if (emp) {
           setEmployeeName(emp.name);
           if (!targetDeptId && emp.departmentId) targetDeptId = emp.departmentId;
+          else if (targetDeptId && emp.departmentId && targetDeptId !== emp.departmentId) {
+            targetDeptId = emp.departmentId;
+          }
           if (!targetJobLevelId && emp.jobLevelId) targetJobLevelId = emp.jobLevelId;
           if (!targetJobPositionId && emp.jobPositionId) targetJobPositionId = emp.jobPositionId;
         } else if (targetEmpName) {
           setEmployeeName(targetEmpName);
         }
       } else if (targetEmpName) {
-        const emp = employees.find((e) => e.name.toLowerCase() === targetEmpName.toLowerCase());
+        const matchingEmps = employees.filter((e) => {
+          const n = e.name.toLowerCase();
+          const target = targetEmpName.toLowerCase();
+          return n === target || n.includes(target) || target.includes(n);
+        });
+        const emp = targetDeptId
+          ? matchingEmps.find((e) => e.departmentId === Number(targetDeptId)) || matchingEmps[0]
+          : matchingEmps[0];
+
         if (emp) {
           setSelectedNik(emp.nik);
           setEmployeeName(emp.name);
           if (!targetDeptId && emp.departmentId) targetDeptId = emp.departmentId;
+          else if (targetDeptId && emp.departmentId && targetDeptId !== emp.departmentId) {
+            targetDeptId = emp.departmentId;
+          }
           if (!targetJobLevelId && emp.jobLevelId) targetJobLevelId = emp.jobLevelId;
           if (!targetJobPositionId && emp.jobPositionId) targetJobPositionId = emp.jobPositionId;
         } else {
           setEmployeeName(targetEmpName);
+          setSelectedNik("");
         }
       }
 
@@ -603,21 +678,36 @@ export function TemplateExcelImportWizard({
         if (emp) {
           setEmployeeName(emp.name);
           if (!targetDeptId && emp.departmentId) targetDeptId = emp.departmentId;
+          else if (targetDeptId && emp.departmentId && targetDeptId !== emp.departmentId) {
+            targetDeptId = emp.departmentId;
+          }
           if (!targetJobLevelId && emp.jobLevelId) targetJobLevelId = emp.jobLevelId;
           if (!targetJobPositionId && emp.jobPositionId) targetJobPositionId = emp.jobPositionId;
         } else if (targetEmpName) {
           setEmployeeName(targetEmpName);
         }
       } else if (targetEmpName) {
-        const emp = employees.find((e) => e.name.toLowerCase() === targetEmpName.toLowerCase());
+        const matchingEmps = employees.filter((e) => {
+          const n = e.name.toLowerCase();
+          const target = targetEmpName.toLowerCase();
+          return n === target || n.includes(target) || target.includes(n);
+        });
+        const emp = targetDeptId
+          ? matchingEmps.find((e) => e.departmentId === Number(targetDeptId)) || matchingEmps[0]
+          : matchingEmps[0];
+
         if (emp) {
           setSelectedNik(emp.nik);
           setEmployeeName(emp.name);
           if (!targetDeptId && emp.departmentId) targetDeptId = emp.departmentId;
+          else if (targetDeptId && emp.departmentId && targetDeptId !== emp.departmentId) {
+            targetDeptId = emp.departmentId;
+          }
           if (!targetJobLevelId && emp.jobLevelId) targetJobLevelId = emp.jobLevelId;
           if (!targetJobPositionId && emp.jobPositionId) targetJobPositionId = emp.jobPositionId;
         } else {
           setEmployeeName(targetEmpName);
+          setSelectedNik("");
         }
       }
 
@@ -714,6 +804,7 @@ export function TemplateExcelImportWizard({
           jobLevelId: Number(jobLevelId),
           jobPositionId: jobPositionId ? Number(jobPositionId) : null,
           periodYear,
+          employeeNik: selectedNik || detectedEmployeeNik || null,
         });
         setExistingMasterData(compRes);
       } catch (cErr) {
@@ -752,14 +843,125 @@ export function TemplateExcelImportWizard({
       const nextParams = [...targetCat.params];
       const targetParam = { ...nextParams[paramIndex] };
 
-      targetParam.masterParameterId = masterParameterId;
+      targetParam.masterParameterId = masterParameterId != null ? Number(masterParameterId) : null;
 
-      if (masterParameterId) {
-        const foundMaster = localMasterParameters.find((mp) => mp.id === masterParameterId);
+      if (masterParameterId != null) {
+        const foundMaster = localMasterParameters.find((mp) => Number(mp.id) === Number(masterParameterId));
         if (foundMaster) {
-          if (foundMaster.unit && !targetParam.unit) targetParam.unit = foundMaster.unit;
-          if (foundMaster.description && !targetParam.description)
+          // 1. Sinkronisasi nama indikator / parameter final mengikuti Kamus
+          targetParam.name = foundMaster.name;
+          if (targetParam.indicatorName) {
+            targetParam.indicatorName = foundMaster.name;
+          }
+
+          // 2. Sinkronisasi metadata, unit, target, dan konfigurasi dari Kamus
+          if (foundMaster.description) {
             targetParam.description = foundMaster.description;
+          }
+          if (foundMaster.unit) {
+            targetParam.unit = foundMaster.unit;
+          }
+          if (foundMaster.target) {
+            targetParam.target = foundMaster.target;
+          }
+          if (foundMaster.weight != null && !isNaN(Number(foundMaster.weight))) {
+            const rawW = Number(foundMaster.weight);
+            targetParam.weight = rawW > 1 ? rawW / 100 : rawW;
+          }
+          if (foundMaster.inputType) {
+            targetParam.inputType = foundMaster.inputType as any;
+          }
+          if (foundMaster.aggregation) {
+            targetParam.aggregation = foundMaster.aggregation as any;
+          }
+          if (foundMaster.compareBasis) {
+            targetParam.compareBasis = foundMaster.compareBasis as any;
+          }
+          if (foundMaster.picRole) {
+            targetParam.picRole = foundMaster.picRole as any;
+          }
+
+          // 3. Sinkronisasi kriteria penilaian dan bobot/skor kriteria dari Kamus
+          if (
+            foundMaster.defaultBands &&
+            Array.isArray(foundMaster.defaultBands) &&
+            foundMaster.defaultBands.length > 0
+          ) {
+            targetParam.bands = foundMaster.defaultBands.map((dbBand, bIdx) => {
+              const rawLabel = (dbBand.label || "").trim();
+              const rawOp = String(dbBand.operator || "").toUpperCase().trim();
+
+              let op: ParsedBand["operator"] = "TEXT";
+              if (
+                rawOp === "GT" ||
+                rawOp === "GTE" ||
+                rawOp === "LT" ||
+                rawOp === "LTE" ||
+                rawOp === "EQ" ||
+                rawOp === "BETWEEN" ||
+                rawOp === "TEXT"
+              ) {
+                op = rawOp as ParsedBand["operator"];
+              } else if (dbBand.minValue != null && dbBand.maxValue != null) {
+                op = "BETWEEN";
+              } else if (dbBand.minValue != null) {
+                op = "GTE";
+              } else if (dbBand.maxValue != null) {
+                op = "LTE";
+              }
+
+              let opSymbol = "=";
+              if (op === "GTE") opSymbol = ">=";
+              else if (op === "GT") opSymbol = ">";
+              else if (op === "LTE") opSymbol = "<=";
+              else if (op === "LT") opSymbol = "<";
+              else if (op === "EQ") opSymbol = "=";
+              else if (op === "BETWEEN") opSymbol = "Rentang";
+              else opSymbol = "Teks";
+
+              let criteriaVal = extractCriteriaValue(rawLabel, op);
+              if (!criteriaVal) {
+                if (op === "BETWEEN" && dbBand.minValue != null && dbBand.maxValue != null) {
+                  criteriaVal = `${dbBand.minValue} - ${dbBand.maxValue}`;
+                } else if (dbBand.minValue != null) {
+                  criteriaVal = String(dbBand.minValue);
+                } else if (dbBand.maxValue != null) {
+                  criteriaVal = String(dbBand.maxValue);
+                } else {
+                  criteriaVal = rawLabel;
+                }
+              }
+
+              const bandScore = Number(dbBand.score ?? 0);
+              const formattedLabel =
+                rawLabel && !rawLabel.includes("?")
+                  ? rawLabel
+                  : formatCriteriaString(opSymbol, criteriaVal);
+
+              return {
+                id: null,
+                action: "CREATE" as const,
+                label: formattedLabel,
+                operator: op,
+                operatorSymbol: opSymbol,
+                criteriaValue: criteriaVal,
+                minValue: dbBand.minValue != null ? Number(dbBand.minValue) : null,
+                maxValue: dbBand.maxValue != null ? Number(dbBand.maxValue) : null,
+                score: isNaN(bandScore) ? 0 : bandScore,
+                sortOrder: bIdx,
+                isUnrecognizedOperator: false,
+                needsManualReview: false,
+                manualReviewReason: undefined,
+              };
+            });
+
+            // Sinkronkan maxScore indikator dengan skor tertinggi di antara bands
+            const maxBandScore = targetParam.bands.reduce((max, b) => {
+              const val = Number(b.score);
+              return !isNaN(val) && val > max ? val : max;
+            }, 0);
+            targetParam.maxScore = maxBandScore > 0 ? maxBandScore : 25;
+          }
         }
       }
 
@@ -768,6 +970,20 @@ export function TemplateExcelImportWizard({
       next[catIndex] = targetCat;
       return next;
     });
+
+    if (masterParameterId != null) {
+      const foundMaster = localMasterParameters.find((mp) => Number(mp.id) === Number(masterParameterId));
+      if (foundMaster) {
+        void Swal.fire({
+          toast: true,
+          position: "top-end",
+          icon: "success",
+          title: `Indikator dipetakan ke "${foundMaster.name}" (${foundMaster.code || "Kamus"})`,
+          showConfirmButton: false,
+          timer: 2500,
+        });
+      }
+    }
   };
 
   // Handler Update Skor Kriteria Penilaian Langsung Secara Inline
@@ -993,6 +1209,45 @@ export function TemplateExcelImportWizard({
     });
   };
 
+  // Handler Update Nama Indikator Langsung
+  const handleUpdateIndicatorName = (
+    catIndex: number,
+    paramIndex: number,
+    newName: string
+  ) => {
+    setParsedCategories((prev) => {
+      const next = [...prev];
+      const targetCat = { ...next[catIndex] };
+      const nextParams = [...targetCat.params];
+      const targetParam = { ...nextParams[paramIndex], name: newName };
+      if (targetParam.indicatorName) {
+        targetParam.indicatorName = newName;
+      }
+      nextParams[paramIndex] = targetParam;
+      targetCat.params = nextParams;
+      next[catIndex] = targetCat;
+      return next;
+    });
+  };
+
+  // Handler Update Target Indikator Langsung
+  const handleUpdateIndicatorTarget = (
+    catIndex: number,
+    paramIndex: number,
+    newTarget: string
+  ) => {
+    setParsedCategories((prev) => {
+      const next = [...prev];
+      const targetCat = { ...next[catIndex] };
+      const nextParams = [...targetCat.params];
+      const targetParam = { ...nextParams[paramIndex], target: newTarget };
+      nextParams[paramIndex] = targetParam;
+      targetCat.params = nextParams;
+      next[catIndex] = targetCat;
+      return next;
+    });
+  };
+
   // Handler Update Bobot Parameter Utama
   const handleUpdateCategoryWeight = (
     catIndex: number,
@@ -1101,6 +1356,8 @@ export function TemplateExcelImportWizard({
         unit: param.unit,
         description: param.description,
         inputType: param.inputType,
+        target: param.target,
+        weight: param.weight,
         bands: param.bands.map((b) => ({
           score: Number(b.score),
           label: b.label,
@@ -1125,6 +1382,15 @@ export function TemplateExcelImportWizard({
               categoryName: newMp.categoryName,
               unit: newMp.unit,
               description: newMp.description,
+              target: newMp.target,
+              weight: newMp.weight,
+              defaultBands: (newMp as any).defaultBands || param.bands.map((b) => ({
+                score: Number(b.score),
+                label: b.label,
+                operator: b.operator,
+                minValue: b.minValue ?? null,
+                maxValue: b.maxValue ?? null,
+              })),
               isActive: true,
             },
           ];
@@ -1184,7 +1450,7 @@ export function TemplateExcelImportWizard({
     parsedCategories.forEach((cat, cIdx) => {
       cat.params.forEach((p, pIdx) => {
         const isMatched = localMasterParameters.some(
-          (mp) => mp.id === p.masterParameterId && mp.departmentId === Number(departmentId)
+          (mp) => p.masterParameterId != null && Number(mp.id) === Number(p.masterParameterId)
         );
         if (!isMatched) {
           unmatchedList.push({
@@ -1231,6 +1497,8 @@ export function TemplateExcelImportWizard({
         unit: item.param.unit,
         description: item.param.description,
         inputType: item.param.inputType,
+        target: item.param.target,
+        weight: item.param.weight,
         bands: item.param.bands.map((b) => ({
           score: Number(b.score),
           label: b.label,
@@ -1254,6 +1522,9 @@ export function TemplateExcelImportWizard({
           departmentName: selectedDept?.name || null,
           categoryName: ci.categoryName,
           unit: ci.unit,
+          target: ci.target,
+          weight: ci.weight,
+          defaultBands: (ci as any).defaultBands || null,
           isActive: true,
         }));
 
@@ -1804,6 +2075,24 @@ export function TemplateExcelImportWizard({
               </div>
             )}
 
+            {/* Alert Status Template Eksisting (Clean & Minimal di Bagian Atas) */}
+            {existingEmployeeTemplate?.found && existingEmployeeTemplate.template && (
+              <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl bg-amber-50/80 border border-amber-200 text-xs text-amber-900">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Info className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span className="truncate">
+                    {existingEmployeeTemplate.matchedBy === "POSITION_DEPARTMENT"
+                      ? "Template KPI untuk posisi ini sudah terdaftar: "
+                      : `Template KPI untuk ${existingEmployeeTemplate.template.employeeNik ? `NIK ${existingEmployeeTemplate.template.employeeNik}` : "karyawan ini"} sudah terdaftar: `}
+                    <strong className="font-semibold text-slate-800">{existingEmployeeTemplate.template.name}</strong> (ID #{existingEmployeeTemplate.template.id})
+                  </span>
+                </div>
+                <span className="shrink-0 text-[10px] font-bold text-amber-800 bg-amber-100/90 px-2 py-0.5 rounded border border-amber-300">
+                  Update ke Versi {(existingEmployeeTemplate.template.version || 1) + 1}
+                </span>
+              </div>
+            )}
+
             {/* Grid Konfigurasi Sasaran (NIK, Nama Karyawan, Departemen, Job Level, Job Position, Periode) */}
             <div className="pt-2 border-t border-slate-100 space-y-4">
               <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
@@ -1833,11 +2122,17 @@ export function TemplateExcelImportWizard({
                         : "border-slate-300 focus:border-blue-600"
                     }`}
                   >
-                    <option value="">Pilih NIK Karyawan...</option>
-                    {selectedNik && !employees.some((e) => e.nik === selectedNik) && (
-                      <option value={selectedNik}>{selectedNik} (Dari Berkas Excel)</option>
+                    <option value="">
+                      {departmentId
+                        ? `Pilih NIK Karyawan (${filteredEmployees.length} terdaftar di departemen ini)...`
+                        : "Pilih NIK Karyawan..."}
+                    </option>
+                    {selectedNik && !filteredEmployees.some((e) => e.nik === selectedNik) && (
+                      <option value={selectedNik}>
+                        {selectedNik} {employeeName ? `- ${employeeName}` : ""} (Luar Departemen / Dari Berkas)
+                      </option>
                     )}
-                    {employees.map((emp) => (
+                    {filteredEmployees.map((emp) => (
                       <option key={emp.id} value={emp.nik}>
                         {emp.nik} - {emp.name}
                       </option>
@@ -1884,11 +2179,53 @@ export function TemplateExcelImportWizard({
                       const val = e.target.value ? Number(e.target.value) : "";
                       setDepartmentId(val);
                       setDetectedFields((prev) => ({ ...prev, department: false }));
-                      if (val && jobPositionId) {
-                        const curPos = jobPositions.find((p) => p.id === Number(jobPositionId));
-                        if (curPos && curPos.departmentId !== val) {
-                          setJobPositionId("");
+
+                      if (val) {
+                        const deptEmps = employees.filter((emp) => emp.departmentId === val);
+                        const curEmp = employees.find((emp) => emp.nik === selectedNik);
+
+                        // Cek apakah ada karyawan di departemen baru yang cocok dengan nama sheet / header
+                        const searchName = (detectedEmployeeName || selectedSheetName || employeeName || "").trim().toLowerCase();
+                        const matchedInNewDept = searchName
+                          ? deptEmps.find((emp) => {
+                              const n = emp.name.toLowerCase();
+                              return n === searchName || n.includes(searchName) || searchName.includes(n);
+                            })
+                          : null;
+
+                        if (matchedInNewDept) {
+                          setSelectedNik(matchedInNewDept.nik);
+                          setEmployeeName(matchedInNewDept.name);
+                          if (matchedInNewDept.jobLevelId) {
+                            setJobLevelId(matchedInNewDept.jobLevelId);
+                            setDetectedFields((prev) => ({ ...prev, jobLevel: true }));
+                          }
+                          let posId: number | "" = "";
+                          if (matchedInNewDept.jobPositionId) {
+                            posId = matchedInNewDept.jobPositionId;
+                          } else if (matchedInNewDept.jobPosition) {
+                            const matchedPos = jobPositions.find(
+                              (p) => p.name.trim().toLowerCase() === matchedInNewDept.jobPosition!.trim().toLowerCase()
+                            );
+                            if (matchedPos) posId = matchedPos.id;
+                          }
+                          setJobPositionId(posId);
+                          setDetectedFields((prev) => ({ ...prev, jobPosition: Boolean(posId) }));
+                        } else if (curEmp && curEmp.departmentId !== val) {
+                          // Karyawan sebelumnya bukan dari departemen baru, reset NIK & Nama
+                          setSelectedNik("");
+                          setEmployeeName("");
                         }
+
+                        if (jobPositionId) {
+                          const curPos = jobPositions.find((p) => p.id === Number(jobPositionId));
+                          if (curPos && curPos.departmentId !== val) {
+                            setJobPositionId("");
+                          }
+                        }
+                      } else {
+                        setSelectedNik("");
+                        setEmployeeName("");
                       }
                     }}
                     className={`w-full px-3 py-2 text-xs rounded-xl border bg-white text-slate-800 focus:outline-none cursor-pointer transition ${
@@ -2154,6 +2491,8 @@ export function TemplateExcelImportWizard({
             onUpdateBandOperator={handleUpdateBandOperator}
             onUpdateBandCriteriaValue={handleUpdateBandCriteriaValue}
             onUpdateIndicatorWeight={handleUpdateIndicatorWeight}
+            onUpdateIndicatorName={handleUpdateIndicatorName}
+            onUpdateIndicatorTarget={handleUpdateIndicatorTarget}
             onUpdateCategoryWeight={handleUpdateCategoryWeight}
             onAutoBalanceIndicatorWeights={handleAutoBalanceIndicatorWeights}
             onAutoHarmonizeParamBands={handleAutoHarmonizeParamBands}
@@ -2309,6 +2648,20 @@ export function TemplateExcelImportWizard({
 
             <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 text-xs space-y-2">
               <div className="flex justify-between border-b border-slate-200/80 pb-1.5 items-center">
+                <span className="text-slate-500 font-medium">Mode Penyimpanan:</span>
+                {existingEmployeeTemplate?.found && existingEmployeeTemplate.template ? (
+                  <span className="inline-flex items-center gap-1 font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-300 text-xs">
+                    <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Perbarui Template Eksisting (Update Versi {existingEmployeeTemplate.template.version} &rarr; {(existingEmployeeTemplate.template.version || 1) + 1} &bull; ID #{existingEmployeeTemplate.template.id})</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-300 text-xs">
+                    <Check className="w-3 h-3 text-emerald-600" />
+                    <span>Buat Master Template Baru (Versi 1)</span>
+                  </span>
+                )}
+              </div>
+              <div className="flex justify-between border-b border-slate-200/80 pb-1.5 items-center">
                 <span className="text-slate-500 font-medium">Status Publikasi:</span>
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-300">
                   <Check className="w-3 h-3 text-emerald-600" />
@@ -2421,6 +2774,20 @@ export function TemplateExcelImportWizard({
             <div className="flex justify-between border-b border-slate-200/80 pb-1.5">
               <span className="text-slate-500 font-medium">Nama Template:</span>
               <span className="font-bold text-slate-900">{createdTemplateName}</span>
+            </div>
+            <div className="flex justify-between border-b border-slate-200/80 pb-1.5 items-center">
+              <span className="text-slate-500 font-medium">Mode Penyimpanan:</span>
+              {existingEmployeeTemplate?.found ? (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                  <ShieldCheck className="w-3 h-3 text-amber-600" />
+                  Diperbarui In-Place (Versi {(existingEmployeeTemplate.template?.version || 1) + 1} &bull; Bebas Duplikasi)
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  <Check className="w-3 h-3 text-emerald-600" />
+                  Master Template Baru (Versi 1)
+                </span>
+              )}
             </div>
             <div className="flex justify-between border-b border-slate-200/80 pb-1.5 items-center">
               <span className="text-slate-500 font-medium">Status Publikasi:</span>

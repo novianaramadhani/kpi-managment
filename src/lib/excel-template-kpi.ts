@@ -200,7 +200,7 @@ export function formatCriteriaExcel(
   const formatVal = (v: string) => {
     if (!v) return "";
     if (u === "%" || u === "persen" || u === "percentage") return `${v}%`;
-    if (u) return `${v} ${unit}`;
+    if (u && u !== "teks" && u !== "text" && u !== "string" && u !== "-") return `${v} ${unit}`;
     return v;
   };
 
@@ -377,8 +377,8 @@ export function parseConditionString(raw: string): ParsedConditionResult {
     };
   }
 
-  // 2. GTE: ">= 98%", "≥ 98%", "=> 98"
-  const gteMatch = targetStr.match(/^(?:>=|≥|=>)\s*(.+)$/);
+  // 2. GTE: ">= 98%", "≥ 98%", "=> 98", "Tercapai >= 100%"
+  const gteMatch = targetStr.match(/^(?:[a-zA-Z\s]*?)?(?:>=|≥|=>)\s*(.+)$/);
   if (gteMatch) {
     const rest = gteMatch[1].trim();
     const num = extractNumericFromCondition(rest);
@@ -395,8 +395,8 @@ export function parseConditionString(raw: string): ParsedConditionResult {
     }
   }
 
-  // 3. GT: "> 95%", ">95"
-  const gtMatch = targetStr.match(/^>\s*(.+)$/);
+  // 3. GT: "> 95%", ">95", "Di atas 95%", "Lebih dari 95%"
+  const gtMatch = targetStr.match(/^(?:(?:[a-zA-Z\s]*?)?>|di\s+atas|lebih\s+dari)\s*(.+)$/i);
   if (gtMatch) {
     const rest = gtMatch[1].trim();
     const num = extractNumericFromCondition(rest);
@@ -414,7 +414,7 @@ export function parseConditionString(raw: string): ParsedConditionResult {
   }
 
   // 4. LTE: "<= 3%", "≤ 3%", "=< 3"
-  const lteMatch = targetStr.match(/^(?:<=|≤|=<)\s*(.+)$/);
+  const lteMatch = targetStr.match(/^(?:[a-zA-Z\s]*?)?(?:<=|≤|=<)\s*(.+)$/);
   if (lteMatch) {
     const rest = lteMatch[1].trim();
     const num = extractNumericFromCondition(rest);
@@ -431,8 +431,8 @@ export function parseConditionString(raw: string): ParsedConditionResult {
     }
   }
 
-  // 5. LT: "< 95%", "<95", "<25 M", "< Rp 25.000.000.000"
-  const ltMatch = targetStr.match(/^<\s*(.+)$/);
+  // 5. LT: "< 95%", "<95", "Di bawah 85%", "Kurang dari 85%"
+  const ltMatch = targetStr.match(/^(?:(?:[a-zA-Z\s]*?)?<|di\s+bawah|kurang\s+dari)\s*(.+)$/i);
   if (ltMatch) {
     const rest = ltMatch[1].trim();
     const num = extractNumericFromCondition(rest);
@@ -450,7 +450,7 @@ export function parseConditionString(raw: string): ParsedConditionResult {
   }
 
   // 6. EQ: "= 95", "== 95", "= Rp 25.000.000.000"
-  const eqMatch = targetStr.match(/^(?:=|==)\s*(.+)$/);
+  const eqMatch = targetStr.match(/^(?:[a-zA-Z\s]*?)?(?:=|==)\s*(.+)$/);
   if (eqMatch) {
     const rest = eqMatch[1].trim();
     const num = extractNumericFromCondition(rest);
@@ -1471,6 +1471,15 @@ export async function parseKpiTemplateExcel(
       continue;
     }
 
+    const rowFullText = row.map((c) => String(c || "").trim().toLowerCase()).join(" ");
+    if (
+      rowFullText.includes("total hasil penilaian akhir") ||
+      rowFullText.includes("rincian target & realisasi bulanan") ||
+      rowFullText.includes("rincian target dan realisasi bulanan")
+    ) {
+      break;
+    }
+
     dataRowCounter++;
     const mapInfo = mappingMap.get(dataRowCounter);
 
@@ -2106,9 +2115,11 @@ export interface MasterParamItem {
   name: string;
   description?: string | null;
   target?: string | null;
+  weight?: number | string | null;
   departmentId?: number | null;
   departmentName?: string | null;
   categoryName?: string | null;
+  scope?: "INDIVIDUAL" | "DEPARTMENT" | string | null;
   unit?: string | null;
   inputType?: string | null;
   aggregation?: string | null;
@@ -3149,7 +3160,7 @@ export async function downloadBatchWizardKpiTemplates(options: {
     const safeNik = (emp.nik || "NIK").trim().replace(/[^a-zA-Z0-9_-]/g, "_");
 
     const wb = buildWizardKpiWorkbook({
-      templateName: `Template KPI ${departmentName} - ${jobLevelName} - ${emp.name} - ${periodYear}`,
+      templateName: `${emp.name} - ${emp.jobPosition || jobLevelName} - ${periodYear}`,
       departmentName,
       jobLevelName,
       periodYear,
@@ -3994,14 +4005,26 @@ export function detectWorkbookTargetMetadata(
       if (cleanCand === dName || (dCode && cleanCand === dCode)) return d;
     }
 
-    // 2. Alias departemen umum
+    // 1b. Match setelah menghapus prefix umum (dept, departemen, divisi, bagian)
+    const strippedCand = cleanCand.replace(/^(?:dept\.?|departemen|divisi|bagian)\s+/i, "").trim();
+    if (strippedCand) {
+      for (const d of departments) {
+        const dName = d.name.toLowerCase();
+        const dCode = d.code ? d.code.toLowerCase() : "";
+        if (strippedCand === dName || (dCode && strippedCand === dCode)) return d;
+      }
+    }
+
+    // 2. Alias departemen umum (prioritaskan nama tepat seperti Purchasing sebelum compound name)
     if (cleanCand.includes("procure") || cleanCand.includes("purchas")) {
-      const found = departments.find(
-        (d) =>
-          d.name.toLowerCase().includes("purchas") ||
-          d.name.toLowerCase().includes("procure") ||
-          (d.code && d.code.toLowerCase() === "pur")
-      );
+      const found =
+        departments.find((d) => d.name.toLowerCase() === "purchasing" || (d.code && d.code.toLowerCase() === "pur")) ||
+        departments.find(
+          (d) =>
+            d.name.toLowerCase().includes("purchas") ||
+            d.name.toLowerCase().includes("procure") ||
+            (d.code && d.code.toLowerCase() === "pur")
+        );
       if (found) return found;
     }
 
@@ -4463,6 +4486,15 @@ export async function parseMasterTemplateExcelSheet(
       continue;
     }
 
+    const rowFullText = row.map((c) => String(c || "").trim().toLowerCase()).join(" ");
+    if (
+      rowFullText.includes("total hasil penilaian akhir") ||
+      rowFullText.includes("rincian target & realisasi bulanan") ||
+      rowFullText.includes("rincian target dan realisasi bulanan")
+    ) {
+      break;
+    }
+
     const firstCellText = String(row[0] || "").trim();
     const criteriaCol = getColVal(
       row,
@@ -4633,9 +4665,9 @@ export async function parseMasterTemplateExcelSheet(
 
       currentParam = {
         masterParameterId: matchedMaster?.id ?? null,
-        name: subName,
+        name: matchedMaster ? matchedMaster.name : subName,
         description: paramDescCol || matchedMaster?.description || "",
-        target: targetCol && targetCol.trim() !== "" ? targetCol.trim() : undefined,
+        target: targetCol && targetCol.trim() !== "" ? targetCol.trim() : (matchedMaster?.target || undefined),
         unit: unitCol || matchedMaster?.unit || "%",
         weight: parsedW || (currentIndicator && currentIndicator.weight > 0 ? currentIndicator.weight : 0.2),
         maxScore: 25,
@@ -4667,9 +4699,9 @@ export async function parseMasterTemplateExcelSheet(
         const matchedMaster = findMasterMatch(indName);
         currentParam = {
           masterParameterId: matchedMaster?.id ?? null,
-          name: indName,
+          name: matchedMaster ? matchedMaster.name : indName,
           description: paramDescCol || matchedMaster?.description || "",
-          target: targetCol && targetCol.trim() !== "" ? targetCol.trim() : undefined,
+          target: targetCol && targetCol.trim() !== "" ? targetCol.trim() : (matchedMaster?.target || undefined),
           unit: unitCol || matchedMaster?.unit || "%",
           weight: parsedW || 0.2,
           maxScore: 25,
@@ -4698,9 +4730,9 @@ export async function parseMasterTemplateExcelSheet(
       const matchedMaster = findMasterMatch(currentIndicator.name);
       currentParam = {
         masterParameterId: matchedMaster?.id ?? null,
-        name: currentIndicator.name,
+        name: matchedMaster ? matchedMaster.name : currentIndicator.name,
         description: paramDescCol || matchedMaster?.description || "",
-        target: targetCol && targetCol.trim() !== "" ? targetCol.trim() : undefined,
+        target: targetCol && targetCol.trim() !== "" ? targetCol.trim() : (matchedMaster?.target || undefined),
         unit: unitCol || matchedMaster?.unit || "%",
         weight: currentIndicator.weight || parsedW || 0.2,
         maxScore: 25,
@@ -4721,9 +4753,9 @@ export async function parseMasterTemplateExcelSheet(
       const matchedMaster = findMasterMatch(cleanName);
       currentParam = {
         masterParameterId: matchedMaster?.id ?? null,
-        name: cleanName,
+        name: matchedMaster ? matchedMaster.name : cleanName,
         description: paramDescCol || matchedMaster?.description || "",
-        target: targetCol && targetCol.trim() !== "" ? targetCol.trim() : undefined,
+        target: targetCol && targetCol.trim() !== "" ? targetCol.trim() : (matchedMaster?.target || undefined),
         unit: unitCol || matchedMaster?.unit || "%",
         weight: parsedW || 0.2,
         maxScore: 25,
@@ -4960,6 +4992,28 @@ export async function parseMasterTemplateExcelSheet(
         }
         p.bands = autoHarmonizeCriteriaBands(p.bands, p.unit || "%");
       }
+
+      // Auto-resolve target jika belum terisi dari Excel
+      if (!p.target || !p.target.trim()) {
+        if (p.masterParameterId) {
+          const matched = masterParams.find((m) => m.id === p.masterParameterId);
+          if (matched?.target) p.target = matched.target;
+        }
+        if (!p.target && p.bands && p.bands.length > 0) {
+          const highestBand = [...p.bands].sort((a, b) => Number(b.score) - Number(a.score))[0];
+          if (highestBand) {
+            const cleanVal = (highestBand.criteriaValue || "").trim();
+            const extracted = cleanVal || extractCriteriaValue(highestBand.label, highestBand.operator) || highestBand.label;
+            if (extracted && extracted.trim()) {
+              p.target = extracted.trim();
+            }
+          }
+        }
+        if (!p.target && (p.unit === "%" || p.inputType === "PERCENTAGE")) {
+          p.target = "100%";
+        }
+      }
+
       totalBands += p.bands.length;
     }
   }
@@ -5129,9 +5183,93 @@ export function validateMasterTemplateParsedData(
 
     for (let pIdx = 0; pIdx < cat.params.length; pIdx++) {
       const p = cat.params[pIdx];
-      const indNo = `${catNo}.${pIdx + 1}`;
+      const indNo =
+        p.subParamNumber ||
+        p.indicatorNumber ||
+        (cat.categoryType === "SUB_ITEMS" ? `${catNo}.${pIdx + 1}` : `${catNo}.1`);
       indicatorCount++;
       sumInternalWeight += p.weight;
+
+      // 1. Sinkronisasi nama dan target dari Kamus jika sudah terpetakan
+      let isMatched = false;
+      let matchedMp: MasterParamItem | undefined;
+      if (p.masterParameterId != null) {
+        matchedMp = masterParameters.find(
+          (mp) => Number(mp.id) === Number(p.masterParameterId)
+        );
+        if (matchedMp) {
+          isMatched = true;
+          if (matchedMp.name && p.name !== matchedMp.name) {
+            p.name = matchedMp.name;
+          }
+          if (matchedMp.target && !p.target) {
+            p.target = matchedMp.target;
+          }
+          if (matchedMp.weight != null && !isNaN(Number(matchedMp.weight)) && (!p.weight || p.weight === 0)) {
+            const rawW = Number(matchedMp.weight);
+            p.weight = rawW > 1 ? rawW / 100 : rawW;
+          }
+        }
+      }
+
+      const normName = p.name.trim().toLowerCase();
+      if (!isMatched && normName) {
+        // Prioritas 1: cocokkan dengan parameter spesifik departemen
+        const foundDept = masterParameters.find(
+          (mp) =>
+            mp.name.trim().toLowerCase() === normName &&
+            options?.departmentId &&
+            mp.departmentId === options.departmentId
+        );
+        if (foundDept) {
+          p.masterParameterId = foundDept.id;
+          matchedMp = foundDept;
+          p.name = foundDept.name;
+          if (foundDept.target && !p.target) p.target = foundDept.target;
+          if (foundDept.weight != null && !isNaN(Number(foundDept.weight)) && (!p.weight || p.weight === 0)) {
+            const rawW = Number(foundDept.weight);
+            p.weight = rawW > 1 ? rawW / 100 : rawW;
+          }
+          isMatched = true;
+        } else {
+          // Prioritas 2: cocokkan dengan parameter umum / corporate
+          const foundCorp = masterParameters.find(
+            (mp) =>
+              mp.name.trim().toLowerCase() === normName &&
+              (mp.departmentId === null || mp.departmentId === undefined)
+          );
+          if (foundCorp) {
+            p.masterParameterId = foundCorp.id;
+            matchedMp = foundCorp;
+            p.name = foundCorp.name;
+            if (foundCorp.target && !p.target) p.target = foundCorp.target;
+            if (foundCorp.weight != null && !isNaN(Number(foundCorp.weight)) && (!p.weight || p.weight === 0)) {
+              const rawW = Number(foundCorp.weight);
+              p.weight = rawW > 1 ? rawW / 100 : rawW;
+            }
+            isMatched = true;
+          }
+        }
+      }
+
+      // 2. Auto-resolve target jika belum terisi
+      if (!p.target || !p.target.trim()) {
+        if (matchedMp?.target && matchedMp.target.trim()) {
+          p.target = matchedMp.target.trim();
+        } else if (p.bands && p.bands.length > 0) {
+          const highestBand = [...p.bands].sort((a, b) => Number(b.score) - Number(a.score))[0];
+          if (highestBand) {
+            const cleanVal = (highestBand.criteriaValue || "").trim();
+            const extracted = cleanVal || extractCriteriaValue(highestBand.label, highestBand.operator) || highestBand.label;
+            if (extracted && extracted.trim()) {
+              p.target = extracted.trim();
+            }
+          }
+        }
+        if (!p.target && (p.unit === "%" || p.inputType === "PERCENTAGE")) {
+          p.target = "100%";
+        }
+      }
 
       if (!p.name.trim()) {
         completenessErrors++;
@@ -5146,8 +5284,8 @@ export function validateMasterTemplateParsedData(
         });
       }
 
-      // Validasi kelengkapan target & satuan
-      if (!p.target || !p.target.trim()) {
+      // 3. Validasi kelengkapan target: hanya peringatkan jika indikator tidak memiliki target dan tidak memiliki kriteria
+      if ((!p.target || !p.target.trim()) && (!p.bands || p.bands.length === 0)) {
         warnings.push({
           type: "WARNING",
           category: "COMPLETENESS",
@@ -5160,7 +5298,6 @@ export function validateMasterTemplateParsedData(
         });
       }
 
-      const normName = p.name.trim().toLowerCase();
       if (seenIndicatorNames.has(normName)) {
         duplicationErrors++;
         errors.push({
@@ -5175,44 +5312,6 @@ export function validateMasterTemplateParsedData(
         });
       } else if (normName) {
         seenIndicatorNames.add(normName);
-      }
-
-      let isMatched = false;
-      if (p.masterParameterId) {
-        const found = masterParameters.some(
-          (mp) =>
-            mp.id === p.masterParameterId &&
-            (!options?.departmentId ||
-              mp.departmentId === options.departmentId ||
-              mp.departmentId === null ||
-              mp.departmentId === undefined)
-        );
-        if (found) isMatched = true;
-      }
-
-      if (!isMatched && normName) {
-        // Prioritas 1: cocokkan dengan parameter spesifik departemen
-        const foundDept = masterParameters.find(
-          (mp) =>
-            mp.name.trim().toLowerCase() === normName &&
-            options?.departmentId &&
-            mp.departmentId === options.departmentId
-        );
-        if (foundDept) {
-          p.masterParameterId = foundDept.id;
-          isMatched = true;
-        } else {
-          // Prioritas 2: cocokkan dengan parameter umum / corporate
-          const foundCorp = masterParameters.find(
-            (mp) =>
-              mp.name.trim().toLowerCase() === normName &&
-              (mp.departmentId === null || mp.departmentId === undefined)
-          );
-          if (foundCorp) {
-            p.masterParameterId = foundCorp.id;
-            isMatched = true;
-          }
-        }
       }
 
       if (isMatched) {

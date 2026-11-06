@@ -6,8 +6,6 @@ import { useRouter } from "next/navigation";
 import Swal from "sweetalert2";
 import * as XLSX from "xlsx";
 import {
-  Eye,
-  Edit3,
   Copy,
   Trash2,
   ChevronLeft,
@@ -39,6 +37,7 @@ import type {
   Employee,
   JobLevel,
   JobPosition,
+  JobCategory,
   KpiBand,
   KpiCategory,
   KpiParameter,
@@ -48,18 +47,18 @@ import type {
   DepartmentMapping,
 } from "@/db/schema";
 import type { TemplateAssignmentStatus } from "@/lib/template-assignment-service";
-import { TemplateModal } from "./template-modal";
 import { TemplateViewModal } from "./template-view-modal";
 import { TemplateAssignmentDrawer, prefetchTemplateAssignment } from "./template-assignment-drawer";
-import { TemplateImportExcelModal } from "./template-import-excel-modal";
-import { TemplateUploadModal } from "./template-upload-modal";
 import { PersonalTemplateModal } from "./personal-template-modal";
+import { TemplateGenerateModal } from "./template-generate-modal";
 
 interface TemplateListClientProps {
   templates: KpiTemplate[];
   departments: Department[];
   jobLevels: JobLevel[];
   jobPositions?: JobPosition[];
+  jobCategories?: JobCategory[];
+  jobPositionMappings?: Array<{ departmentId: number; jobCategoryId: number | null }>;
   categories: KpiCategory[];
   parameters?: KpiParameter[];
   bands?: KpiBand[];
@@ -86,6 +85,8 @@ export function TemplateListClient({
   departments,
   jobLevels,
   jobPositions = [],
+  jobCategories = [],
+  jobPositionMappings = [],
   categories,
   parameters = [],
   bands = [],
@@ -134,43 +135,11 @@ export function TemplateListClient({
   const headerCheckboxRef = useRef<HTMLInputElement>(null);
 
   // Modals & Drawer state
-  const [isStandardModalOpen, setIsStandardModalOpen] = useState(false);
   const [isPersonalModalOpen, setIsPersonalModalOpen] = useState(false);
-  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [isActionsOpen, setIsActionsOpen] = useState(false);
-  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
-  const actionsDropdownRef = useRef<HTMLDivElement>(null);
-  const addMenuRef = useRef<HTMLDivElement>(null);
+  const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
   const [viewingTemplate, setViewingTemplate] = useState<KpiTemplate | null>(null);
   const [assigningTemplate, setAssigningTemplate] = useState<KpiTemplate | null>(null);
   const [assigningInitialTab, setAssigningInitialTab] = useState<"PENILAI" | "KARYAWAN">("PENILAI");
-
-
-
-  // Click outside listener for Actions & Add Menu dropdowns
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (
-        actionsDropdownRef.current &&
-        !actionsDropdownRef.current.contains(event.target as Node)
-      ) {
-        setIsActionsOpen(false);
-      }
-      if (
-        addMenuRef.current &&
-        !addMenuRef.current.contains(event.target as Node)
-      ) {
-        setIsAddMenuOpen(false);
-      }
-    }
-    if (isActionsOpen || isAddMenuOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [isActionsOpen, isAddMenuOpen]);
 
   // Lookup dictionaries
   const deptMap = useMemo(() => {
@@ -196,6 +165,53 @@ export function TemplateListClient({
     employees.forEach((e) => map.set(e.id, e));
     return map;
   }, [employees]);
+
+  // Statistik dan bobot riil per template dari kategori dan indikator aktual
+  const templateStatsMap = useMemo(() => {
+    const map = new Map<
+      number,
+      {
+        catCount: number;
+        paramCount: number;
+        totalWeightPct: number;
+        isConfigured: boolean;
+      }
+    >();
+
+    const catMap = new Map<number, typeof categories>();
+    for (const c of categories) {
+      const list = catMap.get(c.templateId) || [];
+      list.push(c);
+      catMap.set(c.templateId, list);
+    }
+
+    const paramCountByCat = new Map<number, number>();
+    for (const p of parameters) {
+      paramCountByCat.set(p.categoryId, (paramCountByCat.get(p.categoryId) || 0) + 1);
+    }
+
+    for (const t of templates) {
+      const tCats = catMap.get(t.id) || [];
+      const catCount = tCats.length;
+      let paramCount = 0;
+      let totalWeightPct = 0;
+
+      for (const c of tCats) {
+        totalWeightPct += Math.round((Number(c.weight) || 0) * 100);
+        paramCount += paramCountByCat.get(c.id) || 0;
+      }
+
+      const isConfigured = catCount > 0 && paramCount > 0 && totalWeightPct === 115;
+      map.set(t.id, {
+        catCount,
+        paramCount,
+        totalWeightPct,
+        isConfigured,
+      });
+    }
+
+    return map;
+  }, [categories, parameters, templates]);
 
   // Filter templates
   const filteredTemplates = useMemo(() => {
@@ -401,51 +417,6 @@ export function TemplateListClient({
     }
   };
 
-  // Export templates list to Excel
-  const handleExportTemplates = () => {
-    const wb = XLSX.utils.book_new();
-    const rows = filteredTemplates.map((t, idx) => {
-      const dep = deptMap.get(t.departmentId);
-      const lvl = levelMap.get(t.jobLevelId);
-      const tplCats = categories.filter((c) => c.templateId === t.id);
-      const catIds = new Set(tplCats.map((c) => c.id));
-      const tplParams = (parameters || []).filter((p) => catIds.has(p.categoryId));
-      const usage = assignmentOverview[t.id]?.assignedCount ?? (templateUsageMap[t.id] || 0);
-
-      return {
-        "No": idx + 1,
-        "Nama Template": t.name,
-        "Departemen": dep?.name || "Semua Departemen",
-        "Kode Dept": dep?.code || "-",
-        "Job Level": lvl?.name || "Semua Level",
-        "Kode Level": lvl?.code || "-",
-        "Status": t.isActive ? "Published" : "Draft",
-        "Versi": `v${t.version || 1}.0`,
-        "Jumlah Parameter": tplCats.length,
-        "Jumlah Indikator": tplParams.length,
-        "Karyawan Ditugaskan": usage,
-      };
-    });
-
-    const ws = XLSX.utils.json_to_sheet(rows);
-    ws["!cols"] = [
-      { wch: 6 },
-      { wch: 32 },
-      { wch: 22 },
-      { wch: 12 },
-      { wch: 20 },
-      { wch: 12 },
-      { wch: 14 },
-      { wch: 10 },
-      { wch: 18 },
-      { wch: 18 },
-      { wch: 22 },
-    ];
-    XLSX.utils.book_append_sheet(wb, ws, "Master Template KPI");
-    const dateStr = new Date().toISOString().split("T")[0];
-    XLSX.writeFile(wb, `Master_Template_KPI_${dateStr}.xlsx`);
-  };
-
   // Export single template to Excel (Full Structure: Parameter, Indikator, Kriteria, Bobot)
   const handleExportSingle = (t: KpiTemplate) => {
     const dep = deptMap.get(t.departmentId);
@@ -588,7 +559,10 @@ export function TemplateListClient({
   return (
     <div className="space-y-4">
       {/* 1. FILTER & ACTION TOOLBAR */}
-      <div className="bg-white rounded-xl border border-slate-200/90 shadow-2xs p-3.5 space-y-3">
+      <div
+        data-tour="step-1-template-toolbar"
+        className="bg-white rounded-xl border border-slate-200/90 shadow-2xs p-3.5 space-y-3"
+      >
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           {/* Left: Search & Dropdown Filters */}
           <div className="flex items-center gap-2 flex-wrap flex-1">
@@ -648,144 +622,12 @@ export function TemplateListClient({
             )}
           </div>
 
-          {/* Right: Actions, Import Excel, Tambah Template */}
-          <div className="flex items-center gap-2 shrink-0">
-            {/* Actions Dropdown */}
-            <div className="relative" ref={actionsDropdownRef}>
-              <button
-                type="button"
-                onClick={() => setIsActionsOpen((prev) => !prev)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 shadow-2xs transition cursor-pointer"
-                aria-expanded={isActionsOpen}
-                aria-haspopup="true"
-              >
-                <span>Actions</span>
-                <ChevronDown
-                  className={`w-3.5 h-3.5 text-slate-500 transition-transform ${
-                    isActionsOpen ? "rotate-180" : ""
-                  }`}
-                />
-              </button>
-
-              {isActionsOpen && (
-                <div className="absolute right-0 mt-2 w-72 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl z-30 animate-in fade-in zoom-in-95 duration-100">
-                  {/* 1. Import Excel Wizard */}
-                  <Link
-                    href="/setup/templates/import"
-                    onClick={() => setIsActionsOpen(false)}
-                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 flex items-start gap-2.5 transition group cursor-pointer"
-                  >
-                    <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-emerald-100 transition">
-                      <FileSpreadsheet className="w-4 h-4" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold text-slate-800 group-hover:text-emerald-600">
-                        Import Excel Master KPI
-                      </div>
-                      <div className="text-[11px] text-slate-500 leading-tight">
-                        Upload Excel bertingkat, mapping kamus &amp; validasi
-                      </div>
-                    </div>
-                  </Link>
-
-                  {/* 2. Format & Unduh Template */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsActionsOpen(false);
-                      setIsImportModalOpen(true);
-                    }}
-                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 flex items-start gap-2.5 transition group cursor-pointer"
-                  >
-                    <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-blue-100 transition">
-                      <Download className="w-4 h-4" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold text-slate-800 group-hover:text-blue-600">
-                        Format Excel Siap Pakai
-                      </div>
-                      <div className="text-[11px] text-slate-500 leading-tight">
-                        Review struktur 6 kolom &amp; unduh template Excel
-                      </div>
-                    </div>
-                  </button>
-
-                  {/* 3. Upload Template Cepat */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsActionsOpen(false);
-                      setIsUploadModalOpen(true);
-                    }}
-                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 flex items-start gap-2.5 transition group cursor-pointer"
-                  >
-                    <div className="w-7 h-7 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-slate-200 transition">
-                      <Upload className="w-4 h-4" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold text-slate-800 group-hover:text-slate-900">
-                        Upload Template Cepat
-                      </div>
-                      <div className="text-[11px] text-slate-500 leading-tight">
-                        Upload ringkas dengan tabel baris inline
-                      </div>
-                    </div>
-                  </button>
-
-                  <div className="my-1 border-t border-slate-100" />
-
-                  {/* 4. Export Batch if selected */}
-                  {selectedIds.size > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsActionsOpen(false);
-                        handleExportBatchPerTemplate();
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-emerald-50 flex items-start gap-2.5 transition group cursor-pointer"
-                    >
-                      <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-emerald-200 transition">
-                        <Download className="w-4 h-4" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-xs font-semibold text-emerald-900 group-hover:text-emerald-700">
-                          Download Batch Terpilih ({selectedIds.size})
-                        </div>
-                        <div className="text-[11px] text-emerald-700/80 leading-tight">
-                          Download file Excel untuk {selectedIds.size} template yang diceklis
-                        </div>
-                      </div>
-                    </button>
-                  )}
-
-                  {/* Export Summary */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsActionsOpen(false);
-                      handleExportTemplates();
-                    }}
-                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 flex items-start gap-2.5 transition group cursor-pointer"
-                  >
-                    <div className="w-7 h-7 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-slate-200 transition">
-                      <FileSpreadsheet className="w-4 h-4" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold text-slate-800 group-hover:text-slate-900">
-                        Export Ringkasan Excel
-                      </div>
-                      <div className="text-[11px] text-slate-500 leading-tight">
-                        Download daftar seluruh master template KPI
-                      </div>
-                    </div>
-                  </button>
-                </div>
-              )}
-            </div>
-
+          {/* Right: Import Excel, Tambah Template */}
+          <div data-tour="step-1-add-template" className="flex items-center gap-2 shrink-0">
             {/* Import Excel Button */}
             <Link
               href="/setup/templates/import"
+              data-tour="step-2-import-btn"
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-blue-700 shadow-2xs transition cursor-pointer"
               title="Import Master Template KPI dari berkas Excel"
             >
@@ -793,75 +635,35 @@ export function TemplateListClient({
               <span>Import Excel</span>
             </Link>
 
-            {/* Tambah Template Menu Dropdown */}
-            <div className="relative" ref={addMenuRef}>
-              <button
-                type="button"
-                onClick={() => setIsAddMenuOpen((prev) => !prev)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 active:bg-blue-800 px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xs transition active:scale-95 cursor-pointer"
-                title="Pilih jenis template yang ingin dibuat"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Tambah Template</span>
-                <ChevronDown
-                  className={`w-3 h-3 text-white/80 transition-transform ${
-                    isAddMenuOpen ? "rotate-180" : ""
-                  }`}
-                />
-              </button>
+            {/* Generate Template Button */}
+            <button
+              type="button"
+              onClick={() => setIsGenerateModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xs transition cursor-pointer"
+              title="Generate Template KPI berdasarkan Departemen & Job Category"
+            >
+              <span>Generate Template</span>
+            </button>
 
-              {isAddMenuOpen && (
-                <div className="absolute right-0 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl z-30 animate-in fade-in zoom-in-95 duration-100">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsAddMenuOpen(false);
-                      setIsStandardModalOpen(true);
-                    }}
-                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-blue-50/70 flex items-start gap-2.5 transition group cursor-pointer"
-                  >
-                    <div className="w-7 h-7 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-blue-200 transition">
-                      <Building2 className="w-3.5 h-3.5" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold text-slate-800 group-hover:text-blue-700">
-                        Template Standar Jabatan
-                      </div>
-                      <div className="text-[11px] text-slate-500 leading-tight">
-                        Acuan departemen &amp; jenjang jabatan
-                      </div>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsAddMenuOpen(false);
-                      setIsPersonalModalOpen(true);
-                    }}
-                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-amber-50/70 flex items-start gap-2.5 transition group cursor-pointer"
-                  >
-                    <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-amber-200 transition">
-                      <User className="w-3.5 h-3.5" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold text-slate-800 group-hover:text-amber-700">
-                        Template Personal Karyawan
-                      </div>
-                      <div className="text-[11px] text-slate-500 leading-tight">
-                        Template khusus individu seorang karyawan
-                      </div>
-                    </div>
-                  </button>
-                </div>
-              )}
-            </div>
+            {/* Tambah Template Button */}
+            <button
+              type="button"
+              onClick={() => setIsPersonalModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 active:bg-blue-800 px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xs transition active:scale-95 cursor-pointer"
+              title="Buat template KPI baru"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Tambah Template</span>
+            </button>
           </div>
         </div>
       </div>
 
       {/* 2. FLAT ENTERPRISE TABLE VIEW */}
-      <div className="bg-white rounded-xl border border-slate-200/90 shadow-2xs overflow-hidden">
+      <div
+        data-tour="step-1-template-table"
+        className="bg-white rounded-xl border border-slate-200/90 shadow-2xs overflow-hidden"
+      >
         {/* Selection Banner if any items are selected */}
         {selectedIds.size > 0 && (
           <div className="bg-blue-50/90 border-b border-blue-200 px-4 py-2 flex items-center justify-between gap-3 text-xs flex-wrap animate-in fade-in duration-150">
@@ -943,14 +745,13 @@ export function TemplateListClient({
                 <th className="py-3 px-4 w-36">Job Level</th>
                 <th className="py-3 px-3 w-28">Status</th>
                 <th className="py-3 px-3 w-24 text-center">Total Bobot</th>
-                <th className="py-3 px-4 w-52">Penugasan</th>
-                <th className="py-3 px-4 w-36 text-right">Aksi</th>
+                <th className="py-3 px-3 w-24 text-center">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {paginatedTemplates.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-slate-400">
+                  <td colSpan={8} className="py-12 text-center text-slate-400">
                     <Building2 className="w-8 h-8 text-slate-300 mx-auto mb-2" />
                     <p className="text-xs font-semibold text-slate-600">
                       {hasActiveFilters
@@ -973,6 +774,13 @@ export function TemplateListClient({
                   const rowNumber = (currentPage - 1) * pageSize + idx + 1;
                   const assignInfo = assignmentOverview[t.id];
                   const isSelected = selectedIds.has(t.id);
+                  const stats = templateStatsMap.get(t.id) || {
+                    catCount: 0,
+                    paramCount: 0,
+                    totalWeightPct: 0,
+                    isConfigured: false,
+                  };
+                  const isPublished = Boolean(t.isActive && stats.isConfigured);
 
                   return (
                     <tr
@@ -1003,8 +811,11 @@ export function TemplateListClient({
                           href={`/setup/templates/${t.id}`}
                           onClick={(e) => handleEditProtected(e, t)}
                           className="font-bold text-xs text-slate-900 hover:text-blue-600 transition block leading-snug"
+                          title="Klik untuk membuka & mengedit template KPI"
                         >
-                          {t.name.replace(/^\[Personal\]\s*/i, "")}
+                          {t.name
+                            .replace(/^\[Personal\]\s*/i, "")
+                            .replace(/^Template\s+KPI\s*[-–—]?\s*/i, "")}
                         </Link>
 
                         <div className="flex items-center gap-1.5 flex-wrap mt-1">
@@ -1046,154 +857,91 @@ export function TemplateListClient({
                       <td className="py-3 px-3">
                         <span
                           className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold border ${
-                            t.isActive
+                            isPublished
                               ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                              : "bg-slate-100 text-slate-600 border-slate-200"
+                              : stats.catCount === 0 || stats.paramCount === 0
+                              ? "bg-slate-100 text-slate-500 border-slate-200"
+                              : "bg-amber-50 text-amber-700 border-amber-200"
                           }`}
                         >
                           <span
                             className={`w-1.5 h-1.5 rounded-full ${
-                              t.isActive ? "bg-emerald-500" : "bg-slate-400"
+                              isPublished
+                                ? "bg-emerald-500"
+                                : stats.catCount === 0 || stats.paramCount === 0
+                                ? "bg-slate-400"
+                                : "bg-amber-500"
                             }`}
                           />
-                          <span>{t.isActive ? "Published" : "Draft"}</span>
+                          <span>
+                            {isPublished
+                              ? "Published"
+                              : stats.catCount === 0 || stats.paramCount === 0
+                              ? "Belum Diatur"
+                              : `Draft (${stats.totalWeightPct}%)`}
+                          </span>
                         </span>
                       </td>
 
-                      {/* Total Bobot */}
-                      <td className="py-3 px-3 font-mono font-bold text-slate-800 text-center">
-                        115%
-                      </td>
-
-                      {/* Penugasan Column */}
-                      <td className="py-3 px-4">
-                        {t.isCustom && emp ? (
-                          <button
-                            type="button"
-                            onMouseEnter={() => t.isActive && prefetchTemplateAssignment(t.id, activePeriod?.id)}
-                            onClick={() => {
-                              if (t.isActive) {
-                                setAssigningInitialTab("PENILAI");
-                                setAssigningTemplate(t);
-                              } else {
-                                void Swal.fire({
-                                  icon: "info",
-                                  title: "Template Belum Published",
-                                  text: "Publish template terlebih dahulu sebelum dapat menugaskannya ke penilai.",
-                                  confirmButtonColor: "#2563eb",
-                                });
-                              }
-                            }}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 transition cursor-pointer select-none active:scale-95 text-left"
-                            title={t.isActive ? "Klik untuk melihat & atur penilai karyawan ini" : "Publish template terlebih dahulu"}
-                          >
-                            <User className="w-3 h-3 text-amber-600" />
-                            <span>1 Karyawan (Personal)</span>
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onMouseEnter={() => t.isActive && prefetchTemplateAssignment(t.id, activePeriod?.id)}
-                            onClick={() => {
-                              if (t.isActive) {
-                                setAssigningInitialTab("KARYAWAN");
-                                setAssigningTemplate(t);
-                              } else {
-                                void Swal.fire({
-                                  icon: "info",
-                                  title: "Template Belum Published",
-                                  text: "Publish template terlebih dahulu sebelum dapat menugaskannya ke karyawan.",
-                                  confirmButtonColor: "#2563eb",
-                                });
-                              }
-                            }}
-                            className={`text-left transition cursor-pointer group/btn select-none active:scale-95 ${
-                              t.isActive ? "hover:opacity-90" : "opacity-80 cursor-not-allowed"
-                            }`}
-                            title={
-                              t.isActive
-                                ? "Klik untuk melihat & mengelola daftar karyawan yang ditugaskan template ini"
-                                : "Publish template terlebih dahulu"
-                            }
-                          >
-                            {!assignInfo || assignInfo.assignedCount === 0 ? (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200 group-hover/btn:bg-slate-200 group-hover/btn:border-slate-300 transition">
-                                <UserPlus className="w-3 h-3 text-slate-400 group-hover/btn:text-slate-600" />
-                                <span>Belum ada penugasan</span>
-                              </span>
-                            ) : assignInfo.isAssessorComplete ? (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 group-hover/btn:bg-emerald-100 group-hover/btn:border-emerald-300 transition">
-                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                <span>{assignInfo.assignedCount} karyawan · Penilai lengkap</span>
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 group-hover/btn:bg-amber-100 group-hover/btn:border-amber-300 transition">
-                                <AlertTriangle className="w-3 h-3 text-amber-500" />
-                                <span>{assignInfo.assignedCount} karyawan · Penilai belum lengkap</span>
-                              </span>
-                            )}
-                          </button>
-                        )}
+                      {/* Total Bobot Riil */}
+                      <td className="py-3 px-3 text-center">
+                        <div
+                          className={`font-mono font-bold text-xs ${
+                            stats.totalWeightPct === 115
+                              ? "text-emerald-700"
+                              : stats.totalWeightPct === 0
+                              ? "text-slate-400"
+                              : "text-amber-600"
+                          }`}
+                        >
+                          {stats.totalWeightPct}%
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          {stats.catCount === 0
+                            ? "0 Parameter"
+                            : `${stats.catCount} Param • ${stats.paramCount} Indikator`}
+                        </div>
                       </td>
 
                       {/* Aksi */}
-                      <td className="py-3 px-4 text-right">
-                        <div className="inline-flex items-center justify-end gap-1">
-                          {/* View */}
+                      <td className="py-3 px-3 text-center">
+                        <div className="inline-flex items-center justify-center gap-1">
+                          {/* Assign Penilai & Karyawan */}
                           <button
                             type="button"
-                            onClick={() => setViewingTemplate(t)}
-                            className="p-1.5 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                            title="Preview Template"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                          </button>
-
-                          {/* Download Excel Template (Per Template) */}
-                          <button
-                            type="button"
-                            onClick={() => handleExportSingle(t)}
-                            className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
-                            title="Download Excel Template (Struktur KPI)"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                          </button>
-
-                          {/* Edit */}
-                          <Link
-                            href={`/setup/templates/${t.id}`}
-                            onClick={(e) => handleEditProtected(e, t)}
-                            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition cursor-pointer"
-                            title="Edit Struktur KPI"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </Link>
-
-                          {/* Assign Penilai (UserCheck) */}
-                          <button
-                            type="button"
-                            onMouseEnter={() => t.isActive && prefetchTemplateAssignment(t.id, activePeriod?.id)}
+                            onMouseEnter={() => isPublished && prefetchTemplateAssignment(t.id, activePeriod?.id)}
                             onClick={() => {
-                              if (t.isActive) {
-                                setAssigningInitialTab("PENILAI");
+                              if (isPublished) {
+                                setAssigningInitialTab(t.isCustom ? "PENILAI" : "KARYAWAN");
                                 setAssigningTemplate(t);
                               } else {
                                 void Swal.fire({
                                   icon: "info",
-                                  title: "Template Belum Published",
-                                  text: "Publish template terlebih dahulu sebelum dapat menugaskannya ke penilai.",
+                                  title: "Template Belum Siap Ditugaskan",
+                                  text:
+                                    stats.catCount === 0 || stats.paramCount === 0
+                                      ? "Template belum memiliki parameter dan indikator KPI. Silakan atur template terlebih dahulu."
+                                      : `Total bobot parameter saat ini ${stats.totalWeightPct}% (wajib 115%) dan harus berstatus Published sebelum dapat ditugaskan.`,
                                   confirmButtonColor: "#2563eb",
                                 });
                               }
                             }}
                             className={`p-1.5 rounded-lg transition cursor-pointer ${
-                              t.isActive
+                              isPublished
                                 ? "text-slate-400 hover:text-blue-600 hover:bg-blue-50"
                                 : "text-slate-300 hover:bg-slate-100 cursor-not-allowed"
                             }`}
-                            title={t.isActive ? "Assign Penilai" : "Publish template terlebih dahulu"}
+                            title={
+                              isPublished
+                                ? t.isCustom
+                                  ? "Atur Penilai (Asesor)"
+                                  : "Penugasan Karyawan & Penilai"
+                                : stats.catCount === 0 || stats.paramCount === 0
+                                ? "Atur parameter template terlebih dahulu"
+                                : "Publish template terlebih dahulu (total bobot harus 115%)"
+                            }
                           >
-                            <UserCheck className="w-3.5 h-3.5" />
+                            <UserCheck className="w-4 h-4" />
                           </button>
 
                           {/* Delete */}
@@ -1204,7 +952,7 @@ export function TemplateListClient({
                               className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
                               title="Hapus Template"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <Trash2 className="w-4 h-4" />
                             </button>
                           )}
                         </div>
@@ -1296,53 +1044,8 @@ export function TemplateListClient({
           bands={bands}
         />
       )}
-      {/* MODAL IMPORT TEMPLATE DARI EXCEL (2 TAHAP) */}
-      <TemplateImportExcelModal
-        isOpen={isImportModalOpen}
-        onClose={() => setIsImportModalOpen(false)}
-        departments={departments}
-        jobLevels={jobLevels}
-        jobPositions={jobPositions}
-        employees={employees}
-        templates={templates}
-        periods={periods}
-        activePeriod={activePeriod}
-        onSuccess={() => {
-          router.refresh();
-        }}
-      />
 
-      {/* MODAL UPLOAD TEMPLATE LANGSUNG (1 STAGING) */}
-      <TemplateUploadModal
-        isOpen={isUploadModalOpen}
-        onClose={() => setIsUploadModalOpen(false)}
-        departments={departments}
-        jobLevels={jobLevels}
-        jobPositions={jobPositions}
-        employees={employees}
-        periods={periods}
-        activePeriod={activePeriod}
-        categories={categories}
-        parameters={parameters}
-        onSuccess={() => {
-          router.refresh();
-        }}
-      />
-
-      {/* MODAL BUAT TEMPLATE STANDAR JABATAN */}
-      <TemplateModal
-        isOpen={isStandardModalOpen}
-        onClose={() => setIsStandardModalOpen(false)}
-        departments={departments}
-        jobLevels={jobLevels}
-        positions={jobPositions}
-        periods={periods}
-        pits={pits}
-        departmentMappings={departmentMappings}
-        action={createAction}
-      />
-
-      {/* MODAL BUAT TEMPLATE PERSONAL KARYAWAN */}
+      {/* MODAL BUAT TEMPLATE KPI */}
       <PersonalTemplateModal
         isOpen={isPersonalModalOpen}
         onClose={() => setIsPersonalModalOpen(false)}
@@ -1353,6 +1056,20 @@ export function TemplateListClient({
         jobPositions={jobPositions}
         categories={categories}
         parameters={parameters}
+        onSuccess={() => {
+          router.refresh();
+        }}
+      />
+
+      {/* MODAL GENERATE TEMPLATE BERDASARKAN DEPARTEMEN + JOB CATEGORY */}
+      <TemplateGenerateModal
+        isOpen={isGenerateModalOpen}
+        onClose={() => setIsGenerateModalOpen(false)}
+        departments={departments}
+        jobCategories={jobCategories}
+        jobPositionMappings={jobPositionMappings}
+        periods={periods}
+        activePeriod={activePeriod}
         onSuccess={() => {
           router.refresh();
         }}

@@ -5,6 +5,8 @@ import {
   employees,
   jobLevels,
   jobPositions,
+  jobCategories,
+  jobPositionMappings,
   kpiAssessorAssignments,
   kpiBands,
   kpiCategories,
@@ -43,7 +45,7 @@ export default async function TemplatesPage({
 }) {
   const { view, dept } = await searchParams;
 
-  const [tpls, deps, lvls, positions, cats, params, bnds, emps, periods, masterParams, appraisalCounts, pitList, deptMappings] =
+  const [tpls, deps, lvls, positions, cats, params, bnds, emps, periods, masterParams, appraisalCounts, pitList, deptMappings, allJobCategories, allJobPositionMappings] =
     await Promise.all([
       db.select().from(kpiTemplates).orderBy(asc(kpiTemplates.departmentId), asc(kpiTemplates.jobLevelId)),
       db.select().from(departments).orderBy(asc(departments.name)),
@@ -77,6 +79,14 @@ export default async function TemplatesPage({
         .groupBy(appraisals.templateId),
       db.select().from(pits).orderBy(asc(pits.name)),
       db.select().from(departmentMappings).orderBy(asc(departmentMappings.rawDepartmentName)),
+      db.select().from(jobCategories).orderBy(asc(jobCategories.sortOrder), asc(jobCategories.name)),
+      db
+        .select({
+          departmentId: jobPositionMappings.departmentId,
+          jobCategoryId: jobPositionMappings.jobCategoryId,
+        })
+        .from(jobPositionMappings)
+        .where(isNotNull(jobPositionMappings.jobCategoryId)),
     ]);
 
   const templateUsageMap: Record<number, number> = {};
@@ -102,6 +112,8 @@ export default async function TemplatesPage({
         departments={deps}
         jobLevels={lvls}
         jobPositions={positions}
+        jobCategories={allJobCategories}
+        jobPositionMappings={allJobPositionMappings}
         categories={cats}
         parameters={params}
         bands={bnds}

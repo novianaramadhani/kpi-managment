@@ -83,6 +83,20 @@ export async function createPersonalTemplateAction(
       return { success: false, error: "Data karyawan tidak ditemukan." };
     }
 
+    // 1b. Guard: Pastikan karyawan belum memiliki template KPI
+    const [existingTpl] = await db
+      .select({ id: kpiTemplates.id, name: kpiTemplates.name })
+      .from(kpiTemplates)
+      .where(eq(kpiTemplates.employeeId, employeeId))
+      .limit(1);
+
+    if (existingTpl) {
+      return {
+        success: false,
+        error: `Karyawan ${emp.name} (${emp.nik}) sudah memiliki template KPI: "${existingTpl.name}". Satu karyawan hanya boleh memiliki satu template KPI.`,
+      };
+    }
+
     // 2. Verifikasi Template Acuan (jika dipilih)
     const validBaseTemplateId =
       baseTemplateId && Number(baseTemplateId) > 0 ? Number(baseTemplateId) : null;
@@ -153,17 +167,39 @@ export async function createPersonalTemplateAction(
       }
     }
 
-    // 4. Generate Nama & Kode Template Personal
+    // 4. Generate Nama & Kode Template
     const jobTitle = emp.jobPosition || "Karyawan";
+    const currentYear = new Date().getFullYear();
     const templateName =
-      customName?.trim() || `[Personal] ${emp.name} - ${jobTitle}`;
+      customName?.trim() || `${emp.name} - ${jobTitle} - ${currentYear}`;
     const randSuffix = Math.floor(1000 + Math.random() * 9000);
     const cleanNik = emp.nik.replace(/[^0-9]/g, "").slice(-4);
     const templateCode = `TPL-PRS-${cleanNik}-${randSuffix}`;
 
-    const defaultDescription = srcTpl
-      ? `Template personal khusus ${emp.name} (${emp.nik}) - dikloning dari ${srcTpl.name}`
-      : `Template personal khusus ${emp.name} (${emp.nik}) - dibuat dari nol tanpa acuan`;
+    const hasExcelCategories = Array.isArray(input.categories) && input.categories.length > 0;
+    const defaultDescription = hasExcelCategories
+      ? `Template personal khusus ${emp.name} (${emp.nik}) - diimport dari file Excel`
+      : srcTpl
+        ? `Template personal khusus ${emp.name} (${emp.nik}) - dikloning dari ${srcTpl.name}`
+        : `Template personal khusus ${emp.name} (${emp.nik}) - dibuat dari nol tanpa acuan`;
+
+    // Hitung status kelengkapan awal (Published hanya jika memiliki parameter & indikator dengan total bobot 115%)
+    let initialIsActive = false;
+    if (hasExcelCategories && input.categories) {
+      const excelWeightPct = Math.round(
+        input.categories.reduce((sum: number, c: any) => sum + (Number(c.weight) || 0), 0) * 100
+      );
+      const excelParamCount = input.categories.reduce(
+        (sum: number, c: any) => sum + (Array.isArray(c.params) ? c.params.length : 0),
+        0
+      );
+      initialIsActive = input.categories.length > 0 && excelParamCount > 0 && excelWeightPct === 115;
+    } else if (srcTpl && srcCats.length > 0) {
+      const clonedWeightPct = Math.round(
+        srcCats.reduce((sum, c) => sum + (Number(c.weight) || 0), 0) * 100
+      );
+      initialIsActive = srcCats.length > 0 && srcParams.length > 0 && clonedWeightPct === 115;
+    }
 
     // 5. Eksekusi pembuatan template transaksional
     const newTplId = await db.transaction(async (tx) => {
@@ -179,15 +215,21 @@ export async function createPersonalTemplateAction(
           employeeId: emp.id,
           baseTemplateId: srcTpl ? srcTpl.id : null,
           isCustom: true,
-          isActive: true,
+          isActive: initialIsActive,
           description: description?.trim() || defaultDescription,
           totalWeight: srcTpl?.totalWeight || "1.1500",
           version: 1,
         })
         .returning();
 
-      // Jika ada template acuan, lakukan cloning kategori, parameter, dan band
-      if (srcTpl && srcCats.length > 0) {
+      // Jika ada struktur kategori dari file Excel yang diupload, import langsung ke template baru
+      if (hasExcelCategories && input.categories) {
+        await importTemplateStructure(newTpl.id, input.categories, "REPLACE", {
+          skipRevalidate: true,
+          tx,
+        });
+      } else if (srcTpl && srcCats.length > 0) {
+        // Jika ada template acuan, lakukan cloning kategori, parameter, dan band
         const paramIdMap = new Map<number, number>();
 
         for (const cat of srcCats) {
@@ -250,7 +292,11 @@ export async function createPersonalTemplateAction(
       await tx.insert(auditLogs).values({
         entity: "kpi_template",
         entityId: newTpl.id,
-        action: srcTpl ? "CREATE_PERSONAL_TEMPLATE" : "CREATE_PERSONAL_TEMPLATE_BLANK",
+        action: hasExcelCategories
+          ? "CREATE_PERSONAL_TEMPLATE_EXCEL"
+          : srcTpl
+            ? "CREATE_PERSONAL_TEMPLATE"
+            : "CREATE_PERSONAL_TEMPLATE_BLANK",
         actor,
         changes: JSON.stringify({
           employeeId: emp.id,
@@ -258,8 +304,9 @@ export async function createPersonalTemplateAction(
           employeeNik: emp.nik,
           baseTemplateId: srcTpl ? srcTpl.id : null,
           baseTemplateName: srcTpl ? srcTpl.name : null,
-          clonedCategoriesCount: srcCats.length,
+          clonedCategoriesCount: hasExcelCategories ? input.categories?.length ?? 0 : srcCats.length,
           clonedParametersCount: srcParams.length,
+          isActive: initialIsActive,
         }),
       });
 
@@ -329,22 +376,28 @@ export async function getPersonalTemplatesAction(): Promise<PersonalTemplateDeta
     for (const b of bases) baseMap.set(b.id, b.name);
   }
 
-  // Hitung jumlah kategori dan parameter per template
+  // Hitung jumlah kategori, parameter, dan total bobot riil per template
   const tplIds = rawList.map((t) => t.id);
   const catCountMap = new Map<number, number>();
   const paramCountMap = new Map<number, number>();
+  const catWeightMap = new Map<number, number>();
 
   if (tplIds.length > 0) {
     const cats = await db
       .select({
         templateId: kpiCategories.templateId,
         catId: kpiCategories.id,
+        weight: kpiCategories.weight,
       })
       .from(kpiCategories)
       .where(inArray(kpiCategories.templateId, tplIds));
 
     for (const c of cats) {
       catCountMap.set(c.templateId, (catCountMap.get(c.templateId) || 0) + 1);
+      catWeightMap.set(
+        c.templateId,
+        (catWeightMap.get(c.templateId) || 0) + (Number(c.weight) || 0)
+      );
     }
 
     const cIds = cats.map((c) => c.catId);
@@ -366,14 +419,24 @@ export async function getPersonalTemplatesAction(): Promise<PersonalTemplateDeta
     }
   }
 
-  return rawList.map((t) => ({
-    ...t,
-    departmentName: t.departmentName || "-",
-    jobLevelName: t.jobLevelName || "-",
-    baseTemplateName: t.baseTemplateId ? baseMap.get(t.baseTemplateId) || "-" : "-",
-    categoryCount: catCountMap.get(t.id) || 0,
-    parameterCount: paramCountMap.get(t.id) || 0,
-  }));
+  return rawList.map((t) => {
+    const catCount = catCountMap.get(t.id) || 0;
+    const paramCount = paramCountMap.get(t.id) || 0;
+    const realWeightSum = catWeightMap.get(t.id) || 0;
+    const realWeightPct = Math.round(realWeightSum * 100);
+    const isConfigured = catCount > 0 && paramCount > 0 && realWeightPct === 115;
+
+    return {
+      ...t,
+      totalWeight: realWeightSum.toFixed(4),
+      isActive: Boolean(t.isActive && isConfigured),
+      departmentName: t.departmentName || "-",
+      jobLevelName: t.jobLevelName || "-",
+      baseTemplateName: t.baseTemplateId ? baseMap.get(t.baseTemplateId) || "-" : "-",
+      categoryCount: catCount,
+      parameterCount: paramCount,
+    };
+  });
 }
 
 /**
@@ -481,8 +544,9 @@ export async function savePersonalTemplateFromExcelAction(
       .limit(1);
 
     const jobTitle = emp.jobPosition || "Karyawan";
+    const currentYear = new Date().getFullYear();
     const finalName =
-      templateName?.trim() || `Template KPI ${emp.name} - ${jobTitle}`;
+      templateName?.trim() || `${emp.name} - ${jobTitle} - ${currentYear}`;
     const totalWeightStr = categories
       .reduce((sum: number, c: any) => sum + Number(c.weight || 0), 0)
       .toFixed(4);

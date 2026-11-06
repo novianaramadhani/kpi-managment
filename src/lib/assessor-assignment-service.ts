@@ -331,6 +331,7 @@ export async function getAssessorAssignments(params: {
         ilike(targetEmp.nik, q),
         ilike(employees.name, q),
         ilike(employees.nik, q),
+        ilike(kpiTemplates.name, q),
         ilike(kpiCategories.name, q)
       )!
     );
@@ -506,13 +507,16 @@ export async function saveAssessorAssignments(params: {
 }
 
 /**
- * Remove an assessor assignment.
+ * Remove one or more assessor assignments.
  */
-export async function deleteAssessorAssignment(assignmentId: number) {
+export async function deleteAssessorAssignment(assignmentIdOrIds: number | number[]) {
+  const ids = Array.isArray(assignmentIdOrIds) ? assignmentIdOrIds : [assignmentIdOrIds];
+  if (ids.length === 0) return { success: true };
+
   await db
     .update(kpiAssessorAssignments)
     .set({ isActive: false, updatedAt: new Date() })
-    .where(eq(kpiAssessorAssignments.id, assignmentId));
+    .where(inArray(kpiAssessorAssignments.id, ids));
 
   return { success: true };
 }
@@ -731,6 +735,8 @@ export async function getAssessorDelegations(params: {
       departmentName: departments.name,
       categoryId: kpiAssessorDelegations.categoryId,
       categoryName: kpiCategories.name,
+      templateId: kpiCategories.templateId,
+      templateName: kpiTemplates.name,
       isActive: kpiAssessorDelegations.isActive,
       createdAt: kpiAssessorDelegations.createdAt,
     })
@@ -741,6 +747,7 @@ export async function getAssessorDelegations(params: {
     .leftJoin(delegateeDept, eq(delegateeEmp.departmentId, delegateeDept.id))
     .leftJoin(departments, eq(kpiAssessorDelegations.departmentId, departments.id))
     .leftJoin(kpiCategories, eq(kpiAssessorDelegations.categoryId, kpiCategories.id))
+    .leftJoin(kpiTemplates, eq(kpiCategories.templateId, kpiTemplates.id))
     .where(and(...conditions))
     .orderBy(desc(kpiAssessorDelegations.createdAt));
 }

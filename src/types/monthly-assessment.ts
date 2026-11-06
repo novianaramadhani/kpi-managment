@@ -82,6 +82,9 @@ export interface MonthlyIndicatorItem {
   allMonthlyActuals?: (number | null)[];
   allMonthlyNotes?: (string | null)[];
   monthlyDetails?: IndicatorMonthDetail[];
+  scope?: "DEPARTMENT" | "INDIVIDUAL" | string;
+  isDepartmentSynced?: boolean;
+  masterParameterId?: number | null;
   annualTarget?: number | null;
   annualActual?: number | null;
   annualAchievement?: number | null;

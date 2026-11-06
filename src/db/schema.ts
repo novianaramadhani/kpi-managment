@@ -223,6 +223,51 @@ export const jobPositionSequences = pgTable("job_position_sequences", {
 export type JobPositionSequence = typeof jobPositionSequences.$inferSelect;
 export type NewJobPositionSequence = typeof jobPositionSequences.$inferInsert;
 
+// ---------- DYNAMIC JOB CATEGORIES ----------
+export const jobCategories = pgTable("job_categories", {
+  id: serial("id").primaryKey(),
+  code: text("code").notNull().unique(),
+  name: text("name").notNull(),
+  description: text("description"),
+  isActive: boolean("is_active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type JobCategory = typeof jobCategories.$inferSelect;
+export type NewJobCategory = typeof jobCategories.$inferInsert;
+
+// ---------- MAPPING JOB LEVEL & JOB CATEGORY PER JOB POSITION ----------
+export const jobPositionMappings = pgTable(
+  "job_position_mappings",
+  {
+    id: serial("id").primaryKey(),
+    jobPositionId: integer("job_position_id")
+      .notNull()
+      .unique()
+      .references(() => jobPositions.id, { onDelete: "cascade" }),
+    departmentId: integer("department_id")
+      .notNull()
+      .references(() => departments.id, { onDelete: "cascade" }),
+    jobLevelId: integer("job_level_id")
+      .references(() => jobLevels.id, { onDelete: "set null" }),
+    jobCategoryId: integer("job_category_id")
+      .references(() => jobCategories.id, { onDelete: "set null" }),
+    notes: text("notes"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("job_position_mappings_dept_idx").on(t.departmentId),
+    index("job_position_mappings_level_idx").on(t.jobLevelId),
+    index("job_position_mappings_cat_idx").on(t.jobCategoryId),
+  ]
+);
+
+export type JobPositionMapping = typeof jobPositionMappings.$inferSelect;
+export type NewJobPositionMapping = typeof jobPositionMappings.$inferInsert;
+
 // ---------- HAK AKSES PER JOB LEVEL ----------
 export const jobLevelPermissions = pgTable("job_level_permissions", {
   id: serial("id").primaryKey(),
@@ -322,6 +367,30 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export type OnboardingStatusType = "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED" | "SKIPPED";
+
+export const userOnboarding = pgTable(
+  "user_onboarding",
+  {
+    id: serial("id").primaryKey(),
+    employeeId: integer("employee_id").references(() => employees.id, { onDelete: "cascade" }),
+    nik: text("nik").notNull().unique(),
+    status: text("status").notNull().default("NOT_STARTED"), // 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'SKIPPED'
+    currentStep: integer("current_step").notNull().default(1), // 1..6
+    startedAt: timestamp("started_at"),
+    completedAt: timestamp("completed_at"),
+    skippedAt: timestamp("skipped_at"),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_user_onboarding_nik").on(t.nik),
+    index("idx_user_onboarding_emp").on(t.employeeId),
+  ]
+);
+
+export type UserOnboarding = typeof userOnboarding.$inferSelect;
+export type NewUserOnboarding = typeof userOnboarding.$inferInsert;
+
 export const kpiPeriods = pgTable("kpi_periods", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
@@ -344,7 +413,10 @@ export const masterParameters = pgTable("master_parameters", {
   description: text("description"),
   departmentId: integer("department_id").references(() => departments.id, { onDelete: "set null" }), // null = UMUM / CORPORATE
   categoryName: text("category_name"), // e.g. "Target Kerja", "Kehadiran & Disiplin"
+  scope: text("scope").notNull().default("INDIVIDUAL"), // "INDIVIDUAL" | "DEPARTMENT"
   unit: text("unit").default("%"),
+  target: text("target"),
+  weight: numeric("weight", { precision: 6, scale: 4 }),
   inputType: inputTypeEnum("input_type").notNull().default("PERCENTAGE"),
   aggregation: aggregationEnum("aggregation").notNull().default("AVERAGE"),
   compareBasis: compareBasisEnum("compare_basis").notNull().default("ACTUAL"),
@@ -362,6 +434,37 @@ export const masterParameters = pgTable("master_parameters", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
+
+// ---------- REALISASI DEPARTMENT KPI (SHARED CENTRAL STORAGE) ----------
+export const departmentKpiActuals = pgTable(
+  "department_kpi_actuals",
+  {
+    id: serial("id").primaryKey(),
+    departmentId: integer("department_id")
+      .notNull()
+      .references(() => departments.id, { onDelete: "cascade" }),
+    masterParameterId: integer("master_parameter_id")
+      .notNull()
+      .references(() => masterParameters.id, { onDelete: "cascade" }),
+    periodId: integer("period_id")
+      .notNull()
+      .references(() => kpiPeriods.id, { onDelete: "cascade" }),
+    annualActual: numeric("annual_actual", { precision: 20, scale: 4 }),
+    monthlyActuals: jsonb("monthly_actuals").$type<(number | null)[]>(),
+    notes: text("notes"),
+    updatedBy: text("updated_by"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("uniq_dept_param_period").on(
+      t.departmentId,
+      t.masterParameterId,
+      t.periodId
+    ),
+    index("idx_dept_actuals_dept_period").on(t.departmentId, t.periodId),
+  ]
+);
 
 // Bobot masing-masing parameter untuk setiap job level dalam departemen
 export const jobLevelParameterWeights = pgTable(
@@ -451,6 +554,9 @@ export const kpiTemplates = pgTable(
     jobPositionId: integer("job_position_id").references(() => jobPositions.id, {
       onDelete: "set null",
     }),
+    jobCategoryId: integer("job_category_id").references(() => jobCategories.id, {
+      onDelete: "set null",
+    }),
     periodId: integer("period_id").references(() => kpiPeriods.id, {
       onDelete: "set null",
     }),
@@ -473,6 +579,7 @@ export const kpiTemplates = pgTable(
   },
   (t) => [
     index("tpl_dept_level_idx").on(t.departmentId, t.jobLevelId),
+    index("idx_kpi_tpl_job_category_id").on(t.jobCategoryId),
     index("idx_kpi_tpl_pit_id").on(t.pitId),
     index("idx_kpi_tpl_site_id").on(t.siteId),
     index("idx_kpi_tpl_site").on(t.site),
@@ -517,6 +624,7 @@ export const kpiParameters = pgTable("kpi_parameters", {
   measurementType: text("measurement_type"),
   direction: text("direction"),
   scoringMethod: text("scoring_method"),
+  scope: text("scope").default("INDIVIDUAL"), // "INDIVIDUAL" | "DEPARTMENT"
 });
 
 export const kpiBands = pgTable("kpi_bands", {
@@ -846,6 +954,8 @@ export type JobPosition = typeof jobPositions.$inferSelect;
 export type NewJobPosition = typeof jobPositions.$inferInsert;
 export type MasterParameter = typeof masterParameters.$inferSelect;
 export type NewMasterParameter = typeof masterParameters.$inferInsert;
+export type DepartmentKpiActual = typeof departmentKpiActuals.$inferSelect;
+export type NewDepartmentKpiActual = typeof departmentKpiActuals.$inferInsert;
 export type KpiPeriod = typeof kpiPeriods.$inferSelect;
 export type KpiTemplate = typeof kpiTemplates.$inferSelect;
 export type KpiCategory = typeof kpiCategories.$inferSelect;

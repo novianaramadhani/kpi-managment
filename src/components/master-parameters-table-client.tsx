@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useTransition, useRef, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import Swal from "sweetalert2";
 import {
   Search,
@@ -167,6 +168,13 @@ export function MasterParametersTableClient({
   selectedDeptFilter: controlledDeptFilter,
   onDeptFilterChange,
 }: MasterParametersTableClientProps) {
+  const router = useRouter();
+  const [localParams, setLocalParams] = useState<MasterParamItem[]>(parameters);
+
+  useEffect(() => {
+    setLocalParams(parameters);
+  }, [parameters]);
+
   const [searchQuery, setSearchQuery] = useState("");
   const [internalDeptFilter, setInternalDeptFilter] = useState<string>(() => {
     if (controlledDeptFilter && controlledDeptFilter !== "ALL") {
@@ -180,6 +188,8 @@ export function MasterParametersTableClient({
     setInternalDeptFilter(dept);
     onDeptFilterChange?.(dept === "ALL" ? "" : dept);
   };
+
+  const [selectedScopeFilter, setSelectedScopeFilter] = useState<string>("ALL");
 
   useEffect(() => {
     if (controlledDeptFilter && controlledDeptFilter !== "") {
@@ -237,7 +247,7 @@ export function MasterParametersTableClient({
   // Grouped by department for dropdown options
   const deptGroups = useMemo<DeptGroup[]>(() => {
     // 1. Corporate / General
-    const corpAll = parameters.filter((p) => resolveParamDept(p, departments).isGeneral);
+    const corpAll = localParams.filter((p) => resolveParamDept(p, departments).isGeneral);
     const corpFiltered = corpAll.filter((p) => matchesSearch(p, searchQuery));
     const corpRange = computeCodeRange(corpAll, "Corp");
 
@@ -256,7 +266,7 @@ export function MasterParametersTableClient({
 
     // 2. Specific departments
     for (const d of departments) {
-      const dAll = parameters.filter((p) => resolveParamDept(p, departments).deptId === d.id);
+      const dAll = localParams.filter((p) => resolveParamDept(p, departments).deptId === d.id);
       const dFiltered = dAll.filter((p) => matchesSearch(p, searchQuery));
       const prefix = getDeptPrefix(d.name, d.code);
       const range = computeCodeRange(dAll, prefix);
@@ -274,11 +284,11 @@ export function MasterParametersTableClient({
     }
 
     return groups;
-  }, [parameters, departments, searchQuery]);
+  }, [localParams, departments, searchQuery]);
 
   // Filtered parameters directly for the unified table
   const filteredParameters = useMemo(() => {
-    return parameters.filter((p) => {
+    return localParams.filter((p) => {
       // 1. Department filter
       if (selectedDeptFilter && selectedDeptFilter !== "ALL") {
         const dInfo = resolveParamDept(p, departments);
@@ -289,18 +299,41 @@ export function MasterParametersTableClient({
         }
       }
 
+      // 1b. Scope filter
+      if (selectedScopeFilter && selectedScopeFilter !== "ALL") {
+        const pScope = p.scope || "INDIVIDUAL";
+        if (pScope !== selectedScopeFilter) return false;
+      }
+
       // 2. Search query (kode, nama indikator, dan deskripsi)
       return matchesSearch(p, searchQuery);
     });
-  }, [parameters, selectedDeptFilter, searchQuery, departments]);
+  }, [localParams, selectedDeptFilter, selectedScopeFilter, searchQuery, departments]);
 
   const hasActiveFilters =
     Boolean(searchQuery.trim()) ||
-    (Boolean(selectedDeptFilter) && selectedDeptFilter !== "ALL");
+    (Boolean(selectedDeptFilter) && selectedDeptFilter !== "ALL") ||
+    (Boolean(selectedScopeFilter) && selectedScopeFilter !== "ALL");
+
+  // Deteksi duplikasi kalimat nama indikator pada departemen yang sama / General
+  const duplicateKeys = useMemo(() => {
+    const counts = new Map<string, number>();
+    localParams.forEach((p) => {
+      const dKey = p.departmentId ? String(p.departmentId) : "GENERAL";
+      const nKey = `${dKey}___${p.name.trim().toLowerCase()}`;
+      counts.set(nKey, (counts.get(nKey) || 0) + 1);
+    });
+    const dups = new Set<string>();
+    counts.forEach((cnt, key) => {
+      if (cnt > 1) dups.add(key);
+    });
+    return dups;
+  }, [localParams]);
 
   const handleResetFilters = () => {
     setSearchQuery("");
     setSelectedDeptFilter("ALL");
+    setSelectedScopeFilter("ALL");
   };
 
   // Pagination logic (limit to 15 items per page)
@@ -393,11 +426,118 @@ export function MasterParametersTableClient({
 
   const handleExportSelected = () => {
     if (selectedIds.length === 0) return;
-    const itemsToExport = parameters.filter((p) => selectedIds.includes(p.id));
+    const itemsToExport = localParams.filter((p) => selectedIds.includes(p.id));
     exportMasterParametersToExcel(
       itemsToExport,
       `Kamus_KPI_Terpilih_${selectedIds.length}_Item.xlsx`
     );
+  };
+
+  const handleQuickScopeChange = async (
+    param: MasterParamItem,
+    newScope: "INDIVIDUAL" | "DEPARTMENT"
+  ) => {
+    let targetDeptId = param.departmentId ?? null;
+
+    if (newScope === "DEPARTMENT" && (!targetDeptId || targetDeptId === 0)) {
+      // User beralih ke Department KPI, pilih departemen terkait
+      const deptOptions: Record<string, string> = {};
+      departments.forEach((d) => {
+        deptOptions[String(d.id)] = `${d.name} (${d.code})`;
+      });
+
+      const result = await Swal.fire({
+        title: "Pilih Departemen",
+        text: `Indikator "${param.name}" diset sebagai Department KPI. Pilih departemen yang terkait:`,
+        input: "select",
+        inputOptions: deptOptions,
+        inputPlaceholder: "-- Pilih Departemen --",
+        showCancelButton: true,
+        confirmButtonText: "Simpan Tipe",
+        cancelButtonText: "Batal",
+        confirmButtonColor: "#0284c7",
+        inputValidator: (val) => {
+          if (!val) return "Silakan pilih salah satu departemen!";
+        },
+      });
+
+      if (!result.isConfirmed || !result.value) {
+        return;
+      }
+      targetDeptId = Number(result.value);
+    } else if (newScope === "INDIVIDUAL") {
+      // Default Individu adalah General (null)
+      targetDeptId = null;
+    }
+
+    // Update optimis ke UI lokal
+    setLocalParams((prev) =>
+      prev.map((item) =>
+        item.id === param.id
+          ? { ...item, scope: newScope, departmentId: targetDeptId }
+          : item
+      )
+    );
+
+    startTransition(async () => {
+      try {
+        const fd = new FormData();
+        fd.append("id", String(param.id));
+        fd.append("name", param.name);
+        if (param.code) fd.append("code", param.code);
+        fd.append("scope", newScope);
+        fd.append("departmentId", targetDeptId ? String(targetDeptId) : "");
+        await updateAction(fd);
+        router.refresh();
+      } catch (err: unknown) {
+        setLocalParams(parameters);
+        const msg = err instanceof Error ? err.message : "Gagal memperbarui tipe parameter.";
+        void Swal.fire({
+          icon: "error",
+          title: "Gagal Mengubah Tipe",
+          text: msg,
+        });
+      }
+    });
+  };
+
+  const handleQuickDeptChange = async (
+    param: MasterParamItem,
+    newDeptVal: string
+  ) => {
+    const newDeptId = newDeptVal === "GENERAL" || !newDeptVal ? null : Number(newDeptVal);
+    // Jika diubah ke spesifik departemen, default tipe otomatis DEPARTMENT; jika GENERAL, INDIVIDUAL
+    const newScope = newDeptId ? "DEPARTMENT" : "INDIVIDUAL";
+
+    // Update optimis ke UI lokal
+    setLocalParams((prev) =>
+      prev.map((item) =>
+        item.id === param.id
+          ? { ...item, departmentId: newDeptId, scope: newScope }
+          : item
+      )
+    );
+
+    startTransition(async () => {
+      try {
+        const fd = new FormData();
+        fd.append("id", String(param.id));
+        fd.append("name", param.name);
+        if (param.code) fd.append("code", param.code);
+        fd.append("scope", newScope);
+        fd.append("departmentId", newDeptId ? String(newDeptId) : "");
+        await updateAction(fd);
+        router.refresh();
+      } catch (err: unknown) {
+        setLocalParams(parameters);
+        const msg = err instanceof Error ? err.message : "Gagal memperbarui departemen.";
+        void Swal.fire({
+          icon: "error",
+          title: "Gagal Mengubah Departemen",
+          text: msg,
+        });
+      }
+    });
   };
 
   const handleOpenAddModal = (deptKey?: string) => {
@@ -453,7 +593,7 @@ export function MasterParametersTableClient({
 
   const handleExportAll = () => {
     exportMasterParametersToExcel(
-      parameters,
+      localParams,
       "Kamus_Master_Parameter_KPI_Seluruh_Departemen.xlsx"
     );
   };
@@ -590,7 +730,7 @@ export function MasterParametersTableClient({
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 focus:border-slate-900 focus:outline-none cursor-pointer transition shadow-2xs"
             title="Filter Departemen"
           >
-            <option value="ALL">Semua Departemen ({parameters.length})</option>
+            <option value="ALL">Semua Departemen ({departments.length})</option>
             <option value="GENERAL">
               Umum / Corporate ({deptGroups.find((g) => g.key === "GENERAL")?.totalCount ?? 0})
             </option>
@@ -603,6 +743,18 @@ export function MasterParametersTableClient({
                 </option>
               );
             })}
+          </select>
+
+          {/* Filter Tipe KPI */}
+          <select
+            value={selectedScopeFilter}
+            onChange={(e) => setSelectedScopeFilter(e.target.value)}
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 focus:border-slate-900 focus:outline-none cursor-pointer transition shadow-2xs"
+            title="Filter Tipe KPI"
+          >
+            <option value="ALL">Semua Tipe</option>
+            <option value="INDIVIDUAL">Individu</option>
+            <option value="DEPARTMENT">Department</option>
           </select>
 
           {/* Tombol Reset */}
@@ -792,15 +944,16 @@ export function MasterParametersTableClient({
                   />
                 </th>
                 <th className="px-4 py-3 w-24">Kode</th>
-                <th className="px-4 py-3 min-w-[260px]">Nama Indikator KPI</th>
-                <th className="px-4 py-3 w-36">Departemen</th>
+                <th className="px-4 py-3 min-w-[240px]">Nama Indikator KPI</th>
+                <th className="px-3 py-3 w-32 text-center">Tipe</th>
+                <th className="px-4 py-3 w-44">Departemen</th>
                 <th className="px-4 py-3 w-20 text-center">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredParameters.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-14 text-center text-slate-400">
+                  <td colSpan={6} className="py-14 text-center text-slate-400">
                     <Search className="mx-auto h-8 w-8 text-slate-300 mb-2" />
                     <p className="font-semibold text-slate-700 text-sm">
                       {hasActiveFilters
@@ -870,9 +1023,28 @@ export function MasterParametersTableClient({
                           <span className="font-bold text-slate-900 hover:text-blue-700 hover:underline transition-colors leading-snug cursor-pointer">
                             {p.name}
                           </span>
+                          {duplicateKeys.has(`${p.departmentId ? String(p.departmentId) : "GENERAL"}___${p.name.trim().toLowerCase()}`) && (
+                            <span
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-300 shadow-2xs"
+                              title="Peringatan: Terdapat duplikasi kalimat nama indikator ini pada departemen yang sama!"
+                            >
+                              <AlertTriangle className="h-3 w-3 text-amber-600" />
+                              Duplikat
+                            </span>
+                          )}
                           {p.categoryName && (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200">
                               {p.categoryName}
+                            </span>
+                          )}
+                          {p.weight != null && !isNaN(Number(p.weight)) && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                              Bobot: {Math.round(Number(p.weight) <= 1 ? Number(p.weight) * 100 : Number(p.weight))}%
+                            </span>
+                          )}
+                          {p.target && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              Target: {p.target}{p.unit ? ` ${p.unit}` : ""}
                             </span>
                           )}
                           {p.isActive === false && (
@@ -888,16 +1060,77 @@ export function MasterParametersTableClient({
                         )}
                       </td>
 
-                      {/* Departemen */}
+                      {/* Tipe (Scope) Column */}
+                      <td className="px-3 py-3 whitespace-nowrap text-center">
+                        <div className="relative inline-flex items-center">
+                          <select
+                            value={p.scope === "DEPARTMENT" ? "DEPARTMENT" : "INDIVIDUAL"}
+                            onChange={(e) =>
+                              handleQuickScopeChange(p, e.target.value as "INDIVIDUAL" | "DEPARTMENT")
+                            }
+                            disabled={isPending}
+                            className={`text-[11px] font-bold rounded-lg border py-1 pl-2.5 pr-6 appearance-none cursor-pointer transition shadow-2xs focus:outline-none focus:ring-2 focus:ring-offset-1 ${
+                              p.scope === "DEPARTMENT"
+                                ? "bg-sky-50 text-sky-800 border-sky-200 hover:bg-sky-100/70 focus:ring-sky-500"
+                                : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100 focus:ring-slate-400"
+                            }`}
+                            title="Tentukan Tipe KPI: Individu atau Department"
+                          >
+                            <option value="INDIVIDUAL">Individu</option>
+                            <option value="DEPARTMENT">Department</option>
+                          </select>
+                          <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                        </div>
+                      </td>
+
+                      {/* Departemen Column */}
                       <td className="px-4 py-3 whitespace-nowrap">
-                        {deptInfo.isGeneral ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
-                            General
-                          </span>
+                        {p.scope === "DEPARTMENT" ? (
+                          <div className="relative inline-flex items-center max-w-[170px]">
+                            <select
+                              value={p.departmentId ? String(p.departmentId) : ""}
+                              onChange={(e) => handleQuickDeptChange(p, e.target.value)}
+                              disabled={isPending}
+                              className={`w-full text-[11px] font-bold rounded-lg border py-1 pl-2 pr-6 appearance-none cursor-pointer truncate shadow-2xs focus:outline-none focus:ring-2 focus:ring-offset-1 ${
+                                !p.departmentId
+                                  ? "border-amber-300 bg-amber-50 text-amber-800 focus:ring-amber-500"
+                                  : "border-sky-200 bg-sky-50/70 text-sky-900 hover:bg-sky-100/60 focus:ring-sky-500"
+                              }`}
+                              title="Sesuaikan Departemen untuk Department KPI"
+                            >
+                              <option value="" disabled>
+                                -- Pilih Departemen --
+                              </option>
+                              {departments.map((d) => (
+                                <option key={d.id} value={String(d.id)}>
+                                  {d.name}
+                                </option>
+                              ))}
+                            </select>
+                            <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-sky-700" />
+                          </div>
                         ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                            {deptInfo.deptName}
-                          </span>
+                          <div className="relative inline-flex items-center max-w-[170px]">
+                            <select
+                              value={p.departmentId ? String(p.departmentId) : "GENERAL"}
+                              onChange={(e) => handleQuickDeptChange(p, e.target.value)}
+                              disabled={isPending}
+                              className={`w-full text-[11px] font-bold rounded-lg border py-1 pl-2 pr-6 appearance-none cursor-pointer truncate shadow-2xs focus:outline-none focus:ring-2 focus:ring-offset-1 ${
+                                deptInfo.isGeneral
+                                  ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100/60 focus:ring-purple-400"
+                                  : "bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200/60 focus:ring-slate-400"
+                              }`}
+                              title="Departemen untuk Individu KPI (Default: General)"
+                            >
+                              <option value="GENERAL">General</option>
+                              {departments.map((d) => (
+                                <option key={d.id} value={String(d.id)}>
+                                  {d.name}
+                                </option>
+                              ))}
+                            </select>
+                            <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                          </div>
                         )}
                       </td>
 
@@ -1016,7 +1249,7 @@ export function MasterParametersTableClient({
           initialData={editingParam}
           departments={departments}
           defaultDeptId={targetDeptIdForAdd}
-          allParameters={parameters}
+          allParameters={localParams}
           onClose={() => setIsFormModalOpen(false)}
           createAction={createAction}
           updateAction={updateAction}
@@ -1650,10 +1883,24 @@ function MasterParameterFormModal({
   const [description, setDescription] = useState(initialData?.description || "");
   const [categoryName, setCategoryName] = useState(initialData?.categoryName || "Target Kerja");
   const [unit, setUnit] = useState(initialData?.unit || "%");
+  const [target, setTarget] = useState(initialData?.target || "");
+  const [weight, setWeight] = useState(() => {
+    if (initialData?.weight != null && !isNaN(Number(initialData.weight))) {
+      const num = Number(initialData.weight);
+      return String(num <= 1 && num > 0 ? Math.round(num * 100) : num);
+    }
+    return "";
+  });
   const [inputType, setInputType] = useState(initialData?.inputType || "PERCENTAGE");
   const [aggregation, setAggregation] = useState(initialData?.aggregation || "AVERAGE");
   const [compareBasis, setCompareBasis] = useState(initialData?.compareBasis || "ACTUAL");
   const [picRole, setPicRole] = useState(initialData?.picRole || "HEAD_DEPT");
+  const initialScope = initialData?.scope
+    ? (initialData.scope as "INDIVIDUAL" | "DEPARTMENT")
+    : initialDeptId !== "GENERAL"
+      ? "DEPARTMENT"
+      : "INDIVIDUAL";
+  const [scope, setScope] = useState<"INDIVIDUAL" | "DEPARTMENT">(initialScope);
 
   const { prefix: unitPrefix, suffix: unitSuffix } = getUnitDisplay(unit, inputType);
 
@@ -1670,6 +1917,11 @@ function MasterParameterFormModal({
 
   const handleDepartmentChange = (newDeptId: string) => {
     setDepartmentId(newDeptId);
+    if (newDeptId !== "GENERAL") {
+      setScope("DEPARTMENT");
+    } else {
+      setScope("INDIVIDUAL");
+    }
     if (isEditing && initialData?.code && newDeptId === initialDeptId) {
       setCode(initialData.code);
     } else {
@@ -1677,7 +1929,7 @@ function MasterParameterFormModal({
     }
   };
 
-  // Scoring Bands State — structured with operator/minValue/maxValue for scoring engine
+  // Scoring Bands State: structured with operator/minValue/maxValue for scoring engine
   const [bands, setBands] = useState<BandDraftItem[]>(() => {
     if (initialData?.defaultBands && Array.isArray(initialData.defaultBands) && initialData.defaultBands.length > 0) {
       return (initialData.defaultBands as any[]).map((b: any, idx: number) => ({
@@ -1741,6 +1993,53 @@ function MasterParameterFormModal({
     setBands((prev) => prev.filter((_, idx) => idx !== indexToRemove));
   };
 
+  // Validasi duplikasi kalimat nama indikator
+  const duplicateValidation = useMemo(() => {
+    const trimmed = name.trim().toLowerCase();
+    if (!trimmed) return null;
+    const targetDeptId = departmentId === "GENERAL" ? null : Number(departmentId);
+
+    // 1. Duplikat pada cakupan departemen yang sama (Hard conflict)
+    const exactConflict = allParameters.find((p) => {
+      if (isEditing && initialData && p.id === initialData.id) return false;
+      const pDeptId = p.departmentId ?? null;
+      const isSameDept =
+        targetDeptId === null ? pDeptId === null : pDeptId === targetDeptId;
+      return isSameDept && p.name.trim().toLowerCase() === trimmed;
+    });
+
+    if (exactConflict) {
+      const deptLabel =
+        targetDeptId === null
+          ? "General / Umum"
+          : departments.find((d) => d.id === targetDeptId)?.name || "Departemen Terpilih";
+      return {
+        isConflict: true,
+        message: `Kalimat nama indikator ini sudah terdaftar di ${deptLabel} (${exactConflict.code || "MP"}). Mohon gunakan nama yang unik agar tidak terjadi duplikasi.`,
+        conflictCode: exactConflict.code,
+      };
+    }
+
+    // 2. Info jika nama yang sama ada di departemen lain
+    const otherDept = allParameters.find((p) => {
+      if (isEditing && initialData && p.id === initialData.id) return false;
+      return p.name.trim().toLowerCase() === trimmed;
+    });
+
+    if (otherDept) {
+      const otherDeptName = otherDept.departmentId
+        ? departments.find((d) => d.id === otherDept.departmentId)?.name || "Departemen Lain"
+        : "General / Umum";
+      return {
+        isConflict: false,
+        message: `Catatan: Nama serupa juga terdaftar di ${otherDeptName} (${otherDept.code || "MP"}).`,
+        conflictCode: otherDept.code,
+      };
+    }
+
+    return null;
+  }, [name, departmentId, allParameters, isEditing, initialData, departments]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
@@ -1749,6 +2048,16 @@ function MasterParameterFormModal({
         icon: "error",
         title: "Validasi Gagal",
         text: "Nama indikator KPI wajib diisi pada bagian Informasi Dasar!",
+      });
+      return;
+    }
+
+    if (duplicateValidation?.isConflict) {
+      setOpenSections((prev) => ({ ...prev, dasar: true }));
+      void Swal.fire({
+        icon: "warning",
+        title: "Nama Indikator Duplikat",
+        text: duplicateValidation.message,
       });
       return;
     }
@@ -1764,7 +2073,16 @@ function MasterParameterFormModal({
         fd.append("description", description.trim());
         fd.append("departmentId", departmentId === "GENERAL" ? "" : departmentId);
         fd.append("categoryName", categoryName.trim());
+        fd.append("scope", scope);
         fd.append("unit", unit.trim() || "%");
+        if (target.trim()) fd.append("target", target.trim());
+        if (weight.trim()) {
+          const num = parseFloat(weight.trim());
+          if (!isNaN(num)) {
+            const standardWeight = num > 1 ? (num / 100).toFixed(4) : num.toFixed(4);
+            fd.append("weight", standardWeight);
+          }
+        }
         fd.append("inputType", inputType);
         fd.append("aggregation", aggregation);
         fd.append("compareBasis", compareBasis);
@@ -1862,8 +2180,28 @@ function MasterParameterFormModal({
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       placeholder="Contoh: Inventory Value (SOH) atau Tingkat Kehadiran"
-                      className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 font-medium text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none shadow-2xs"
+                      className={`w-full rounded-xl border px-3.5 py-2 font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none shadow-2xs ${
+                        duplicateValidation?.isConflict
+                          ? "border-rose-400 bg-rose-50/30 focus:border-rose-600 focus:ring-1 focus:ring-rose-500"
+                          : "border-slate-200 bg-white focus:border-slate-900"
+                      }`}
                     />
+                    {duplicateValidation && (
+                      <div
+                        className={`mt-1.5 flex items-start gap-1.5 rounded-lg p-2 text-[11px] font-medium leading-relaxed ${
+                          duplicateValidation.isConflict
+                            ? "bg-rose-50 border border-rose-200 text-rose-700"
+                            : "bg-blue-50 border border-blue-200 text-blue-700"
+                        }`}
+                      >
+                        <AlertTriangle
+                          className={`h-3.5 w-3.5 shrink-0 mt-0.5 ${
+                            duplicateValidation.isConflict ? "text-rose-600" : "text-blue-600"
+                          }`}
+                        />
+                        <span>{duplicateValidation.message}</span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1881,6 +2219,32 @@ function MasterParameterFormModal({
                       />
                     </div>
 
+                    {/* Tipe KPI (Scope) */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-900 mb-1.5">
+                        Tipe KPI (Scope) <span className="text-rose-600 font-bold">*</span>
+                      </label>
+                      <select
+                        value={scope}
+                        onChange={(e) => {
+                          const val = e.target.value as "INDIVIDUAL" | "DEPARTMENT";
+                          setScope(val);
+                          if (val === "INDIVIDUAL") {
+                            handleDepartmentChange("GENERAL");
+                          } else if (val === "DEPARTMENT" && departmentId === "GENERAL") {
+                            if (departments.length > 0) {
+                              handleDepartmentChange(String(departments[0].id));
+                            }
+                          }
+                        }}
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 font-medium text-slate-900 focus:border-slate-900 focus:outline-none cursor-pointer shadow-2xs"
+                        title="Tentukan apakah parameter dinilai terpusat per departemen atau mandiri per individu"
+                      >
+                        <option value="INDIVIDUAL">Individu (Diinput terpisah per karyawan)</option>
+                        <option value="DEPARTMENT">Department (Diinput 1x untuk seluruh departemen)</option>
+                      </select>
+                    </div>
+
                     {/* Cakupan / Departemen */}
                     <div>
                       <label className="block text-xs font-bold text-slate-900 mb-1.5">
@@ -1891,7 +2255,9 @@ function MasterParameterFormModal({
                         onChange={(e) => handleDepartmentChange(e.target.value)}
                         className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 font-medium text-slate-900 focus:border-slate-900 focus:outline-none cursor-pointer shadow-2xs"
                       >
-                        <option value="GENERAL">General (Seluruh Dept)</option>
+                        {scope === "INDIVIDUAL" && (
+                          <option value="GENERAL">General (Seluruh Dept)</option>
+                        )}
                         <optgroup label="Spesifik Departemen">
                           {departments.map((d) => (
                             <option key={d.id} value={String(d.id)}>
@@ -1968,6 +2334,48 @@ function MasterParameterFormModal({
                         <option value="CURRENCY">CURRENCY (Rupiah / Uang)</option>
                         <option value="QUALITATIVE">QUALITATIVE (Deskriptif)</option>
                       </select>
+                    </div>
+
+                    {/* Bobot Default */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-900 mb-1.5">
+                        Bobot Default (%)
+                      </label>
+                      <div className="relative flex items-center">
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          max="100"
+                          value={weight}
+                          onChange={(e) => setWeight(e.target.value)}
+                          placeholder="Contoh: 20 atau 30"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 pr-8 font-medium text-slate-900 focus:border-slate-900 focus:outline-none shadow-2xs font-mono"
+                        />
+                        <span className="absolute right-3 text-slate-500 font-semibold text-xs pointer-events-none">
+                          %
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        Bobot standar yang otomatis terbawa ke master template KPI
+                      </p>
+                    </div>
+
+                    {/* Target Acuan */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-900 mb-1.5">
+                        Target Default (Acuan)
+                      </label>
+                      <input
+                        type="text"
+                        value={target}
+                        onChange={(e) => setTarget(e.target.value)}
+                        placeholder="Contoh: 100, 3, <= 2"
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 font-medium text-slate-900 focus:border-slate-900 focus:outline-none shadow-2xs"
+                      />
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        Nilai target standar untuk indikator ini
+                      </p>
                     </div>
 
                     {/* Metode Agregasi */}

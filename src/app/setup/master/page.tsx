@@ -54,6 +54,11 @@ import {
   OperatingUnitTableClient,
 } from "@/components/master-tables-client";
 import { MasterDepartmentView } from "@/components/master-department-view";
+import { MasterJobPositionView } from "@/components/master-job-position-view";
+import {
+  getJobCategoriesAction,
+  getJobPositionMappingsWithDetailsAction,
+} from "@/lib/job-position-mapping-actions";
 
 import {
   getPitsAction,
@@ -89,7 +94,7 @@ export default async function MasterDataPage({
 
   const activeTab = tab === "master" ? "departemen" : tab;
 
-  const [deps, lvls, positions, rawEmps, tpls, systemDate, savedOUsJson, deptHeads, mappings, pitList, siteList] =
+  const [deps, lvls, positions, rawEmps, tpls, systemDate, savedOUsJson, deptHeads, mappings, pitList, siteList, jobCategoriesList, jobPositionMappingsList] =
     await Promise.all([
       db.select().from(departments).orderBy(asc(departments.code)),
       db.select().from(jobLevels).orderBy(asc(jobLevels.rank)),
@@ -102,6 +107,8 @@ export default async function MasterDataPage({
       getDepartmentMappingsAction(),
       getPitsAction(),
       getSitesAction(),
+      getJobCategoriesAction(),
+      getJobPositionMappingsWithDetailsAction(),
     ]);
 
   // Sanitasi data karyawan agar kolom password tidak terkirim ke klien
@@ -168,7 +175,10 @@ export default async function MasterDataPage({
       />
 
       {/* Navigation Tabs (Soft Light-Blue Active State) */}
-      <div className="flex flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-white p-1">
+      <div
+        data-tour="step-3-master-tabs"
+        className="flex flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-white p-1"
+      >
         {tabs.map(([k, l]) => (
           <Link
             key={k}
@@ -243,11 +253,14 @@ export default async function MasterDataPage({
 
       {/* Tab 3: Jabatan (Job Position) */}
       {activeTab === "jabatan" && (
-        <JobPositionTableClient
+        <MasterJobPositionView
           jobPositions={positions}
           departments={deps}
           jobLevels={lvls}
           employees={emps}
+          jobCategories={jobCategoriesList}
+          mappings={jobPositionMappingsList}
+          initialSubtab={subtab}
           createAction={createJobPosition}
           updateAction={updateJobPosition}
           deleteAction={deleteJobPosition}

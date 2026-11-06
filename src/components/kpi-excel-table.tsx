@@ -318,38 +318,38 @@ export function KpiExcelTable({
         </colgroup>
 
         {/* ========================================================= */}
-        {/* 1. TABLE HEADER (Executive Classic Dark Navy) */}
+        {/* 1. TABLE HEADER (Dark Navy #16345B) */}
         {/* ========================================================= */}
-        <thead className="bg-[#0F2C59] border-b border-[#0F2C59] text-white font-medium select-none text-xs">
-          <tr className="divide-x divide-white/20">
+        <thead className="bg-[#16345B] border-b border-[#16345B] text-white font-semibold select-none text-xs">
+          <tr className="divide-x divide-white/15">
             {/* Kolom 1: Parameter */}
-            <th className="px-3.5 py-2.5 text-left font-medium">
+            <th className="px-3.5 py-2.5 text-left font-semibold">
               Parameter
             </th>
 
             {/* Kolom 2: Kriteria Penilaian */}
-            <th className="px-3.5 py-2.5 text-left font-medium">
+            <th className="px-3.5 py-2.5 text-left font-semibold">
               Kriteria Penilaian
             </th>
 
             {/* Kolom 3: Realisasi (HANYA MUNCUL DI MODE PENILAIAN) */}
             {isPenilaian && (
-              <th className="px-2.5 py-2.5 text-center font-medium">Realisasi</th>
+              <th className="px-2.5 py-2.5 text-center font-semibold">Realisasi</th>
             )}
 
             {/* Kolom 4: Skor */}
-            <th className="px-2 py-2.5 text-center font-medium">
+            <th className="px-2 py-2.5 text-center font-semibold">
               Skor
             </th>
 
             {/* Kolom 5: Bobot */}
-            <th className="px-2 py-2.5 text-center font-medium">
+            <th className="px-2 py-2.5 text-center font-semibold">
               Bobot
             </th>
 
             {/* Kolom 6: Skor Akhir (HANYA MUNCUL DI MODE PENILAIAN) */}
             {isPenilaian && (
-              <th className="px-2.5 py-2.5 text-center font-medium">Skor Akhir</th>
+              <th className="px-2.5 py-2.5 text-center font-semibold">Skor Akhir</th>
             )}
           </tr>
         </thead>
@@ -357,12 +357,12 @@ export function KpiExcelTable({
         {/* ========================================================= */}
         {/* 2. TABLE BODY */}
         {/* ========================================================= */}
-        <tbody className="divide-y divide-slate-200 text-slate-800">
+        <tbody className="divide-y divide-[#E2E8F0] text-[#0F172A]">
           {sortedCategories.length === 0 ? (
             <tr>
               <td
                 colSpan={isPenilaian ? 6 : 4}
-                className="py-12 text-center text-slate-400 italic text-xs"
+                className="py-12 text-center text-[#64748B] italic text-xs"
               >
                 Belum ada parameter dan indikator KPI.
               </td>
@@ -394,7 +394,7 @@ export function KpiExcelTable({
               return (
                 <React.Fragment key={cat.id}>
                   {/* --------------------------------------------------------- */}
-                  {/* BARIS PITA KATEGORI: MINIMALIST ACCORDION HEADER */}
+                  {/* BARIS PITA KATEGORI: Background #F1F5F9 */}
                   {/* --------------------------------------------------------- */}
                   <tr
                     id={`category-row-${cat.id}`}
@@ -409,13 +409,13 @@ export function KpiExcelTable({
                         toggleCategory(cat.id);
                       }
                     }}
-                    className={`group transition-colors duration-150 cursor-pointer select-none border-y border-slate-200 bg-slate-50/90 text-slate-800 ${
+                    className={`group transition-colors duration-150 cursor-pointer select-none border-y border-[#E2E8F0] bg-[#F1F5F9] text-[#0F172A] ${
                       isExpanded
                         ? "shadow-none"
-                        : "hover:bg-slate-100/70"
+                        : "hover:bg-slate-200/60"
                     } ${
                       isCatHighlighted
-                        ? "ring-1 ring-slate-400 z-20"
+                        ? "ring-1 ring-[#2563EB] z-20"
                         : ""
                     }`}
                   >

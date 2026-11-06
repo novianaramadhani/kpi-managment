@@ -693,7 +693,10 @@ export function EmployeeListTable({
   return (
     <div className="space-y-4">
       {/* Control Card & Header */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm space-y-4">
+      <div
+        data-tour="step-3-master-actions"
+        className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm space-y-4"
+      >
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-lg font-bold text-slate-900 flex items-center gap-2">
@@ -1004,7 +1007,10 @@ export function EmployeeListTable({
       )}
 
       {/* Tabel Karyawan */}
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div
+        data-tour="step-3-master-table"
+        className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden"
+      >
         {filteredEmployees.length === 0 ? (
           <div className="p-12 text-center text-sm text-slate-500">
             {showOnlyMissingHireDate

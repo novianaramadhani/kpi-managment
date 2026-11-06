@@ -4,6 +4,7 @@ import React, { useState, useMemo } from "react";
 import Link from "next/link";
 import type { Employee, JobLevel, Department } from "@/db/schema";
 import { Table, td, th } from "./ui";
+import { getRoleBadgeInfo } from "@/lib/role-badge";
 
 interface JobLevelEmployeeModalProps {
   isOpen: boolean;
@@ -138,9 +139,14 @@ export function JobLevelEmployeeModal({
                     </span>
                   </td>
                   <td className={td}>
-                    <span className="inline-flex px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                      {emp.role || "KARYAWAN"}
-                    </span>
+                    {(() => {
+                      const rInfo = getRoleBadgeInfo(emp.role);
+                      return (
+                        <span className={`inline-flex px-2 py-0.5 rounded text-[10px] uppercase tracking-wider font-bold border ${rInfo.badgeClass}`}>
+                          {rInfo.label}
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className={`${td} text-right`}>
                     <Link

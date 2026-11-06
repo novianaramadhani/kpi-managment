@@ -3,6 +3,7 @@
 import React, { useState, useMemo } from "react";
 import type { Employee, Department } from "@/db/schema";
 import { Table, td, th } from "./ui";
+import { getRoleBadgeInfo } from "@/lib/role-badge";
 
 interface OperatingUnitEmployeeModalProps {
   isOpen: boolean;
@@ -122,7 +123,16 @@ export function OperatingUnitEmployeeModal({
                   </td>
                   <td className={td}>
                     <div className="font-semibold text-slate-900 text-xs">{emp.name}</div>
-                    <div className="text-[11px] text-slate-400 capitalize">{emp.role?.toLowerCase() || "Employee"}</div>
+                    <div className="mt-0.5">
+                      {(() => {
+                        const rInfo = getRoleBadgeInfo(emp.role);
+                        return (
+                          <span className={`inline-flex items-center px-1.5 py-0.2 rounded text-[10px] uppercase tracking-wider border font-bold ${rInfo.badgeClass}`}>
+                            {rInfo.label}
+                          </span>
+                        );
+                      })()}
+                    </div>
                   </td>
                   <td className={`${td} text-xs text-slate-700`}>
                     {emp.jobPosition || "-"}

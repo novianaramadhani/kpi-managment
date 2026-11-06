@@ -12,7 +12,6 @@ import {
   ChevronDown,
   Settings,
   Download,
-  Upload,
 } from "lucide-react";
 import type { Department, JobLevel, KpiTemplate } from "@/db/schema";
 
@@ -109,95 +108,126 @@ export function TemplateHeader({
   }, [isActionsOpen]);
 
   return (
-    <div className="w-full flex flex-col gap-1.5">
+    <div className="w-full flex flex-col gap-2">
       {/* BREADCRUMB */}
-      <div className="flex items-center gap-1.5 text-[11px] text-slate-400 font-medium">
-        <Link href="/setup/templates" className="hover:text-slate-700 transition-colors">
+      <div className="flex items-center gap-1.5 text-[11px] text-[#64748B] font-medium">
+        <Link href="/setup/templates" className="hover:text-[#0F172A] transition-colors">
           Template KPI
         </Link>
         <span>&rsaquo;</span>
-        <span className="text-slate-600">Detail Template</span>
+        <span className="text-[#0F172A] font-semibold">Detail Template</span>
       </div>
 
-      {/* BARIS 1: Tombol Kembali, Judul Halaman & Template, Badges, Dropdown Actions */}
+      {/* BARIS UTAMA: Tombol Kembali, Informasi Nama & Metadata Langsung (Tanpa Card Terpisah), serta Tombol Aksi */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 min-w-0">
-        {/* Sisi Kiri: Kembali + Judul + Badges */}
-        <div className="flex items-start sm:items-center gap-2.5 min-w-0 flex-1">
+        {/* Sisi Kiri: Kembali + Nama & Baris Info */}
+        <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
           <Link
             href="/setup/templates"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:text-slate-900 hover:bg-slate-100 shadow-2xs transition cursor-pointer mt-0.5 sm:mt-0"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#E2E8F0] bg-[#FFFFFF] text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC] transition cursor-pointer mt-0.5 sm:mt-0 shadow-2xs"
             title="Kembali ke Daftar Master Template"
             aria-label="Kembali ke Daftar Master Template"
           >
             <ArrowLeft className="h-4 w-4" />
           </Link>
 
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 min-w-0">
-              <h1
-                className="text-base sm:text-lg font-bold tracking-tight text-slate-900 truncate min-w-0"
-                title={`Struktur KPI: ${templateName}`}
-              >
-                Struktur KPI: {templateName}
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className="flex flex-wrap items-center gap-2 min-w-0">
+              <h1 className="text-base sm:text-lg font-bold tracking-tight text-[#0F172A] break-words min-w-0">
+                {empName || templateName}
               </h1>
 
               <div className="flex items-center gap-1.5 shrink-0">
                 {/* Badge Status */}
                 <span
-                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold border ${
+                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border ${
                     isActive
-                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                      : "bg-slate-100 text-slate-600 border-slate-200"
+                      ? "bg-[#F0FDF4] text-[#16A34A] border-[#BBF7D0]"
+                      : "bg-[#F8FAFC] text-[#64748B] border-[#E2E8F0]"
                   }`}
                 >
                   <span
                     className={`h-1.5 w-1.5 rounded-full ${
-                      isActive ? "bg-emerald-500" : "bg-slate-400"
+                      isActive ? "bg-[#16A34A]" : "bg-[#64748B]"
                     }`}
                   />
                   <span>{isActive ? "Published" : "Draft"}</span>
                 </span>
 
                 {/* Badge Versi */}
-                <span className="text-[11px] font-mono font-medium text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200/80">
+                <span className="text-[11px] font-mono font-medium text-[#64748B] bg-[#F8FAFC] px-1.5 py-0.5 rounded border border-[#E2E8F0]">
                   v{template.version || 1}.0
                 </span>
               </div>
             </div>
 
-            <p className="text-xs text-slate-500 mt-0.5 truncate">
-              Atur parameter, indikator, dan kriteria penilaian untuk template KPI ini.
-            </p>
+            {/* Metadata Sebaris Tanpa Card-Card Kecil */}
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-[#64748B]">
+              {empName ? (
+                <>
+                  {nikLabel && (
+                    <>
+                      <span>
+                        NIK: <strong className="font-mono font-semibold text-[#0F172A]">{nikLabel}</strong>
+                      </span>
+                      <span className="text-[#CBD5E1]">•</span>
+                    </>
+                  )}
+                  <span>
+                    Job Position: <strong className="font-semibold text-[#0F172A]">{jobPositionLabel}</strong>
+                  </span>
+                  <span className="text-[#CBD5E1]">•</span>
+                  <span>
+                    Departemen: <strong className="font-semibold text-[#0F172A]">{departmentLabel}</strong>
+                  </span>
+                  <span className="text-[#CBD5E1]">•</span>
+                  <span>
+                    Periode: <strong className="font-semibold text-[#0F172A]">{periodYear}</strong>
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span>
+                    Departemen: <strong className="font-semibold text-[#0F172A]">{deptLabel}</strong>
+                  </span>
+                  <span className="text-[#CBD5E1]">•</span>
+                  <span>
+                    Job Level: <strong className="font-semibold text-[#0F172A]">{levelLabel}</strong>
+                  </span>
+                  <span className="text-[#CBD5E1]">•</span>
+                  <span>
+                    Periode: <strong className="font-semibold text-[#0F172A]">{periodYear}</strong>
+                  </span>
+                </>
+              )}
+
+              {template.site && (
+                <>
+                  <span className="text-[#CBD5E1]">•</span>
+                  <span>
+                    Site: <strong className="font-semibold text-[#0F172A]">{template.site}</strong>
+                  </span>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Sisi Kanan: Single Direct Action (Import Excel) + Actions Dropdown */}
-        <div className="flex items-center gap-2 shrink-0 justify-end">
-          {onImportExcel && (
-            <button
-              type="button"
-              onClick={onImportExcel}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50/80 hover:bg-emerald-100 text-emerald-800 px-3.5 py-1.5 text-xs font-semibold shadow-2xs transition active:scale-98 cursor-pointer"
-              title="Import Template Excel untuk mengisi indikator, bobot, dan kriteria skor"
-            >
-              <Upload className="h-3.5 w-3.5 text-emerald-700" />
-              <span>Import Excel</span>
-            </button>
-          )}
-
-          <div className="relative" ref={actionsRef}>
+        {/* Sisi Kanan: Actions Dropdown */}
+        <div className="flex items-center gap-2 shrink-0 justify-end w-full sm:w-auto">
+          <div className="relative flex-1 sm:flex-initial" ref={actionsRef}>
             <button
               type="button"
               onClick={() => setIsActionsOpen((prev) => !prev)}
               aria-expanded={isActionsOpen}
               aria-haspopup="true"
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 hover:border-slate-300 transition active:scale-98 cursor-pointer"
+              className="inline-flex w-full sm:w-auto items-center justify-center gap-2 rounded-lg border border-[#E2E8F0] bg-[#FFFFFF] px-3.5 py-1.5 text-xs font-semibold text-[#0F172A] shadow-2xs hover:bg-[#F8FAFC] transition active:scale-98 cursor-pointer"
               title="Menu Aksi Template KPI"
             >
-              <SlidersHorizontal className="h-3.5 w-3.5 text-slate-600" />
+              <SlidersHorizontal className="h-3.5 w-3.5 text-[#64748B]" />
               <span>Actions</span>
               <ChevronDown
-                className={`h-3.5 w-3.5 text-slate-400 transition-transform duration-200 ${
+                className={`h-3.5 w-3.5 text-[#64748B] transition-transform duration-200 ${
                   isActionsOpen ? "rotate-180" : ""
                 }`}
               />
@@ -206,7 +236,7 @@ export function TemplateHeader({
             {isActionsOpen && (
               <div
                 role="menu"
-                className="absolute right-0 mt-1.5 w-64 rounded-xl border border-slate-200/90 bg-white p-1.5 shadow-xl z-30 transition-all animate-in fade-in zoom-in-95 duration-150"
+                className="absolute right-0 mt-1.5 w-64 rounded-xl border border-[#E2E8F0] bg-[#FFFFFF] p-1.5 shadow-xl z-30 transition-all animate-in fade-in zoom-in-95 duration-150"
               >
                 {/* 1. Update ke Employee */}
                 {onSyncToEmployees && (
@@ -218,20 +248,20 @@ export function TemplateHeader({
                       setIsActionsOpen(false);
                       onSyncToEmployees();
                     }}
-                    className="flex items-center gap-2.5 w-full rounded-lg px-3 py-2 text-xs font-medium text-slate-700 hover:bg-indigo-50/80 hover:text-indigo-900 transition text-left cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed group"
+                    className="flex items-center gap-2.5 w-full rounded-lg px-3 py-2 text-xs font-medium text-[#0F172A] hover:bg-[#F8FAFC] transition text-left cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed group"
                   >
-                    <div className="h-7 w-7 rounded-md bg-indigo-50 border border-indigo-100 flex items-center justify-center shrink-0 group-hover:bg-indigo-100/70 transition-colors">
+                    <div className="h-7 w-7 rounded-md bg-[#EFF6FF] border border-blue-200/80 flex items-center justify-center shrink-0 text-[#2563EB] transition-colors">
                       <RefreshCw
-                        className={`h-3.5 w-3.5 text-indigo-600 ${
+                        className={`h-3.5 w-3.5 text-[#2563EB] ${
                           isSyncingToEmployees ? "animate-spin" : ""
                         }`}
                       />
                     </div>
                     <div className="flex flex-col min-w-0">
-                      <span className="font-semibold text-slate-800 group-hover:text-indigo-950">
+                      <span className="font-semibold text-[#0F172A]">
                         {isSyncingToEmployees ? "Memperbarui..." : "Update ke Employee"}
                       </span>
-                      <span className="text-[10.5px] text-slate-500 leading-tight">
+                      <span className="text-[10.5px] text-[#64748B] leading-tight">
                         Sinkronkan kriteria skor ke form karyawan
                       </span>
                     </div>
@@ -249,31 +279,25 @@ export function TemplateHeader({
                     }}
                     className={`flex items-center gap-2.5 w-full rounded-lg px-3 py-2 text-xs font-medium transition text-left cursor-pointer group mt-0.5 ${
                       isEditTemplateMode
-                        ? "bg-amber-50/90 text-amber-900 hover:bg-amber-100/80"
-                        : "text-slate-700 hover:bg-blue-50/80 hover:text-blue-900"
+                        ? "bg-[#EFF6FF] text-[#2563EB]"
+                        : "text-[#0F172A] hover:bg-[#F8FAFC]"
                     }`}
                   >
-                    <div
-                      className={`h-7 w-7 rounded-md border flex items-center justify-center shrink-0 transition-colors ${
-                        isEditTemplateMode
-                          ? "bg-amber-100 border-amber-200 text-amber-700"
-                          : "bg-blue-50 border-blue-100 text-blue-600 group-hover:bg-blue-100/70"
-                      }`}
-                    >
+                    <div className="h-7 w-7 rounded-md border border-blue-200/80 bg-[#EFF6FF] text-[#2563EB] flex items-center justify-center shrink-0 transition-colors">
                       <Pencil className="h-3.5 w-3.5" />
                     </div>
                     <div className="flex flex-col min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className="font-semibold text-slate-800">
+                        <span className="font-semibold text-[#0F172A]">
                           {isEditTemplateMode ? "Keluar Edit Template" : "Edit Template"}
                         </span>
                         {isEditTemplateMode && (
-                          <span className="text-[9.5px] font-bold uppercase bg-amber-200/80 text-amber-800 px-1 py-0.2 rounded">
+                          <span className="text-[9.5px] font-semibold uppercase bg-[#F0FDF4] text-[#16A34A] border border-[#BBF7D0] px-1.5 py-0.2 rounded">
                             Aktif
                           </span>
                         )}
                       </div>
-                      <span className="text-[10.5px] text-slate-500 leading-tight">
+                      <span className="text-[10.5px] text-[#64748B] leading-tight">
                         {isEditTemplateMode
                           ? "Simpan & tutup mode edit langsung"
                           : "Edit langsung kriteria & skor di tabel"}
@@ -290,14 +314,14 @@ export function TemplateHeader({
                     setIsActionsOpen(false);
                     onPreview();
                   }}
-                  className="flex items-center gap-2.5 w-full rounded-lg px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition text-left cursor-pointer group mt-0.5"
+                  className="flex items-center gap-2.5 w-full rounded-lg px-3 py-2 text-xs font-medium text-[#0F172A] hover:bg-[#F8FAFC] transition text-left cursor-pointer group mt-0.5"
                 >
-                  <div className="h-7 w-7 rounded-md bg-slate-100 border border-slate-200/80 flex items-center justify-center shrink-0 text-slate-600 group-hover:bg-slate-200/60 transition-colors">
-                    <Eye className="h-3.5 w-3.5 text-slate-600" />
+                  <div className="h-7 w-7 rounded-md bg-[#F8FAFC] border border-[#E2E8F0] flex items-center justify-center shrink-0 text-[#64748B] transition-colors">
+                    <Eye className="h-3.5 w-3.5 text-[#64748B]" />
                   </div>
                   <div className="flex flex-col min-w-0">
-                    <span className="font-semibold text-slate-800">Preview Template</span>
-                    <span className="text-[10.5px] text-slate-500 leading-tight">
+                    <span className="font-semibold text-[#0F172A]">Preview Template</span>
+                    <span className="text-[10.5px] text-[#64748B] leading-tight">
                       Lihat pratinjau struktur KPI lengkap
                     </span>
                   </div>
@@ -312,16 +336,16 @@ export function TemplateHeader({
                       setIsActionsOpen(false);
                       onExportExcel();
                     }}
-                    className="flex items-center gap-2.5 w-full rounded-lg px-3 py-2 text-xs font-medium text-slate-700 hover:bg-emerald-50/80 hover:text-emerald-950 transition text-left cursor-pointer group mt-0.5"
+                    className="flex items-center gap-2.5 w-full rounded-lg px-3 py-2 text-xs font-medium text-[#0F172A] hover:bg-[#F8FAFC] transition text-left cursor-pointer group mt-0.5"
                   >
-                    <div className="h-7 w-7 rounded-md bg-emerald-50 border border-emerald-200 flex items-center justify-center shrink-0 text-emerald-700 group-hover:bg-emerald-100/70 transition-colors">
+                    <div className="h-7 w-7 rounded-md bg-[#F8FAFC] border border-[#E2E8F0] flex items-center justify-center shrink-0 text-[#64748B] transition-colors">
                       <Download className="h-3.5 w-3.5" />
                     </div>
                     <div className="flex flex-col min-w-0">
-                      <span className="font-semibold text-slate-800 group-hover:text-emerald-950">
+                      <span className="font-semibold text-[#0F172A]">
                         Download Excel
                       </span>
-                      <span className="text-[10.5px] text-slate-500 leading-tight">
+                      <span className="text-[10.5px] text-[#64748B] leading-tight">
                         Unduh format template &amp; input actual bulanan
                       </span>
                     </div>
@@ -329,7 +353,7 @@ export function TemplateHeader({
                 )}
 
                 {/* Divider */}
-                <div className="my-1 border-t border-slate-100" />
+                <div className="my-1 border-t border-[#E2E8F0]" />
 
                 {/* 4. Publish */}
                 <button
@@ -344,7 +368,7 @@ export function TemplateHeader({
                   className={`flex items-center gap-2.5 w-full rounded-lg px-3 py-2 text-xs font-medium transition text-left cursor-pointer group mt-0.5 ${
                     !isValidToPublish || isPending
                       ? "opacity-50 cursor-not-allowed hover:bg-transparent"
-                      : "text-slate-700 hover:bg-emerald-50/80 hover:text-emerald-950"
+                      : "text-[#0F172A] hover:bg-[#F8FAFC]"
                   }`}
                   title={
                     !isValidToPublish
@@ -355,24 +379,24 @@ export function TemplateHeader({
                   <div
                     className={`h-7 w-7 rounded-md border flex items-center justify-center shrink-0 transition-colors ${
                       !isValidToPublish || isPending
-                        ? "bg-slate-100 border-slate-200 text-slate-400"
-                        : "bg-emerald-50 border-emerald-200 text-emerald-600 group-hover:bg-emerald-100/70"
+                        ? "bg-[#F8FAFC] border-[#E2E8F0] text-[#64748B]"
+                        : "bg-[#F0FDF4] border-[#BBF7D0] text-[#16A34A]"
                     }`}
                   >
                     <Send className="h-3.5 w-3.5" />
                   </div>
                   <div className="flex flex-col min-w-0">
                     <div className="flex items-center gap-1.5">
-                      <span className="font-semibold text-slate-800">
+                      <span className="font-semibold text-[#0F172A]">
                         {isActive ? "Publish Ulang Template" : "Publish Template"}
                       </span>
                       {isValidToPublish && (
-                        <span className="text-[9.5px] font-bold text-emerald-700 bg-emerald-100 px-1 py-0.2 rounded">
+                        <span className="text-[9.5px] font-semibold text-[#16A34A] bg-[#F0FDF4] border border-[#BBF7D0] px-1.5 py-0.2 rounded">
                           Siap
                         </span>
                       )}
                     </div>
-                    <span className="text-[10.5px] text-slate-500 leading-tight">
+                    <span className="text-[10.5px] text-[#64748B] leading-tight">
                       {!isValidToPublish
                         ? `Perlu validasi bobot ${templateTargetPct}%`
                         : "Aktifkan template untuk penilaian"}
@@ -383,7 +407,7 @@ export function TemplateHeader({
                 {/* 5. Ubah Info Template (jika onEditInfo tersedia) */}
                 {onEditInfo && (
                   <>
-                    <div className="my-1 border-t border-slate-100" />
+                    <div className="my-1 border-t border-[#E2E8F0]" />
                     <button
                       type="button"
                       role="menuitem"
@@ -391,14 +415,14 @@ export function TemplateHeader({
                         setIsActionsOpen(false);
                         onEditInfo();
                       }}
-                      className="flex items-center gap-2.5 w-full rounded-lg px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition text-left cursor-pointer group mt-0.5"
+                      className="flex items-center gap-2.5 w-full rounded-lg px-3 py-2 text-xs font-medium text-[#0F172A] hover:bg-[#F8FAFC] transition text-left cursor-pointer group mt-0.5"
                     >
-                      <div className="h-7 w-7 rounded-md bg-slate-100 border border-slate-200/80 flex items-center justify-center shrink-0 text-slate-500 group-hover:bg-slate-200/60 transition-colors">
+                      <div className="h-7 w-7 rounded-md bg-[#F8FAFC] border border-[#E2E8F0] flex items-center justify-center shrink-0 text-[#64748B] transition-colors">
                         <Settings className="h-3.5 w-3.5" />
                       </div>
                       <div className="flex flex-col min-w-0">
-                        <span className="font-semibold text-slate-800">Ubah Info Template</span>
-                        <span className="text-[10.5px] text-slate-500 leading-tight">
+                        <span className="font-semibold text-[#0F172A]">Ubah Info Template</span>
+                        <span className="text-[10.5px] text-[#64748B] leading-tight">
                           Nama, departemen, level jabatan
                         </span>
                       </div>
@@ -409,72 +433,6 @@ export function TemplateHeader({
             )}
           </div>
         </div>
-      </div>
-
-      {/* BARIS 2: Metadata Lengkap & Clean (Nama, NIK, Job Position, Departemen) */}
-      <div className="flex items-center gap-2 text-xs text-slate-600 pl-10.5 flex-wrap pt-0.5">
-        {empName ? (
-          <>
-            {/* Nama */}
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs">
-              <span className="text-slate-400 font-medium">Nama:</span>
-              <span className="text-slate-900 font-bold">{empName}</span>
-            </div>
-
-            {/* NIK */}
-            {nikLabel && (
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono">
-                <span className="text-slate-400 font-medium font-sans">NIK:</span>
-                <span className="text-slate-800 font-bold">{nikLabel}</span>
-              </div>
-            )}
-
-            {/* Job Position */}
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs">
-              <span className="text-slate-400 font-medium">Job Position:</span>
-              <span className="text-slate-800 font-semibold">{jobPositionLabel}</span>
-            </div>
-
-            {/* Departemen */}
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs">
-              <span className="text-slate-400 font-medium">Departemen:</span>
-              <span className="text-slate-800 font-semibold">{departmentLabel}</span>
-            </div>
-
-            {/* Periode */}
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs">
-              <span className="text-slate-400 font-medium">Periode:</span>
-              <span className="text-slate-800 font-semibold">{periodYear}</span>
-            </div>
-          </>
-        ) : (
-          <>
-            {/* Departemen */}
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs">
-              <span className="text-slate-400 font-medium">Departemen:</span>
-              <span className="text-slate-900 font-bold">{deptLabel}</span>
-            </div>
-
-            {/* Job Level */}
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs">
-              <span className="text-slate-400 font-medium">Job Level:</span>
-              <span className="text-slate-900 font-semibold">{levelLabel}</span>
-            </div>
-
-            {/* Periode */}
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs">
-              <span className="text-slate-400 font-medium">Periode:</span>
-              <span className="text-slate-900 font-semibold">{periodYear}</span>
-            </div>
-          </>
-        )}
-
-        {template.site && (
-          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200">
-            <span>Site:</span>
-            <span className="font-bold">{template.site}</span>
-          </div>
-        )}
       </div>
     </div>
   );

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { Department, Employee, DepartmentHead } from "@/db/schema";
 import { UserCheck, X, Search, Check, AlertCircle, Building2, MapPin, User, Shield, Trash2 } from "lucide-react";
 import Swal from "sweetalert2";
+import { getRoleBadgeInfo } from "@/lib/role-badge";
 
 interface HeadDepartmentModalProps {
   isOpen: boolean;
@@ -435,8 +436,8 @@ export function HeadDepartmentModal({
                                     {emp.nik}
                                   </span>
                                   {isMatchRole && (
-                                    <span className="text-[9px] font-bold bg-blue-100 text-blue-800 px-1 py-0.2 rounded">
-                                      {emp.role}
+                                    <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${getRoleBadgeInfo(emp.role).badgeClass}`}>
+                                      {getRoleBadgeInfo(emp.role).label}
                                     </span>
                                   )}
                                 </div>

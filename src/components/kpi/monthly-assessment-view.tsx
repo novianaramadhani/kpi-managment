@@ -46,7 +46,9 @@ import {
   Calculator,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
   ChevronRight,
+  Building2,
   Pencil,
   Lock,
   Lightbulb,
@@ -845,6 +847,42 @@ export function MonthlyAssessmentView({
     }
     return employees[0];
   }, [employees, currentEmployeeId]);
+
+  // Navigasi Karyawan (Previous, Next, Urutan Penilaian)
+  const currentEmpId = initialDetail?.employee?.id || currentEmployeeId || currentEmp?.employeeId;
+  const currentIndex = useMemo(() => {
+    if (!employees || employees.length === 0 || !currentEmpId) return -1;
+    return employees.findIndex((e) => e.employeeId === currentEmpId);
+  }, [employees, currentEmpId]);
+
+  const prevEmp = useMemo(() => {
+    if (currentIndex > 0) return employees[currentIndex - 1];
+    return null;
+  }, [employees, currentIndex]);
+
+  const nextEmp = useMemo(() => {
+    if (currentIndex >= 0 && currentIndex < employees.length - 1) {
+      return employees[currentIndex + 1];
+    }
+    return null;
+  }, [employees, currentIndex]);
+
+  const [isNavigating, setIsNavigating] = useState(false);
+
+  const handleNavigateToEmployee = async (targetEmpId: number) => {
+    setIsNavigating(true);
+    try {
+      if (assessmentModal.isOpen && assessmentModal.indicator) {
+        await handleSaveAssessmentModal();
+      }
+      router.push(`/input-kpi?year=${currentYear}&employeeId=${targetEmpId}`);
+    } catch (err) {
+      console.error("Gagal berpindah ke karyawan:", err);
+      router.push(`/input-kpi?year=${currentYear}&employeeId=${targetEmpId}`);
+    } finally {
+      setIsNavigating(false);
+    }
+  };
 
   const activeTemplateName =
     initialDetail?.employee?.templateName ||
@@ -2925,13 +2963,13 @@ export function MonthlyAssessmentView({
   };
 
   return (
-    <div className="min-h-screen pb-12 text-slate-800 antialiased">
+    <div className="min-h-screen pb-28 md:pb-12 text-slate-800 antialiased">
       {/* ================================================== */}
-      {/* 1. HEADER: TOMBOL KEMBALI & JUDUL FORMULIR PENILAIAN */}
+      {/* 1. HEADER: TOMBOL KEMBALI, JUDUL & NAVIGASI KARYAWAN */}
       {/* ================================================== */}
-      <div className="relative mb-4 flex items-center justify-center min-h-[40px]">
+      <div className="mb-4 flex items-center justify-between min-h-[40px] flex-wrap gap-2.5">
         {/* Tombol Back di Kiri */}
-        <div className="absolute left-0 top-1/2 -translate-y-1/2">
+        <div className="flex items-center gap-2">
           <Link
             href={`/input-kpi?year=${currentYear}`}
             prefetch={false}
@@ -2939,15 +2977,7 @@ export function MonthlyAssessmentView({
             title="Kembali ke Daftar Karyawan"
             aria-label="Kembali ke Daftar Karyawan"
           >
-            <svg
-              className="h-4 w-4 transition-transform group-hover:-translate-x-0.5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2.5}
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-            </svg>
+            <ChevronLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
             <span className="hidden sm:inline">Kembali</span>
           </Link>
         </div>
@@ -2961,6 +2991,52 @@ export function MonthlyAssessmentView({
             Periode {currentYear}
           </span>
         </div>
+
+        {/* Indikator Progres & Navigasi Karyawan (Prev & Next) */}
+        {employees && employees.length > 0 && currentIndex >= 0 ? (
+          <div className="flex items-center gap-2">
+            {/* Pill Urutan Penilaian: Karyawan X dari Y */}
+            <div className="inline-flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50/90 px-3 py-1.5 text-xs text-blue-900 shadow-2xs">
+              <span className="font-bold text-blue-700">
+                Karyawan {currentIndex + 1} dari {employees.length}
+              </span>
+              <span className="text-blue-300 font-semibold">•</span>
+              <span
+                className="font-semibold text-slate-800 max-w-[130px] md:max-w-[200px] truncate"
+                title={initialDetail?.employee.name || currentEmp?.name || "-"}
+              >
+                {initialDetail?.employee.name || currentEmp?.name || "-"}
+              </span>
+            </div>
+
+            {/* Tombol Navigasi Previous & Next */}
+            <div className="inline-flex items-center rounded-xl border border-slate-200 bg-white shadow-2xs p-0.5">
+              <button
+                type="button"
+                disabled={currentIndex <= 0 || !prevEmp || isNavigating}
+                onClick={() => prevEmp && handleNavigateToEmployee(prevEmp.employeeId)}
+                className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-35 disabled:hover:bg-transparent disabled:cursor-not-allowed transition cursor-pointer"
+                title={prevEmp ? `Karyawan sebelumnya: ${prevEmp.name}` : "Ini adalah karyawan pertama"}
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">Prev</span>
+              </button>
+              <div className="h-4 w-px bg-slate-200 mx-0.5" />
+              <button
+                type="button"
+                disabled={currentIndex >= employees.length - 1 || !nextEmp || isNavigating}
+                onClick={() => nextEmp && handleNavigateToEmployee(nextEmp.employeeId)}
+                className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-35 disabled:hover:bg-transparent disabled:cursor-not-allowed transition cursor-pointer"
+                title={nextEmp ? `Karyawan selanjutnya: ${nextEmp.name}` : "Ini adalah karyawan terakhir"}
+              >
+                <span className="hidden md:inline">Next</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="w-16" />
+        )}
       </div>
 
       {/* ================================================== */}
@@ -2968,8 +3044,8 @@ export function MonthlyAssessmentView({
       {/* ================================================== */}
       <section className="mb-4 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-2xs">
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-12 gap-x-5 gap-y-3 items-center">
-          {/* 1. Nama Karyawan (Diperluas agar nama panjang tidak terpotong) */}
-          <div className="min-w-0 sm:col-span-2 lg:col-span-3">
+          {/* 1. Nama Karyawan */}
+          <div className="min-w-0 col-span-2 sm:col-span-2 lg:col-span-3">
             <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               Nama Karyawan
             </span>
@@ -2982,7 +3058,7 @@ export function MonthlyAssessmentView({
           </div>
 
           {/* 2. Departemen */}
-          <div className="min-w-0 lg:col-span-1">
+          <div className="min-w-0 col-span-1 lg:col-span-1">
             <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               Departemen
             </span>
@@ -2995,7 +3071,7 @@ export function MonthlyAssessmentView({
           </div>
 
           {/* 3. Jabatan */}
-          <div className="min-w-0 lg:col-span-2">
+          <div className="min-w-0 col-span-1 lg:col-span-2">
             <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               Jabatan
             </span>
@@ -3008,7 +3084,7 @@ export function MonthlyAssessmentView({
           </div>
 
           {/* 4. Penilai */}
-          <div className="min-w-0 lg:col-span-2">
+          <div className="min-w-0 col-span-2 sm:col-span-2 lg:col-span-2">
             <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               Penilai
             </span>
@@ -3021,7 +3097,7 @@ export function MonthlyAssessmentView({
           </div>
 
           {/* 5. Total Skor */}
-          <div className="min-w-0 lg:col-span-1">
+          <div className="min-w-0 col-span-1 lg:col-span-1">
             <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               Total Skor
             </span>
@@ -3036,7 +3112,7 @@ export function MonthlyAssessmentView({
           </div>
 
           {/* 6. Progress */}
-          <div className="min-w-0 lg:col-span-2">
+          <div className="min-w-0 col-span-1 lg:col-span-2">
             <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               Progress
             </span>
@@ -3046,7 +3122,7 @@ export function MonthlyAssessmentView({
           </div>
 
           {/* 7. Status */}
-          <div className="min-w-0 lg:col-span-1">
+          <div className="min-w-0 col-span-2 sm:col-span-1 lg:col-span-1">
             <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               Status
             </span>
@@ -3510,10 +3586,12 @@ export function MonthlyAssessmentView({
                     cat.categoryName.toLowerCase().includes("target kerja");
                   const isExpanded = expandedCatIds.has(cat.categoryId);
 
+                  const isAppraisalFinal = currentAppraisalStatus === "FINAL" || initialDetail?.appraisalStatus === "FINAL";
                   const allFilled =
-                    cat.indicators.length > 0 &&
-                    cat.indicators.every((ind) => ind.annualStatus === "Completed");
-                  const anyFilled = cat.indicators.some((ind) => ind.annualStatus !== "Not Started");
+                    isAppraisalFinal ||
+                    (cat.indicators.length > 0 &&
+                      cat.indicators.every((ind) => ind.annualStatus === "Completed"));
+                  const anyFilled = isAppraisalFinal || cat.indicators.some((ind) => ind.annualStatus !== "Not Started");
                   const catStatus: "Completed" | "In Progress" | "Not Started" = allFilled
                     ? "Completed"
                     : anyFilled
@@ -3701,10 +3779,10 @@ export function MonthlyAssessmentView({
                                   <div className="flex items-start gap-2">
                                     {hasSubIndicators && indCode && (
                                       <span
-                                        className={`text-xs font-semibold shrink-0 mt-0.5 w-7 select-none ${
+                                        className={`text-xs font-bold shrink-0 mt-0.5 w-7 select-none ${
                                           isIndUnfilled && validationAttempted
-                                            ? "text-amber-700 font-medium"
-                                            : "text-slate-600"
+                                            ? "text-amber-700"
+                                            : "text-slate-900"
                                         }`}
                                       >
                                         {indCode}
@@ -4555,256 +4633,219 @@ export function MonthlyAssessmentView({
               style={MODAL_TOKENS.cssVars}
               onClick={(e) => e.stopPropagation()}
             >
-              {/* 1. Modal Header (Clean, spacious, uncluttered) */}
-              <div className={MODAL_TOKENS.colors.header}>
+              {/* 1. Modal Header (Clean & Minimal) */}
+              <div className="border-b border-[#E2E8F0] px-6 py-4 flex items-center justify-between gap-4 shrink-0 bg-white">
                 <div className="min-w-0 flex-1">
-                  <h3 className="text-base font-bold text-slate-900 tracking-tight leading-snug">
+                  <h3 className="text-base font-bold text-[#0F172A] tracking-tight leading-snug truncate">
                     {ind.indicatorCode ? `${ind.indicatorCode} · ${ind.indicatorName}` : ind.indicatorName}
                   </h3>
-                  <p className="text-xs text-slate-500 mt-0.5 truncate">
-                    {modalSubtitle || "Penilaian Karyawan"}
-                  </p>
-
-                  {/* Metadata compact di bawah judul */}
-                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-500 mt-2">
+                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-[#64748B] mt-1">
                     <span>
                       Target:{" "}
-                      <strong className="font-semibold text-slate-700 tabular-nums">
+                      <strong className="font-semibold text-[#0F172A] tabular-nums">
                         {formatTargetNumber(parsedMasterTarget, ind.unit)}
                       </strong>
                     </span>
                     <span className="text-slate-300">•</span>
                     <span>
                       Satuan:{" "}
-                      <strong className="font-semibold text-slate-700">
+                      <strong className="font-semibold text-[#0F172A]">
                         {ind.unit || "-"}
                       </strong>
                     </span>
                     <span className="text-slate-300">•</span>
                     <span>
                       Bobot:{" "}
-                      <strong className="font-semibold text-slate-700 tabular-nums">
+                      <strong className="font-semibold text-[#0F172A] tabular-nums">
                         {Math.round(ind.indicatorWeight * 100)}%
                       </strong>
                     </span>
-                    <span className="text-slate-300">•</span>
-                    <span>
-                      <strong className="font-semibold text-slate-700">
-                        {directionLabel}
-                      </strong>
-                    </span>
                   </div>
                 </div>
 
-                {/* Ghost Action Tools & Close */}
-                <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTraceModalState({
-                        isOpen: true,
-                        appraisalItemId: ind.appraisalItemId,
-                        month: focusedMonth || currentMonth,
-                        indicatorName: ind.indicatorName,
-                        categoryName: assessmentModal.categoryName,
-                        unit: ind.unit || undefined,
-                      });
-                    }}
-                    className={MODAL_TOKENS.controls.ghostBtn}
-                    title="Buka rincian rumus & audit trace perhitungan"
-                  >
-                    <Calculator className="w-3.5 h-3.5 text-slate-400" />
-                    <span className="hidden sm:inline">Audit Trace</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setIsTipsModalOpen(true)}
-                    className={MODAL_TOKENS.controls.ghostBtn}
-                    title="Panduan perhitungan KPI"
-                  >
-                    <Lightbulb className="w-3.5 h-3.5 text-slate-400" />
-                    <span className="hidden sm:inline">Tips</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleCloseAssessmentModal}
-                    className={MODAL_TOKENS.controls.ghostCloseBtn}
-                    title="Tutup (Esc)"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={handleCloseAssessmentModal}
+                  className="rounded-lg p-1.5 text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC] transition cursor-pointer shrink-0"
+                  title="Tutup (Esc)"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
 
               {/* 2. Modal Body */}
-              <div className={MODAL_TOKENS.colors.body}>
-                {/* 2A. Toolbar: Mode Penilaian & Actions Dropdown */}
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  {/* Kiri: Metode Agregasi (jika Bulanan) atau Info Mode (jika Sekali) */}
-                  {assessmentModal.inputPattern === "BULANAN" ? (
-                    <div className="flex items-center gap-2">
-                      <label htmlFor="modal-agg-select" className="text-xs font-medium text-slate-600">
-                        Metode Agregasi:
-                      </label>
-                      <select
-                        id="modal-agg-select"
-                        value={assessmentModal.aggregationMethod}
-                        onChange={(e) =>
+              <div className="overflow-y-auto flex-1 p-5 sm:p-6 space-y-4 text-[#0F172A] bg-white">
+                {/* 2A. Toolbar: Pilihan Metode Isi (Tahunan vs Bulanan) & Metode Agregasi */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#E2E8F0]">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-xs font-semibold text-[#0F172A]">Metode Isi:</span>
+                    <div className="inline-flex items-center p-0.5 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0]">
+                      <button
+                        type="button"
+                        onClick={() =>
                           setAssessmentModal((prev) => ({
                             ...prev,
-                            aggregationMethod: e.target.value as any,
+                            inputPattern: "SEKALI",
                           }))
                         }
-                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 transition cursor-pointer shadow-2xs"
+                        className={`px-3 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer ${
+                          assessmentModal.inputPattern === "SEKALI"
+                            ? "bg-[#2563EB] text-white shadow-2xs"
+                            : "text-[#64748B] hover:text-[#0F172A]"
+                        }`}
                       >
-                        <option value="AVG">AVG (Rata-rata)</option>
-                        <option value="SUM">SUM (Penjumlahan)</option>
-                        <option value="MIN">MIN (Nilai Terendah)</option>
-                        <option value="MAX">MAX (Nilai Tertinggi)</option>
-                        <option value="LAST_VALUE">Last Value (Bulan Terakhir)</option>
-                      </select>
+                        Tahunan
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setAssessmentModal((prev) => ({
+                            ...prev,
+                            inputPattern: "BULANAN",
+                          }))
+                        }
+                        className={`px-3 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer ${
+                          assessmentModal.inputPattern === "BULANAN"
+                            ? "bg-[#2563EB] text-white shadow-2xs"
+                            : "text-[#64748B] hover:text-[#0F172A]"
+                        }`}
+                      >
+                        Bulanan
+                      </button>
                     </div>
-                  ) : (
-                    <div className="text-xs text-slate-500 font-medium">
-                      Input nilai capaian satu periode
-                    </div>
-                  )}
+                  </div>
 
-                  {/* Kanan: Mode Penilaian & Actions Dropdown */}
-                  <div className="flex items-center gap-2.5">
-                    {/* Mode Penilaian: Sekali / Bulanan */}
-                    <div className="inline-flex items-center gap-3 text-xs bg-slate-50 border border-slate-200 px-3 py-1 rounded-lg">
-                      <label className="inline-flex items-center gap-1.5 cursor-pointer text-xs font-medium text-slate-700 select-none">
-                        <input
-                          type="radio"
-                          name="modalInputPattern"
-                          value="SEKALI"
-                          checked={assessmentModal.inputPattern === "SEKALI"}
-                          onChange={() =>
-                            setAssessmentModal((prev) => ({
-                              ...prev,
-                              inputPattern: "SEKALI",
-                            }))
-                          }
-                          className="w-3.5 h-3.5 text-blue-600 border-slate-300 focus:ring-blue-500 cursor-pointer"
-                        />
-                        <span>Sekali</span>
-                      </label>
-
-                      <label className="inline-flex items-center gap-1.5 cursor-pointer text-xs font-medium text-slate-700 select-none">
-                        <input
-                          type="radio"
-                          name="modalInputPattern"
-                          value="BULANAN"
-                          checked={assessmentModal.inputPattern === "BULANAN"}
-                          onChange={() =>
-                            setAssessmentModal((prev) => ({
-                              ...prev,
-                              inputPattern: "BULANAN",
-                            }))
-                          }
-                          className="w-3.5 h-3.5 text-blue-600 border-slate-300 focus:ring-blue-500 cursor-pointer"
-                        />
-                        <span>Bulanan</span>
-                      </label>
-                    </div>
-
-                    {/* Actions Dropdown: Import & Export Excel */}
-                    {assessmentModal.inputPattern === "BULANAN" && (
-                      <div className="relative" ref={modalActionsRef}>
-                        <button
-                          type="button"
-                          onClick={() => setIsModalActionsOpen((prev) => !prev)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg shadow-2xs transition cursor-pointer"
-                          aria-expanded={isModalActionsOpen}
-                        >
-                          <span>Actions</span>
-                          <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isModalActionsOpen ? "rotate-180" : ""}`} />
-                        </button>
-
-                        {isModalActionsOpen && (
-                          <div className="absolute right-0 mt-1 w-40 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-30 animate-in fade-in zoom-in-95 duration-100">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setIsModalActionsOpen(false);
-                                modalFileInputRef.current?.click();
-                              }}
-                              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 transition cursor-pointer text-left"
-                            >
-                              <Upload className="w-3.5 h-3.5 text-slate-500" />
-                              <span>Import Excel</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setIsModalActionsOpen(false);
-                                handleExportMonthlyExcel(ind);
-                              }}
-                              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 transition cursor-pointer text-left"
-                            >
-                              <Download className="w-3.5 h-3.5 text-slate-500" />
-                              <span>Export Excel</span>
-                            </button>
-                          </div>
-                        )}
-
-                        <input
-                          ref={modalFileInputRef}
-                          type="file"
-                          accept=".xlsx, .xls, .csv"
-                          onChange={handleImportMonthlyExcel}
-                          className="hidden"
-                        />
-                      </div>
-                    )}
+                  <div className="flex items-center gap-2">
+                    <label htmlFor="modal-agg-select" className="text-xs font-medium text-[#64748B]">
+                      Agregasi Bulanan:
+                    </label>
+                    <select
+                      id="modal-agg-select"
+                      disabled={assessmentModal.inputPattern === "SEKALI"}
+                      value={assessmentModal.aggregationMethod}
+                      onChange={(e) =>
+                        setAssessmentModal((prev) => ({
+                          ...prev,
+                          aggregationMethod: e.target.value as any,
+                        }))
+                      }
+                      className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${
+                        assessmentModal.inputPattern === "BULANAN"
+                          ? "border-[#E2E8F0] bg-white text-[#0F172A] focus:border-[#2563EB] focus:outline-none cursor-pointer"
+                          : "border-[#E2E8F0] bg-[#F8FAFC] text-slate-400 cursor-not-allowed opacity-70"
+                      }`}
+                    >
+                      <option value="AVG">AVG (Rata-rata)</option>
+                      <option value="SUM">SUM (Penjumlahan)</option>
+                      <option value="MIN">MIN (Nilai Terendah)</option>
+                      <option value="MAX">MAX (Nilai Tertinggi)</option>
+                      <option value="LAST_VALUE">Last Value (Bulan Terakhir)</option>
+                    </select>
                   </div>
                 </div>
 
-                {/* 2B. Area Input Utama */}
-                {assessmentModal.inputPattern === "SEKALI" ? (
-                  /* Input Sekali */
-                  <div className="p-4 border border-slate-200 rounded-lg bg-slate-50/50 space-y-3 max-w-lg">
-                    <div className="space-y-1.5">
-                      <label htmlFor="modal-actual-input" className={MODAL_TOKENS.typography.label}>
-                        Nilai Actual {ind.unit ? `(${ind.unit})` : ""}
+                {/* 2B. Bagian 1: Input / Nilai Tahunan (Editable saat Tahunan, Read-Only saat Bulanan) */}
+                <div
+                  className={`rounded-xl border p-3.5 transition ${
+                    assessmentModal.inputPattern === "SEKALI"
+                      ? "bg-white border-[#2563EB]/40 shadow-2xs"
+                      : "bg-[#F8FAFC] border-[#E2E8F0]"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-[#0F172A]">Nilai Tahunan</span>
+                      {assessmentModal.inputPattern === "SEKALI" ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-[#EFF6FF] text-[#2563EB]">
+                          Aktif Diisi
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-slate-200/70 text-[#64748B]">
+                          <Lock className="w-2.5 h-2.5" />
+                          <span>Read-only (Otomatis dari {assessmentModal.aggregationMethod} Bulanan)</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
+                    <div>
+                      <label htmlFor="modal-actual-input" className="block text-[11px] font-medium text-[#64748B] mb-1">
+                        Actual Tahunan {ind.unit ? `(${ind.unit})` : ""}
                       </label>
                       <div className="relative">
                         <input
                           id="modal-actual-input"
                           type="text"
                           inputMode="decimal"
-                          autoFocus
-                          value={assessmentModal.singleActualStr}
-                          onChange={(e) =>
+                          readOnly={assessmentModal.inputPattern !== "SEKALI"}
+                          disabled={assessmentModal.inputPattern !== "SEKALI"}
+                          value={
+                            assessmentModal.inputPattern === "SEKALI"
+                              ? assessmentModal.singleActualStr
+                              : actualPeriodeDisplay !== "-"
+                              ? actualPeriodeDisplay
+                              : ""
+                          }
+                          onChange={(e) => {
+                            if (assessmentModal.inputPattern !== "SEKALI") return;
                             setAssessmentModal((prev) => ({
                               ...prev,
                               singleActualStr: e.target.value,
-                            }))
-                          }
+                            }));
+                          }}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter") {
+                            if (e.key === "Enter" && assessmentModal.inputPattern === "SEKALI") {
                               e.preventDefault();
                               handleSaveAssessmentModal();
                             }
                           }}
-                          placeholder={ind.measurementType === "BOOLEAN" ? "Contoh: Ya / Selesai / 1" : "0"}
-                          className={`${MODAL_TOKENS.controls.inputActual} ${ind.unit ? "pr-9" : ""}`}
+                          placeholder={
+                            assessmentModal.inputPattern === "SEKALI"
+                              ? ind.measurementType === "BOOLEAN"
+                                ? "Contoh: Ya / Selesai / 1"
+                                : "Masukkan nilai tahunan..."
+                              : "Otomatis dari bulanan"
+                          }
+                          className={`w-full h-9 rounded-lg border px-3 text-xs font-semibold tabular-nums transition ${
+                            assessmentModal.inputPattern === "SEKALI"
+                              ? "border-slate-300 bg-white text-[#0F172A] focus:border-[#2563EB] focus:outline-none focus:ring-1 focus:ring-[#2563EB]"
+                              : "border-[#E2E8F0] bg-slate-100 text-[#64748B] cursor-not-allowed select-none"
+                          }`}
                         />
-                        {ind.unit && (
-                          <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-xs text-slate-400">
-                            {ind.unit}
-                          </div>
-                        )}
                       </div>
                     </div>
 
-                    {/* Quick Choice Chips untuk Text / Boolean jika ada di scoringRules */}
-                    {ind.scoringRules && ind.scoringRules.length > 0 && (ind.measurementType === "BOOLEAN" || ind.direction === "NOT_APPLICABLE") && (
-                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                        <span className="text-[11px] text-slate-500">Pilihan cepat:</span>
+                    <div className="flex items-center justify-between sm:justify-around bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-3 py-2 sm:col-span-2 h-9 sm:mt-5">
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <span className="text-[#64748B]">Realisasi:</span>
+                        <strong className="font-semibold text-[#0F172A] tabular-nums">
+                          {actualPeriode !== null
+                            ? periodScoreRes.isNotApplicable
+                              ? "N/A"
+                              : periodScoreRes.realizationPctDisplay
+                            : "-"}
+                        </strong>
+                      </div>
+                      <span className="text-slate-300">|</span>
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <span className="text-[#64748B]">Score:</span>
+                        <strong className="font-bold text-[#2563EB] tabular-nums">
+                          {actualPeriode !== null && periodScoreRes.score !== null
+                            ? `${periodScoreRes.score} pt`
+                            : "-"}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Quick Choice Chips untuk Text / Boolean saat mode Tahunan */}
+                  {assessmentModal.inputPattern === "SEKALI" &&
+                    ind.scoringRules &&
+                    ind.scoringRules.length > 0 &&
+                    (ind.measurementType === "BOOLEAN" || ind.direction === "NOT_APPLICABLE") && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-2.5 mt-2.5 border-t border-[#E2E8F0]">
+                        <span className="text-[11px] text-[#64748B]">Pilihan cepat:</span>
                         {ind.scoringRules.map((rule, idx) => (
                           <button
                             key={rule.id || idx}
@@ -4815,388 +4856,292 @@ export function MonthlyAssessmentView({
                                 singleActualStr: rule.label || String(rule.minValue ?? rule.score),
                               }))
                             }
-                            className="px-2.5 py-0.5 rounded text-xs bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 transition cursor-pointer"
+                            className="px-2.5 py-0.5 rounded text-xs bg-white hover:bg-slate-100 border border-[#E2E8F0] text-[#0F172A] transition cursor-pointer"
                           >
                             {rule.label || `Skor ${rule.score}`}
                           </button>
                         ))}
                       </div>
                     )}
+                </div>
 
-                    {/* Ringkasan Hasil Nilai Sekali */}
-                    <div className="flex items-center justify-between pt-2 border-t border-slate-200/80 text-xs">
-                      <div className="flex items-center gap-3">
-                        <span>
-                          Realisasi:{" "}
-                          <strong className="font-semibold text-blue-700 tabular-nums">
-                            {actualPeriode !== null ? (periodScoreRes.isNotApplicable ? "N/A" : periodScoreRes.realizationPctDisplay) : "-"}
-                          </strong>
+                {/* 2C. Bagian 2: Tabel Bulanan (Editable saat Bulanan, Read-Only saat Tahunan) */}
+                <div
+                  className={`rounded-xl border transition ${
+                    assessmentModal.inputPattern === "BULANAN"
+                      ? "border-[#E2E8F0] bg-white"
+                      : "border-[#E2E8F0] bg-[#F8FAFC] opacity-65"
+                  }`}
+                >
+                  <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-[#E2E8F0]">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-[#0F172A]">Rincian Bulanan</span>
+                      {assessmentModal.inputPattern === "BULANAN" ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-[#EFF6FF] text-[#2563EB]">
+                          Aktif Diisi ({filledCount}/12 bulan)
                         </span>
-                        <span className="text-slate-300">•</span>
-                        <span>
-                          Band:{" "}
-                          <strong className="font-medium text-slate-700">
-                            {periodScoreRes.bandLabel || "-"}
-                          </strong>
-                        </span>
-                      </div>
-                      <div>
-                        <span>
-                          Score:{" "}
-                          <strong className="font-bold text-blue-700 tabular-nums">
-                            {periodScoreRes.score !== null ? `${periodScoreRes.score} pt` : "-"}
-                          </strong>
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  /* Input Bulanan: Tabel 12 Bulan (Fokus Utama) */
-                  <div className="space-y-3">
-                    <div className="border border-slate-200 rounded-lg overflow-hidden">
-                      <div className="max-h-64 overflow-y-auto">
-                        <table className="w-full text-left text-xs border-collapse">
-                          <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 text-[11px] font-semibold text-slate-600 uppercase tracking-wider z-10">
-                            <tr>
-                              <th className="px-3.5 py-2 w-32">Bulan</th>
-                              <th className="px-3.5 py-2 text-right w-24">Target</th>
-                              <th className="px-3.5 py-2 text-right w-28">Actual</th>
-                              <th className="px-3.5 py-2 text-center w-24">Realisasi</th>
-                              <th className="px-3.5 py-2 text-center w-24">Score</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100 bg-white">
-                            {monthRows.map((r) => {
-                              const isPopoverOpen = scoreDetailMonth === r.month;
-                              return (
-                                <tr key={r.month} className="hover:bg-slate-50/70 transition-colors">
-                                  <td className="px-3.5 py-1.5 font-medium text-slate-800">
-                                    {r.monthName}{" "}
-                                    <span className="text-[11px] text-slate-400 font-normal">({r.monthShort})</span>
-                                  </td>
-                                  <td className="px-3.5 py-1.5 text-right">
-                                    <input
-                                      type="text"
-                                      inputMode="decimal"
-                                      value={r.targetStr}
-                                      onChange={(e) => handleAssessmentModalInputChange(r.month, "target", e.target.value)}
-                                      placeholder="0"
-                                      className="w-20 rounded border border-slate-200 bg-white px-2 py-0.5 text-right text-xs tabular-nums text-slate-700 focus:border-blue-600 focus:outline-none transition"
-                                    />
-                                  </td>
-                                  <td className="px-3.5 py-1.5 text-right">
-                                    <input
-                                      type="text"
-                                      inputMode="decimal"
-                                      value={r.actualStr}
-                                      onChange={(e) => handleAssessmentModalInputChange(r.month, "actual", e.target.value)}
-                                      placeholder="0"
-                                      className="w-24 rounded border border-slate-300 bg-white px-2 py-0.5 text-right text-xs tabular-nums font-semibold text-blue-700 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 transition"
-                                    />
-                                  </td>
-                                  <td className="px-3.5 py-1.5 text-center tabular-nums">
-                                    {r.actualNum !== null ? (
-                                      r.isNotApplicable ? (
-                                        <span className="text-slate-500 text-[11px]">N/A</span>
-                                      ) : (
-                                        <span className="text-slate-800 font-medium text-xs">
-                                          {r.realizationPctDisplay}
-                                        </span>
-                                      )
-                                    ) : (
-                                      <span className="text-slate-300">-</span>
-                                    )}
-                                  </td>
-                                  <td className="px-3.5 py-1.5 text-center relative tabular-nums">
-                                    <div className="inline-flex items-center justify-center gap-1">
-                                      <span className="font-semibold text-blue-700">
-                                        {r.score !== null ? r.score : <span className="text-slate-300 font-normal">-</span>}
-                                      </span>
-                                      {r.actualNum !== null && (
-                                        <button
-                                          type="button"
-                                          onClick={() => setScoreDetailMonth(isPopoverOpen ? null : r.month)}
-                                          className="p-0.5 text-slate-400 hover:text-blue-600 transition rounded cursor-pointer"
-                                          title="Lihat Band & detail perhitungan"
-                                          aria-label={`Detail skor bulan ${r.monthName}`}
-                                        >
-                                          <Info className="w-[11px] h-[11px] stroke-[1.75]" />
-                                        </button>
-                                      )}
-                                    </div>
-
-                                    {/* Popover Detail Skor & Band */}
-                                    {isPopoverOpen && (
-                                      <div
-                                        ref={scorePopoverRef}
-                                        className={`absolute right-4 ${
-                                          r.month > 6 ? "bottom-full mb-1" : "top-full mt-1"
-                                        } z-30 w-60 p-3 bg-white rounded-lg shadow-xl border border-slate-200 text-left text-xs animate-in fade-in zoom-in-95 duration-100`}
-                                      >
-                                        <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-slate-100">
-                                          <span className="font-bold text-slate-800">Detail Skor · {r.monthName}</span>
-                                          <button
-                                            type="button"
-                                            onClick={() => setScoreDetailMonth(null)}
-                                            className="text-slate-400 hover:text-slate-600 p-0.5 rounded cursor-pointer"
-                                          >
-                                            <X className="w-3 h-3" />
-                                          </button>
-                                        </div>
-                                        <div className="space-y-1.5 text-slate-600">
-                                          <div className="flex justify-between items-center">
-                                            <span>Target:</span>
-                                            <span className="font-medium text-slate-800 tabular-nums">
-                                              {formatTargetNumber(r.targetNum !== null ? r.targetNum : parsedMasterTarget, ind.unit)}
-                                            </span>
-                                          </div>
-                                          <div className="flex justify-between items-center">
-                                            <span>Actual:</span>
-                                            <span className="font-medium text-slate-800 tabular-nums">
-                                              {r.actualNum !== null ? `${r.actualNum} ${ind.unit || ""}` : "-"}
-                                            </span>
-                                          </div>
-                                          <div className="flex justify-between items-center">
-                                            <span>Realisasi:</span>
-                                            <span className="font-semibold text-blue-700 tabular-nums">
-                                              {r.isNotApplicable ? "N/A" : r.realizationPctDisplay}
-                                            </span>
-                                          </div>
-                                          <div className="flex justify-between items-center pt-0.5">
-                                            <span>Band:</span>
-                                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${getBandBadgeStyle(r.score, ind.maxScore, r.score === null)}`}>
-                                              {r.bandLabel || "Tidak cocok"}
-                                            </span>
-                                          </div>
-                                          <div className="flex justify-between items-center font-bold pt-1.5 border-t border-slate-100 text-slate-800">
-                                            <span>Score:</span>
-                                            <span className="text-blue-700 tabular-nums">
-                                              {r.score !== null ? `${r.score} pt` : "-"}
-                                            </span>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    )}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-
-                    {/* 2C. Hasil Agregasi: Compact Summary di bawah tabel */}
-                    <div className="flex flex-wrap items-center justify-between gap-3 px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs">
-                      <div className="flex items-center gap-3.5 text-slate-600">
-                        <span>
-                          Terisi <strong className="font-semibold text-slate-800">{filledCount}/12 bulan</strong>
-                        </span>
-                        <span className="text-slate-300">•</span>
-                        <span>
-                          Hasil Agregasi ({assessmentModal.aggregationMethod}):{" "}
-                          <strong className="font-semibold text-blue-700 tabular-nums">
-                            {actualPeriodeDisplay !== "-" ? `${actualPeriodeDisplay}${ind.unit ? ` ${ind.unit}` : ""}` : "Belum terisi"}
-                          </strong>
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-3 text-slate-600">
-                        <span>
-                          Realisasi:{" "}
-                          <strong className="font-semibold text-blue-700 tabular-nums">
-                            {actualPeriode !== null ? (periodScoreRes.isNotApplicable ? "N/A" : periodScoreRes.realizationPctDisplay) : "-"}
-                          </strong>
-                        </span>
-                        <span className="text-slate-300">•</span>
-                        <span>
-                          Score:{" "}
-                          <strong className="font-bold text-blue-700 tabular-nums">
-                            {actualPeriode === null ? "-" : periodScoreRes.score === null ? "-" : `${periodScoreRes.score} pt`}
-                          </strong>
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* 2D. Section "Catatan & Bukti" (2 Kolom Desktop, 1 Kolom Mobile) */}
-                <div className="space-y-2 pt-1 border-t border-slate-100">
-                  <h4 className="text-xs font-semibold text-slate-700">Catatan & Bukti</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
-                    {/* Kolom Bukti Pendukung */}
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <label className="text-xs font-medium text-slate-600">Bukti Pendukung</label>
-                        {assessmentModal.evidenceFileName && (
-                          <span className="text-[11px] font-medium text-emerald-600">Terlampir</span>
-                        )}
-                      </div>
-
-                      {assessmentModal.evidenceFileName ? (
-                        <div className="flex items-center justify-between p-2 rounded-lg bg-slate-50 border border-slate-200">
-                          <div className="flex items-center gap-2 min-w-0 mr-2">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                            <span className="text-xs font-medium text-slate-800 truncate" title={assessmentModal.evidenceFileName}>
-                              {assessmentModal.evidenceFileName}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const effectiveParamId = assessmentModal.indicator?.parameterId ?? 0;
-                                const list = localEvidenceMap[effectiveParamId] || assessmentModal.indicator?.evidenceList || [];
-                                let itemsToView = [...list];
-                                if (itemsToView.length === 0 && assessmentModal.evidenceUrl) {
-                                  itemsToView = [
-                                    {
-                                      id: assessmentModal.evidenceId || 0,
-                                      appraisalId: initialDetail?.appraisalId || 0,
-                                      parameterId: effectiveParamId,
-                                      fileName: assessmentModal.evidenceFileName!,
-                                      filePath: assessmentModal.evidenceUrl,
-                                      fileType: assessmentModal.evidenceFileType || "ATTACHMENT",
-                                    },
-                                  ];
-                                }
-                                setEvidenceViewerState({
-                                  isOpen: true,
-                                  indicatorName: assessmentModal.indicator?.indicatorName,
-                                  categoryName: assessmentModal.categoryName,
-                                  items: itemsToView,
-                                });
-                              }}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition cursor-pointer"
-                              title="Lihat Pratinjau Dokumen Bukti"
-                            >
-                              <Eye className="w-3.5 h-3.5 text-blue-600" />
-                              <span>Lihat Bukti</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (assessmentModal.evidenceId) {
-                                  handleDeleteEvidence(assessmentModal.evidenceId);
-                                } else {
-                                  setAssessmentModal((prev) => ({
-                                    ...prev,
-                                    evidenceFileName: null,
-                                    evidenceUrl: null,
-                                    evidenceFileType: null,
-                                    evidenceId: null,
-                                  }));
-                                }
-                              }}
-                              className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer shrink-0"
-                              title="Hapus berkas bukti"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
                       ) : (
-                        <label className="flex items-center justify-center gap-2 p-2 rounded-lg border border-dashed border-slate-300 hover:border-blue-400 bg-slate-50/50 hover:bg-blue-50/20 text-xs text-slate-600 cursor-pointer transition">
-                          {assessmentModal.isUploadingEvidence ? (
-                            <>
-                              <span className="inline-block w-3.5 h-3.5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                              <span>Mengunggah berkas...</span>
-                            </>
-                          ) : (
-                            <>
-                              <Plus className="w-3.5 h-3.5 text-slate-500" />
-                              <span>+ Upload File</span>
-                            </>
-                          )}
-                          <input
-                            type="file"
-                            accept=".pdf,.xlsx,.xls,.doc,.docx,.jpg,.jpeg,.png"
-                            disabled={assessmentModal.isUploadingEvidence}
-                            onChange={(e) => {
-                              const f = e.target.files?.[0];
-                              if (f) {
-                                handleUploadModalEvidence(f);
-                              }
-                            }}
-                            className="hidden"
-                          />
-                        </label>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-slate-200/70 text-[#64748B]">
+                          <Lock className="w-2.5 h-2.5" />
+                          <span>Read-only (Mode Tahunan Aktif)</span>
+                        </span>
                       )}
+                    </div>
+                  </div>
 
-                      {/* Tautan jika ada multiple evidence files */}
-                      {assessmentModal.indicator?.parameterId &&
-                        (localEvidenceMap[assessmentModal.indicator.parameterId] || assessmentModal.indicator.evidenceList || []).length > 1 && (
+                  <div className="max-h-56 overflow-y-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="sticky top-0 bg-[#F8FAFC] border-b border-[#E2E8F0] text-[11px] font-semibold text-[#64748B] uppercase tracking-wider z-10">
+                        <tr>
+                          <th className="px-3.5 py-2 w-32">Bulan</th>
+                          <th className="px-3.5 py-2 text-right w-24">Target</th>
+                          <th className="px-3.5 py-2 text-right w-28">Actual</th>
+                          <th className="px-3.5 py-2 text-center w-24">Realisasi</th>
+                          <th className="px-3.5 py-2 text-center w-20">Score</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#E2E8F0]">
+                        {monthRows.map((r) => {
+                          const isMonthlyEditable = assessmentModal.inputPattern === "BULANAN";
+                          return (
+                            <tr
+                              key={r.month}
+                              className={
+                                isMonthlyEditable
+                                  ? "bg-white hover:bg-[#F8FAFC] transition-colors"
+                                  : "bg-[#F8FAFC]"
+                              }
+                            >
+                              <td className="px-3.5 py-1.5 font-medium text-[#0F172A]">
+                                {r.monthName}
+                              </td>
+                              <td className="px-3.5 py-1.5 text-right">
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  readOnly={!isMonthlyEditable}
+                                  disabled={!isMonthlyEditable}
+                                  value={r.targetStr}
+                                  onChange={(e) =>
+                                    handleAssessmentModalInputChange(r.month, "target", e.target.value)
+                                  }
+                                  placeholder="0"
+                                  className={`w-20 rounded border px-2 py-0.5 text-right text-xs tabular-nums transition ${
+                                    isMonthlyEditable
+                                      ? "border-[#E2E8F0] bg-white text-[#0F172A] focus:border-[#2563EB] focus:outline-none"
+                                      : "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed select-none"
+                                  }`}
+                                />
+                              </td>
+                              <td className="px-3.5 py-1.5 text-right">
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  readOnly={!isMonthlyEditable}
+                                  disabled={!isMonthlyEditable}
+                                  value={r.actualStr}
+                                  onChange={(e) =>
+                                    handleAssessmentModalInputChange(r.month, "actual", e.target.value)
+                                  }
+                                  placeholder="0"
+                                  className={`w-24 rounded border px-2 py-0.5 text-right text-xs tabular-nums font-semibold transition ${
+                                    isMonthlyEditable
+                                      ? "border-slate-300 bg-white text-[#2563EB] focus:border-[#2563EB] focus:outline-none focus:ring-1 focus:ring-[#2563EB]"
+                                      : "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed select-none"
+                                  }`}
+                                />
+                              </td>
+                              <td className="px-3.5 py-1.5 text-center tabular-nums">
+                                {r.actualNum !== null ? (
+                                  r.isNotApplicable ? (
+                                    <span className="text-[#64748B] text-[11px]">N/A</span>
+                                  ) : (
+                                    <span className="text-[#0F172A] font-medium text-xs">
+                                      {r.realizationPctDisplay}
+                                    </span>
+                                  )
+                                ) : (
+                                  <span className="text-slate-300">-</span>
+                                )}
+                              </td>
+                              <td className="px-3.5 py-1.5 text-center tabular-nums">
+                                <span className="font-semibold text-[#2563EB]">
+                                  {r.score !== null ? r.score : <span className="text-slate-300 font-normal">-</span>}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* 2D. Bukti Pendukung & Catatan */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start pt-2 border-t border-[#E2E8F0]">
+                  {/* Kolom Bukti Pendukung */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-[#64748B]">Bukti Pendukung</label>
+                      {assessmentModal.evidenceFileName && (
+                        <span className="text-[11px] font-medium text-[#16A34A]">Terlampir</span>
+                      )}
+                    </div>
+
+                    {assessmentModal.evidenceFileName ? (
+                      <div className="flex items-center justify-between p-2 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0]">
+                        <div className="flex items-center gap-2 min-w-0 mr-2">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A] shrink-0" />
+                          <span className="text-xs font-medium text-[#0F172A] truncate" title={assessmentModal.evidenceFileName}>
+                            {assessmentModal.evidenceFileName}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
                           <button
                             type="button"
                             onClick={() => {
-                              const effectiveParamId = assessmentModal.indicator!.parameterId!;
-                              const list = localEvidenceMap[effectiveParamId] || assessmentModal.indicator!.evidenceList || [];
+                              const effectiveParamId = assessmentModal.indicator?.parameterId ?? 0;
+                              const list = localEvidenceMap[effectiveParamId] || assessmentModal.indicator?.evidenceList || [];
+                              let itemsToView = [...list];
+                              if (itemsToView.length === 0 && assessmentModal.evidenceUrl) {
+                                itemsToView = [
+                                  {
+                                    id: assessmentModal.evidenceId || 0,
+                                    appraisalId: initialDetail?.appraisalId || 0,
+                                    parameterId: effectiveParamId,
+                                    fileName: assessmentModal.evidenceFileName!,
+                                    filePath: assessmentModal.evidenceUrl,
+                                    fileType: assessmentModal.evidenceFileType || "ATTACHMENT",
+                                  },
+                                ];
+                              }
                               setEvidenceViewerState({
                                 isOpen: true,
                                 indicatorName: assessmentModal.indicator?.indicatorName,
                                 categoryName: assessmentModal.categoryName,
-                                items: list,
+                                items: itemsToView,
                               });
                             }}
-                            className="text-[11px] text-blue-600 hover:underline font-medium inline-flex items-center gap-1 pt-0.5 cursor-pointer"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-semibold text-[#2563EB] bg-[#EFF6FF] hover:bg-blue-100 transition cursor-pointer"
+                            title="Lihat Pratinjau Dokumen Bukti"
                           >
-                            <Paperclip className="w-3 h-3 text-blue-500" />
-                            <span>Lihat semua ({(localEvidenceMap[assessmentModal.indicator.parameterId] || assessmentModal.indicator.evidenceList || []).length} berkas bukti)</span>
+                            <Eye className="w-3.5 h-3.5 text-[#2563EB]" />
+                            <span>Lihat</span>
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (assessmentModal.evidenceId) {
+                                handleDeleteEvidence(assessmentModal.evidenceId);
+                              } else {
+                                setAssessmentModal((prev) => ({
+                                  ...prev,
+                                  evidenceFileName: null,
+                                  evidenceUrl: null,
+                                  evidenceFileType: null,
+                                  evidenceId: null,
+                                }));
+                              }
+                            }}
+                            className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer shrink-0"
+                            title="Hapus berkas bukti"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <label className="flex items-center justify-center gap-2 p-2.5 rounded-lg border border-dashed border-slate-300 hover:border-[#2563EB] bg-[#F8FAFC] hover:bg-[#EFF6FF]/40 text-xs text-[#64748B] cursor-pointer transition">
+                        {assessmentModal.isUploadingEvidence ? (
+                          <>
+                            <span className="inline-block w-3.5 h-3.5 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+                            <span>Mengunggah berkas...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Plus className="w-3.5 h-3.5 text-[#64748B]" />
+                            <span>Upload File Bukti</span>
+                          </>
                         )}
-                    </div>
+                        <input
+                          type="file"
+                          accept=".pdf,.xlsx,.xls,.doc,.docx,.jpg,.jpeg,.png"
+                          disabled={assessmentModal.isUploadingEvidence}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) {
+                              handleUploadModalEvidence(f);
+                            }
+                          }}
+                          className="hidden"
+                        />
+                      </label>
+                    )}
 
-                    {/* Kolom Catatan / Komentar */}
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-slate-600">Catatan / Komentar</label>
-                      <textarea
-                        rows={2}
-                        value={assessmentModal.comment}
-                        onChange={(e) =>
-                          setAssessmentModal((prev) => ({
-                            ...prev,
-                            comment: e.target.value,
-                          }))
-                        }
-                        placeholder="Tuliskan keterangan capaian atau catatan penilaian..."
-                        className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs text-slate-800 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 transition resize-none"
-                      />
-                    </div>
+                    {assessmentModal.indicator?.parameterId &&
+                      (localEvidenceMap[assessmentModal.indicator.parameterId] || assessmentModal.indicator.evidenceList || []).length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const effectiveParamId = assessmentModal.indicator!.parameterId!;
+                            const list = localEvidenceMap[effectiveParamId] || assessmentModal.indicator!.evidenceList || [];
+                            setEvidenceViewerState({
+                              isOpen: true,
+                              indicatorName: assessmentModal.indicator?.indicatorName,
+                              categoryName: assessmentModal.categoryName,
+                              items: list,
+                            });
+                          }}
+                          className="text-[11px] text-[#2563EB] hover:underline font-medium inline-flex items-center gap-1 pt-0.5 cursor-pointer"
+                        >
+                          <Paperclip className="w-3 h-3 text-[#2563EB]" />
+                          <span>Lihat semua ({(localEvidenceMap[assessmentModal.indicator.parameterId] || assessmentModal.indicator.evidenceList || []).length} berkas)</span>
+                        </button>
+                      )}
+                  </div>
+
+                  {/* Kolom Catatan / Komentar */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-[#64748B]">Catatan / Komentar</label>
+                    <textarea
+                      rows={2}
+                      value={assessmentModal.comment}
+                      onChange={(e) =>
+                        setAssessmentModal((prev) => ({
+                          ...prev,
+                          comment: e.target.value,
+                        }))
+                      }
+                      placeholder="Tambahkan catatan (opsional)..."
+                      className="w-full rounded-lg border border-[#E2E8F0] bg-white p-2 text-xs text-[#0F172A] placeholder:text-slate-400 focus:border-[#2563EB] focus:outline-none focus:ring-1 focus:ring-[#2563EB] transition resize-none"
+                    />
                   </div>
                 </div>
               </div>
 
               {/* 3. Modal Sticky Footer */}
-              <div className={MODAL_TOKENS.colors.footer}>
-                <div className="flex items-center text-xs text-slate-500">
-                  <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-2 shrink-0" />
-                  <span>Data dari Master Template KPI</span>
-                </div>
-
-                <div className="flex items-center gap-2.5">
-                  <button
-                    type="button"
-                    onClick={handleCloseAssessmentModal}
-                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition active:scale-95 cursor-pointer shadow-2xs"
-                  >
-                    Batal
-                  </button>
-                  <button
-                    type="button"
-                    disabled={isSaving}
-                    onClick={handleSaveAssessmentModal}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-4 py-2 text-xs font-bold text-white shadow-xs transition active:scale-95 cursor-pointer disabled:opacity-50"
-                    style={{ backgroundColor: "#2563EB", color: "#FFFFFF" }}
-                    title="Simpan penilaian dan kembali ke formulir penilaian"
-                  >
-                    {isSaving ? (
-                      <Loader2 className="w-4 h-4 text-white shrink-0 animate-spin" />
-                    ) : (
-                      <Save className="w-4 h-4 text-white shrink-0" />
-                    )}
-                    <span>{isSaving ? "Menyimpan..." : "Simpan Penilaian"}</span>
-                  </button>
-                </div>
+              <div className="border-t border-[#E2E8F0] bg-white px-6 py-3.5 flex items-center justify-end gap-2.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleCloseAssessmentModal}
+                  className="rounded-lg border border-[#E2E8F0] bg-white px-4 py-2 text-xs font-semibold text-[#0F172A] hover:bg-[#F8FAFC] transition active:scale-95 cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  disabled={isSaving}
+                  onClick={handleSaveAssessmentModal}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#2563EB] hover:bg-blue-700 px-4 py-2 text-xs font-bold text-white shadow-xs transition active:scale-95 cursor-pointer disabled:opacity-50"
+                  style={{ backgroundColor: "#2563EB", color: "#FFFFFF" }}
+                >
+                  {isSaving ? (
+                    <Loader2 className="w-4 h-4 text-white shrink-0 animate-spin" />
+                  ) : (
+                    <Save className="w-4 h-4 text-white shrink-0" />
+                  )}
+                  <span>{isSaving ? "Menyimpan..." : "Simpan Penilaian"}</span>
+                </button>
               </div>
             </div>
           </div>
@@ -5763,22 +5708,16 @@ export function MonthlyAssessmentView({
                 </div>
 
                 <div className="p-3.5">
-                  <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Posisi & Dept</span>
+                  <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Departemen</span>
                   <span className="mt-0.5 block text-xs sm:text-sm font-medium text-slate-800 truncate">
-                    {initialDetail?.employee.jobPosition || currentEmp?.jobPosition}
-                  </span>
-                  <span className="block text-[11px] text-slate-500 truncate">
-                    {initialDetail?.employee.departmentName || currentEmp?.departmentName}
+                    {initialDetail?.employee.departmentName || currentEmp?.departmentName || "-"}
                   </span>
                 </div>
 
                 <div className="p-3.5">
-                  <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Master Template & Periode</span>
-                  <span className="mt-0.5 block text-xs sm:text-sm font-medium text-slate-800 truncate" title={activeTemplateName}>
-                    {simpleTemplateLabel ? `Template ${simpleTemplateLabel}` : activeTemplateName}
-                  </span>
-                  <span className="block text-[11px] text-slate-500">
-                    Tahun {currentYear} • {overallProgressParameters} Parameter Terisi
+                  <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Job Position</span>
+                  <span className="mt-0.5 block text-xs sm:text-sm font-medium text-slate-800 truncate">
+                    {initialDetail?.employee.jobPosition || currentEmp?.jobPosition || "-"}
                   </span>
                 </div>
 
@@ -5809,37 +5748,29 @@ export function MonthlyAssessmentView({
                 </div>
 
                 <div className="flex items-center gap-2 text-xs text-slate-500">
-                  {simpleTemplateLabel && (
-                    <>
-                      <span>
-                        Template: <strong className="font-semibold text-slate-700">{simpleTemplateLabel}</strong>
-                      </span>
-                      <span className="text-slate-300">•</span>
-                    </>
-                  )}
                   <span>
                     {liveCategories.reduce((acc, c) => acc + c.indicators.length, 0)} Indikator Aktif
                   </span>
                 </div>
               </div>
 
-              <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+              <div className="overflow-x-auto rounded-lg border border-slate-300 bg-white">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50/90 text-xs font-medium text-slate-600 select-none">
-                      <th className="py-2.5 px-3.5 text-left border-r border-slate-200 min-w-[240px]">
+                    <tr className="border-b-2 border-slate-300 bg-slate-100/90 text-xs font-semibold text-slate-700 select-none">
+                      <th className="py-2.5 px-3.5 text-left border-r border-slate-300 min-w-[240px]">
                         Parameter / Indikator KPI
                       </th>
-                      <th className="py-2.5 px-3 text-left border-r border-slate-200 min-w-[160px]">
+                      <th className="py-2.5 px-3 text-left border-r border-slate-300 min-w-[160px]">
                         Kriteria Penilaian
                       </th>
-                      <th className="py-2.5 px-2 text-center border-r border-slate-200 w-16 min-w-[60px]">
+                      <th className="py-2.5 px-2 text-center border-r border-slate-300 w-16 min-w-[60px]">
                         Skor
                       </th>
-                      <th className="py-2.5 px-2.5 text-center border-r border-slate-200 w-24 min-w-[88px]">
+                      <th className="py-2.5 px-2.5 text-center border-r border-slate-300 w-24 min-w-[88px]">
                         Realisasi
                       </th>
-                      <th className="py-2.5 px-2 text-center border-r border-slate-200 w-20 min-w-[72px]">
+                      <th className="py-2.5 px-2 text-center border-r border-slate-300 w-20 min-w-[72px]">
                         Bobot
                       </th>
                       <th className="py-2.5 px-3 text-right w-28 min-w-[90px]">
@@ -5851,36 +5782,36 @@ export function MonthlyAssessmentView({
                     {liveCategories.map((cat) => (
                       <React.Fragment key={cat.categoryId}>
                         {/* Parameter Header Row */}
-                        <tr className="bg-slate-50/90 border-b border-slate-200 text-slate-800 select-none">
-                          <td className="px-3.5 py-2 border-r border-slate-200">
+                        <tr className="bg-[#F1F5F9] border-t-2 border-b-2 border-slate-300 text-slate-900 select-none">
+                          <td className="px-3.5 py-2.5 border-r border-slate-300 border-t-2 border-b-2 border-slate-300">
                             <div className="flex items-center gap-2">
-                              <span className="text-xs font-medium text-slate-500 shrink-0">
+                              <span className="text-xs font-bold text-slate-900 shrink-0">
                                 {cat.categoryNumber}.
                               </span>
-                              <span className="text-xs font-medium uppercase tracking-tight text-slate-800">
+                              <span className="text-xs font-bold uppercase tracking-tight text-slate-900">
                                 {cat.categoryName}
                               </span>
                             </div>
                           </td>
-                          <td className="px-3 py-2 text-slate-600 font-normal text-xs border-r border-slate-200">
+                          <td className="px-3 py-2.5 text-slate-600 font-medium text-xs border-r border-slate-300 border-t-2 border-b-2 border-slate-300">
                             {cat.indicators.length} {cat.indicators.length > 1 ? "Indikator" : "Indikator Utama"}
                           </td>
-                          <td className="px-2 py-2 text-center text-slate-400 text-xs border-r border-slate-200 font-normal">
+                          <td className="px-2 py-2.5 text-center text-slate-400 text-xs border-r border-slate-300 border-t-2 border-b-2 border-slate-300 font-normal">
                             -
                           </td>
-                          <td className="px-2.5 py-2 text-center text-slate-400 text-xs border-r border-slate-200 font-normal">
+                          <td className="px-2.5 py-2.5 text-center text-slate-400 text-xs border-r border-slate-300 border-t-2 border-b-2 border-slate-300 font-normal">
                             -
                           </td>
-                          <td className="px-2 py-2 text-center font-normal text-slate-800 text-xs border-r border-slate-200">
+                          <td className="px-2 py-2.5 text-center font-semibold text-slate-900 text-xs border-r border-slate-300 border-t-2 border-b-2 border-slate-300">
                             {Math.round(cat.categoryWeight * 100)}%
                           </td>
-                          <td className="px-3 py-2 text-right font-medium text-slate-800 text-xs">
+                          <td className="px-3 py-2.5 text-right font-bold text-slate-900 text-xs border-t-2 border-b-2 border-slate-300">
                             {(cat.annualScorePercentage ?? cat.scorePercentage ?? 0).toFixed(1)}%
                           </td>
                         </tr>
 
                         {/* Indicator Rows */}
-                        {cat.indicators.map((ind) => {
+                        {cat.indicators.map((ind, indIdx) => {
                           const isExpanded = expandedRecapId === ind.appraisalItemId;
                           const effectiveScore =
                             ind.annualScore !== null && ind.annualScore !== undefined
@@ -5892,23 +5823,28 @@ export function MonthlyAssessmentView({
                             (ind.annualActual !== null && ind.annualActual !== undefined) ||
                             (ind.actualValue !== null && ind.actualValue !== undefined) ||
                             effectiveScore !== null;
+                          const displayIndCode =
+                            ind.indicatorCode ||
+                            (cat.indicators.length > 1 ? `${cat.categoryNumber}.${indIdx + 1}` : "");
 
                           return (
                             <React.Fragment key={ind.appraisalItemId}>
                               <tr
-                                className={`hover:bg-slate-50/50 transition-colors border-b border-slate-200 ${
+                                className={`hover:bg-slate-50/50 transition-colors border-b-2 border-slate-300 ${
                                   isExpanded ? "bg-slate-50/60" : "bg-white"
                                 }`}
                               >
                                 {/* 1. Parameter / Indikator KPI */}
-                                <td className="py-2 px-3.5 pl-6 border-r border-slate-200 align-middle">
+                                <td className="py-2.5 px-3.5 pl-6 border-r border-slate-200 border-b-2 border-slate-300 align-middle">
                                   <div className="flex items-start gap-2">
-                                    <span className="text-xs text-slate-400 font-normal shrink-0 mt-0.5 w-6">
-                                      {ind.indicatorCode}
-                                    </span>
+                                    {displayIndCode && (
+                                      <span className="text-xs text-slate-900 font-bold shrink-0 mt-0.5 w-7">
+                                        {displayIndCode}
+                                      </span>
+                                    )}
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-center gap-1.5 flex-wrap">
-                                        <span className="font-normal text-slate-800 text-xs leading-snug">
+                                        <span className="font-medium text-slate-800 text-xs leading-snug">
                                           {ind.indicatorName}
                                         </span>
                                         <button
@@ -5983,7 +5919,7 @@ export function MonthlyAssessmentView({
                                 </td>
 
                                 {/* 2. Kriteria Penilaian (Flat sub-rows dengan border tipis) */}
-                                <td className="p-0 border-r border-slate-200 align-middle">
+                                <td className="p-0 border-r border-slate-200 border-b-2 border-slate-300 align-middle">
                                   {ind.scoringRules && ind.scoringRules.length > 0 ? (
                                     <div className="divide-y divide-slate-200/80">
                                       {ind.scoringRules.slice(0, 3).map((r, rIdx) => {
@@ -6023,7 +5959,7 @@ export function MonthlyAssessmentView({
                                 </td>
 
                                 {/* 3. Skor (Flat sub-rows dengan border tipis) */}
-                                <td className="p-0 border-r border-slate-200 align-middle text-center">
+                                <td className="p-0 border-r border-slate-200 border-b-2 border-slate-300 align-middle text-center">
                                   {ind.scoringRules && ind.scoringRules.length > 0 ? (
                                     <div className="divide-y divide-slate-200/80">
                                       {ind.scoringRules.slice(0, 3).map((r, rIdx) => {
@@ -6051,7 +5987,7 @@ export function MonthlyAssessmentView({
                                 </td>
 
                                 {/* 4. Realisasi (Menampilkan Skor Utama + Ikon Info) */}
-                                <td className="py-2 px-2.5 border-r border-slate-200 text-center align-middle font-sans">
+                                <td className="py-2.5 px-2.5 border-r border-slate-200 border-b-2 border-slate-300 text-center align-middle font-sans">
                                   {!hasActual || effectiveScore === null ? (
                                     <span className="text-slate-300 text-xs font-normal select-none cursor-default">-</span>
                                   ) : (
@@ -6080,7 +6016,7 @@ export function MonthlyAssessmentView({
                                 </td>
 
                                 {/* 5. Bobot */}
-                                <td className="py-2 px-2 border-r border-slate-200 text-center align-middle font-sans">
+                                <td className="py-2.5 px-2 border-r border-slate-200 border-b-2 border-slate-300 text-center align-middle font-sans">
                                   {(() => {
                                     const isSingleIndicator = cat.indicators.length === 1;
                                     const weightPctVal = isSingleIndicator
@@ -6095,7 +6031,7 @@ export function MonthlyAssessmentView({
                                 </td>
 
                                 {/* 6. Skor Akhir (Nilai Skor Akhir + Ikon Info) */}
-                                <td className="py-2 px-3 text-right align-middle font-sans">
+                                <td className="py-2.5 px-3 border-b-2 border-slate-300 text-right align-middle font-sans">
                                   {(() => {
                                     const finalScoreStr = ind.annualFinalScoreDisplay || ind.finalScoreDisplay;
                                     if (!finalScoreStr || finalScoreStr === "-") {
@@ -6500,7 +6436,7 @@ export function MonthlyAssessmentView({
                       cat.indicators.map((ind) => (
                         <tr key={ind.appraisalItemId} className="hover:bg-slate-50/50">
                           <td className="px-3 py-2 font-normal text-slate-800 border-r border-slate-200">
-                            <span className="text-slate-400 mr-1.5">{ind.indicatorCode}</span>
+                            <span className="font-bold text-slate-900 mr-1.5">{ind.indicatorCode}</span>
                             {ind.indicatorName}
                           </td>
                           <td className="px-2 py-2 text-right text-slate-600 border-r border-slate-200">
@@ -7021,6 +6957,58 @@ export function MonthlyAssessmentView({
           }}
         />
       )}
+
+      {/* ================================================== */}
+      {/* 9. STICKY BOTTOM ACTION BAR KHUSUS MOBILE (md:hidden) */}
+      {/* ================================================== */}
+      <div className="fixed bottom-0 inset-x-0 z-30 border-t border-slate-200/90 bg-white/95 px-4 py-3 backdrop-blur-md shadow-lg md:hidden flex items-center justify-between gap-3">
+        {/* Ringkasan Skor & Progres Pengisian */}
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900">
+            <span>Skor: {liveAnnualOverall.overallScoreDisplay}</span>
+            <span className="text-[11px] font-semibold text-blue-600">({liveAnnualOverall.grade})</span>
+          </div>
+          <div className="text-[10px] text-slate-500 font-medium truncate">
+            {overallProgressParameters} Parameter
+          </div>
+        </div>
+
+        {/* Tombol Aksi Sentuh Cepat */}
+        <div className="flex items-center gap-2 shrink-0">
+          {canSubmitMyAssessment && currentStage === "PENILAI" && (
+            initialDetail?.myAssessmentStatus?.hasRevisionPending ? (
+              <button
+                type="button"
+                disabled={isSubmittingMyAssessment}
+                onClick={handleSubmitMyAssessment}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 px-3.5 py-2 text-xs font-bold text-white shadow-xs transition active:scale-95 disabled:opacity-50 cursor-pointer"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>{isSubmittingMyAssessment ? "Mengirim..." : "Kirim Revisi"}</span>
+              </button>
+            ) : initialDetail?.myAssessmentStatus?.isSubmitted ? (
+              <button
+                type="button"
+                onClick={() => setIsAuditModalOpen(true)}
+                className="inline-flex items-center gap-1 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 shadow-2xs"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                <span>Terkirim ✓</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={isSubmittingMyAssessment || !isFormEditable}
+                onClick={handleSubmitMyAssessment}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2 text-xs font-bold text-white shadow-xs transition active:scale-95 disabled:opacity-50 cursor-pointer"
+              >
+                <Send className="h-3.5 w-3.5" />
+                <span>{isSubmittingMyAssessment ? "Mengirim..." : "Kirim Penilaian"}</span>
+              </button>
+            )
+          )}
+        </div>
+      </div>
 
     </div>
   );

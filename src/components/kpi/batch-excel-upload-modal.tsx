@@ -34,6 +34,7 @@ import {
   type IndicatorMatchingTarget,
 } from "@/lib/excel-batch-assessment";
 import { saveBatchExcelAssessmentAction } from "@/lib/monthly-assessment-actions";
+import { saveBatchDepartmentKpisFromExcelAction } from "@/lib/actions";
 import { normalizeWeight } from "@/lib/scoring";
 import { EvidenceViewerModal } from "./evidence-viewer-modal";
 import type { AppraisalEvidenceItem } from "@/types/monthly-assessment";
@@ -550,6 +551,22 @@ export function BatchExcelUploadModal({
         throw new Error(res.error || "Gagal menyimpan penilaian dari Excel.");
       }
 
+      // Jika terdapat sheet Realisasi Departemen, simpan ke database
+      let deptMsg = "";
+      if (multiSheetData?.departmentKpis && multiSheetData.departmentKpis.length > 0) {
+        try {
+          const deptSaveRes = await saveBatchDepartmentKpisFromExcelAction({
+            year: periodYear || new Date().getFullYear(),
+            items: multiSheetData.departmentKpis,
+          });
+          if (deptSaveRes.success && deptSaveRes.count > 0) {
+            deptMsg = `<p class="text-xs text-sky-700 bg-sky-50 border border-sky-200 p-2 rounded-lg mt-2"><b>Department KPI:</b> ${deptSaveRes.count} parameter realisasi departemen berhasil diperbarui.</p>`;
+          }
+        } catch (deptErr) {
+          console.warn("Gagal menyimpan Department KPI dari sheet:", deptErr);
+        }
+      }
+
       await Swal.fire({
         icon: "success",
         title: "Penilaian Berhasil Diterapkan!",
@@ -557,6 +574,7 @@ export function BatchExcelUploadModal({
           <p class="text-sm text-slate-700">
             Sebanyak <b>${res.updatedCount} parameter</b> dari sheet <b>${activeSheet.sheetName}</b> berhasil diperbarui dan skor penilaian telah dihitung ulang otomatis.
           </p>
+          ${deptMsg}
         `,
         confirmButtonColor: "#0284c7",
       });

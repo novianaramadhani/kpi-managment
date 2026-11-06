@@ -20,6 +20,7 @@ import {
   Sparkles,
   Search,
   Check,
+  Upload,
 } from "lucide-react";
 import type {
   KpiCategory,
@@ -184,8 +185,13 @@ export function KpiStructureForm({
       fd.append("masterParameterId", String(p.id));
       fd.append("description", p.description || "");
       fd.append("unit", p.unit || "%");
-      fd.append("target", "100");
-      fd.append("weight", "20");
+      fd.append("target", p.target || "100");
+      fd.append(
+        "weight",
+        p.weight != null && !isNaN(Number(p.weight))
+          ? String(Number(p.weight) <= 1 && Number(p.weight) > 0 ? Math.round(Number(p.weight) * 100) : Number(p.weight))
+          : "20"
+      );
       fd.append("picRole", p.picRole || "HEAD_DEPT");
       fd.append("measurementType", p.inputType === "PERCENTAGE" ? "PERCENTAGE" : "NUMERIC");
       fd.append("direction", "HIGHER_IS_BETTER");
@@ -1268,6 +1274,7 @@ export function KpiStructureForm({
     name: string;
     description: string;
     weight: string;
+    categoryWeight?: string;
     unit: string;
     target?: string | null;
     picRole?: string;
@@ -1284,6 +1291,26 @@ export function KpiStructureForm({
     }>;
   }) => {
     const { categoryId, editingIndicator } = indicatorModalState;
+
+    // 1. Simpan perubahan bobot parameter (kategori) jika diubah
+    if (data.categoryWeight !== undefined && data.categoryWeight !== null) {
+      const activeCategory = sortedCategories.find((c) => c.id === categoryId);
+      if (activeCategory) {
+        const newCatWeight = Number(data.categoryWeight);
+        const currentCatWeight = Math.round(Number(activeCategory.weight) * 100);
+        if (!isNaN(newCatWeight) && newCatWeight > 0 && newCatWeight !== currentCatWeight) {
+          const catFd = new FormData();
+          catFd.append("id", String(categoryId));
+          catFd.append("templateId", String(templateId));
+          catFd.append("name", activeCategory.name);
+          catFd.append("weight", String(newCatWeight));
+          catFd.append("categoryType", activeCategory.categoryType || "SUB_ITEMS");
+          await updateCategoryAction(catFd);
+        }
+      }
+    }
+
+    // 2. Simpan parameter / indikator
     const fd = new FormData();
     fd.append("templateId", String(templateId));
     fd.append("categoryId", String(categoryId));
@@ -1329,22 +1356,24 @@ export function KpiStructureForm({
       >
         <div className="relative">
           <div
-            className={`min-h-[38px] px-3.5 py-1.5 rounded-xl border flex items-center justify-between gap-3 text-xs transition-all shadow-xs ${
+            className={`min-h-[38px] px-3 sm:px-3.5 py-2 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 text-xs transition-all shadow-xs ${
               errorIssues.length > 0
-                ? "bg-rose-50/30 border-rose-200/90 text-slate-800"
+                ? "bg-rose-50/30 border-rose-200/90 text-[#0F172A]"
                 : warningIssues.length > 0
-                ? "bg-amber-50/30 border-amber-200/90 text-slate-800"
-                : "bg-white border-slate-200/80 text-slate-800"
+                ? "bg-amber-50/30 border-amber-200/90 text-[#0F172A]"
+                : "bg-[#FFFFFF] border-[#E2E8F0] text-[#0F172A]"
             }`}
           >
             {/* Sisi Kiri: Status Validasi Berdasarkan Severity */}
             {uniqueIssues.length === 0 ? (
-              <div className="flex items-center gap-2 font-normal min-w-0 truncate">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                <span className="truncate text-slate-700 text-[12.5px]">
-                  Struktur valid <span className="text-slate-400">&bull;</span> Total{" "}
-                  <span className="font-semibold text-slate-900">{totalCatWeightPct}%</span> / Target{" "}
-                  <span className="font-semibold text-slate-900">{templateTargetPct}%</span>
+              <div className="flex items-center gap-2.5 font-normal min-w-0 truncate">
+                <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold bg-[#F0FDF4] text-[#16A34A] border border-[#BBF7D0] shrink-0">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-[#16A34A] shrink-0" />
+                  <span>Struktur Valid</span>
+                </span>
+                <span className="truncate text-[#64748B] text-[12.5px]">
+                  Total <span className="font-semibold text-[#0F172A]">{totalCatWeightPct}%</span> / Target{" "}
+                  <span className="font-semibold text-[#0F172A]">{templateTargetPct}%</span>
                 </span>
               </div>
             ) : (
@@ -1360,44 +1389,44 @@ export function KpiStructureForm({
                 ) : warningIssues.length > 0 ? (
                   <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
                 ) : (
-                  <Info className="w-4 h-4 text-blue-500 shrink-0" />
+                  <Info className="w-4 h-4 text-[#2563EB] shrink-0" />
                 )}
 
-                <span className="truncate text-[12.5px] text-slate-800">
+                <span className="truncate text-[12.5px] text-[#0F172A]">
                   {errorIssues.length > 0 ? (
                     <>
                       <span className="font-semibold text-rose-700">{errorIssues.length} kendala kritis</span>
                       {warningIssues.length > 0 && (
-                        <span className="text-slate-500 font-normal">, {warningIssues.length} peringatan</span>
+                        <span className="text-[#64748B] font-normal">, {warningIssues.length} peringatan</span>
                       )}
                     </>
                   ) : warningIssues.length > 0 ? (
                     <span className="font-medium text-amber-800">{warningIssues.length} perhatian validasi</span>
                   ) : (
-                    <span className="font-medium text-slate-700">
+                    <span className="font-medium text-[#0F172A]">
                       Bobot belum lengkap ({totalCatWeightPct}% dari {templateTargetPct}%)
                     </span>
                   )}
-                  <span className="text-slate-400"> &bull; </span>
-                  <span className="text-slate-500">Total </span>
-                  <span className="font-semibold text-slate-900">{totalCatWeightPct}%</span>
-                  <span className="text-slate-400"> / Target </span>
-                  <span className="font-semibold text-slate-900">{templateTargetPct}%</span>
+                  <span className="text-[#CBD5E1]"> &bull; </span>
+                  <span className="text-[#64748B]">Total </span>
+                  <span className="font-semibold text-[#0F172A]">{totalCatWeightPct}%</span>
+                  <span className="text-[#CBD5E1]"> / Target </span>
+                  <span className="font-semibold text-[#0F172A]">{templateTargetPct}%</span>
                 </span>
 
-                <span className="inline-flex items-center gap-0.5 text-xs text-slate-500 group-hover:text-slate-800 shrink-0 ml-1.5 transition-colors">
+                <span className="inline-flex items-center gap-0.5 text-xs text-[#64748B] group-hover:text-[#0F172A] shrink-0 ml-1.5 transition-colors">
                   <span>{isIssuesListOpen ? "Tutup" : "Detail"}</span>
                   {isIssuesListOpen ? (
-                    <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
+                    <ChevronUp className="w-3.5 h-3.5 text-[#64748B]" />
                   ) : (
-                    <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                    <ChevronDown className="w-3.5 h-3.5 text-[#64748B]" />
                   )}
                 </span>
               </button>
             )}
 
-            {/* Sisi Kanan: Ikon Info (ⓘ) & Tombol + Tambah Kategori */}
-            <div className="flex items-center gap-1.5 shrink-0">
+            {/* Sisi Kanan: Ikon Info (ⓘ), Import Excel, & Tombol + Tambah Kategori */}
+            <div className="flex items-center gap-1.5 shrink-0 w-full sm:w-auto justify-end flex-wrap">
               {/* Popover Petunjuk Tabel */}
               <div className="relative inline-block" ref={guideRef}>
                 <button
@@ -1406,7 +1435,7 @@ export function KpiStructureForm({
                     e.stopPropagation();
                     setIsGuideOpen((prev) => !prev);
                   }}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:text-slate-900 hover:bg-slate-100 shadow-2xs transition cursor-pointer"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-[#E2E8F0] bg-[#FFFFFF] text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC] shadow-2xs transition cursor-pointer"
                   title="Petunjuk Struktur KPI"
                   aria-label="Petunjuk Struktur KPI"
                 >
@@ -1414,31 +1443,31 @@ export function KpiStructureForm({
                 </button>
 
                 {isGuideOpen && (
-                  <div className="absolute right-0 top-full mt-1.5 z-30 w-72 rounded-xl bg-slate-900 text-white p-3.5 shadow-xl border border-slate-700 text-xs animate-in fade-in zoom-in-95 duration-150">
-                    <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2.5">
-                      <span className="font-bold text-[11px] uppercase tracking-wider text-slate-300">
+                  <div className="absolute right-0 top-full mt-1.5 z-30 w-72 rounded-xl bg-white text-slate-700 p-3.5 shadow-xl border border-emerald-200 text-xs animate-in fade-in zoom-in-95 duration-150">
+                    <div className="flex items-center justify-between border-b border-emerald-100 pb-2 mb-2.5">
+                      <span className="font-bold text-[11px] uppercase tracking-wider text-emerald-700">
                         Struktur Template KPI
                       </span>
                       <button
                         type="button"
                         onClick={() => setIsGuideOpen(false)}
-                        className="text-slate-400 hover:text-white text-xs p-0.5 cursor-pointer"
+                        className="text-slate-400 hover:text-emerald-700 text-xs p-0.5 cursor-pointer"
                       >
                         ✕
                       </button>
                     </div>
 
-                    <div className="space-y-2 text-[11px] text-slate-300 leading-snug">
+                    <div className="space-y-2 text-[11px] text-slate-600 leading-snug">
                       <div>
-                        <strong className="text-white block font-semibold">Hierarki: Parameter → Indikator → Kriteria</strong>
+                        <strong className="text-emerald-800 block font-semibold">Hierarki: Parameter → Indikator → Kriteria</strong>
                         <span>Total bobot seluruh Parameter harus mencapai target ({templateTargetPct}%). Bobot Indikator di dalam Parameter dinormalisasi ke 100%.</span>
                       </div>
-                      <div className="pt-1 border-t border-slate-800">
-                        <strong className="text-white block font-semibold">Mode Parameter</strong>
-                        <span><b>Langsung (DIRECT)</b>: Parameter tidak punya Indikator, langsung memiliki Kriteria Scoring sendiri. <b>Sub-item (SUB_ITEMS)</b>: Parameter memiliki beberapa Indikator, masing-masing dengan Kriteria Scoring.</span>
+                      <div className="pt-1.5 border-t border-emerald-100">
+                        <strong className="text-emerald-800 block font-semibold">Mode Parameter</strong>
+                        <span><b className="text-emerald-700">Langsung (DIRECT)</b>: Parameter tidak punya Indikator, langsung memiliki Kriteria Scoring sendiri. <b className="text-emerald-700">Sub-item (SUB_ITEMS)</b>: Parameter memiliki beberapa Indikator, masing-masing dengan Kriteria Scoring.</span>
                       </div>
-                      <div className="pt-1 border-t border-slate-800">
-                        <strong className="text-white block font-semibold">Kriteria Scoring Terstruktur</strong>
+                      <div className="pt-1.5 border-t border-emerald-100">
+                        <strong className="text-emerald-800 block font-semibold">Kriteria Scoring Terstruktur</strong>
                         <span>Setiap kriteria harus berbasis angka dan kondisi (≥, ≤, &lt;, &gt;, Rentang) agar kalkulasi otomatis bisa berjalan.</span>
                       </div>
                     </div>
@@ -1446,27 +1475,24 @@ export function KpiStructureForm({
                 )}
               </div>
 
-              {/* Tombol Buka Kamus */}
-              <button
-                type="button"
-                onClick={() => setIsPickerOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs transition cursor-pointer"
-                title="Cari & pilih indikator dari Kamus Master Parameter"
-              >
-                <BookOpen className="w-3.5 h-3.5 text-slate-500" />
-                <span>Kamus Parameter</span>
-                {deptMasterParams.length > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                    {deptMasterParams.length}
-                  </span>
-                )}
-              </button>
+              {/* Tombol Import Excel (Outlined Primary Blue) */}
+              {onImportExcel && (
+                <button
+                  type="button"
+                  onClick={onImportExcel}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-[#2563EB] bg-[#FFFFFF] hover:bg-[#EFF6FF] border border-[#2563EB] rounded-lg shadow-2xs transition cursor-pointer"
+                  title="Import Template Excel untuk mengisi indikator, bobot, dan kriteria skor"
+                >
+                  <Upload className="w-3.5 h-3.5 text-[#2563EB]" />
+                  <span>Import Excel</span>
+                </button>
+              )}
 
-              {/* Tombol Tambah Kategori */}
+              {/* Tombol Tambah Kategori (Solid Primary Blue) */}
               <button
                 type="button"
                 onClick={handleStartAddCategory}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-2xs transition cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-[#2563EB] hover:bg-blue-700 border border-[#2563EB] rounded-lg shadow-2xs transition cursor-pointer"
                 title="Tambah Kategori / Parameter Baru"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -2103,6 +2129,10 @@ export function KpiStructureForm({
         const categoryOrder = activeCategoryIndex >= 0 ? activeCategoryIndex + 1 : 1;
         const categoryName = activeCategory?.name || "";
         const catParams = categoryParametersMap.get(indicatorModalState.categoryId) || [];
+        const isDirectCategory = activeCategory?.categoryType === "DIRECT" || catParams.length <= 1;
+        const hasMultipleSubIndicators = activeCategory?.categoryType !== "DIRECT" && catParams.length > 1;
+        const categoryWeight = activeCategory ? Math.round(Number(activeCategory.weight) * 100) : 20;
+
         let indicatorIndex = catParams.length + 1;
         if (indicatorModalState.editingIndicator) {
           const foundIdx = catParams.findIndex((p) => p.id === indicatorModalState.editingIndicator?.id);
@@ -2120,6 +2150,9 @@ export function KpiStructureForm({
             categoryId={indicatorModalState.categoryId}
             categoryName={categoryName}
             categoryOrder={categoryOrder}
+            categoryWeight={categoryWeight}
+            isDirectCategory={isDirectCategory}
+            hasMultipleSubIndicators={hasMultipleSubIndicators}
             indicatorCode={indicatorCode}
             templateId={templateId}
             editingIndicator={indicatorModalState.editingIndicator}

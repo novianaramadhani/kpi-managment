@@ -5,7 +5,13 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { UserSession, RoleType, UserProfileDetail } from "@/lib/auth";
 import { logoutUser, changeUserPasswordAction, getCurrentUserProfileDetailAction } from "@/lib/auth";
+import { getRoleBadgeInfo } from "@/lib/role-badge";
 import Swal from "sweetalert2";
+import {
+  KpiGuidedTour,
+  fetchUserOnboardingStatus,
+  saveUserOnboardingStatus,
+} from "@/components/kpi-guided-tour";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -44,6 +50,106 @@ export function AppShell({ children, initialUser }: AppShellProps) {
   const [voluntaryConfirmPass, setVoluntaryConfirmPass] = useState("");
   const [voluntaryPassError, setVoluntaryPassError] = useState("");
   const [isSubmittingVoluntaryPass, setIsSubmittingVoluntaryPass] = useState(false);
+
+  // User Guidelines / Contextual Guided Tour State
+  const [isTourOpen, setIsTourOpen] = useState(false);
+  const [tourStep, setTourStep] = useState(1);
+  const onboardingCheckedRef = useRef<string | null>(null);
+
+  // Check onboarding status once per authenticated user session (First Login Auto-Trigger)
+  useEffect(() => {
+    if (!currentUser || !currentUser.nik || currentUser.mustChangePassword) return;
+    if (pathname === "/" || pathname === "/login") return;
+
+    // If tour was actively open before a hard navigation in the same browser session, restore it
+    const activeSessionTour =
+      typeof window !== "undefined"
+        ? window.sessionStorage.getItem(`kpi_tour_open_${currentUser.nik}`)
+        : null;
+    if (activeSessionTour) {
+      const savedStep = Number(activeSessionTour) || 1;
+      setTourStep(savedStep);
+      setIsTourOpen(true);
+      onboardingCheckedRef.current = currentUser.nik;
+      return;
+    }
+
+    if (onboardingCheckedRef.current === currentUser.nik) return;
+    onboardingCheckedRef.current = currentUser.nik;
+
+    let cancelled = false;
+    fetchUserOnboardingStatus(currentUser.nik).then((res) => {
+      if (cancelled) return;
+      if (res.status === "NOT_STARTED") {
+        setTourStep(1);
+        setIsTourOpen(true);
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem(`kpi_tour_open_${currentUser.nik}`, "1");
+        }
+        void saveUserOnboardingStatus(currentUser.nik, "IN_PROGRESS", 1);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser, pathname]);
+
+  const handleOpenGuidelines = () => {
+    setIsProfileOpen(false);
+    setIsMobileMenuOpen(false);
+    setTourStep(1);
+    setIsTourOpen(true);
+    if (currentUser?.nik) {
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem(`kpi_tour_open_${currentUser.nik}`, "1");
+      }
+      void saveUserOnboardingStatus(currentUser.nik, "IN_PROGRESS", 1);
+    }
+  };
+
+  const handleTourStepChange = (nextStep: number) => {
+    setTourStep(nextStep);
+    if (currentUser?.nik) {
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem(
+          `kpi_tour_open_${currentUser.nik}`,
+          String(nextStep)
+        );
+      }
+      void saveUserOnboardingStatus(currentUser.nik, "IN_PROGRESS", nextStep);
+    }
+  };
+
+  const handleTourSkip = () => {
+    setIsTourOpen(false);
+    if (currentUser?.nik) {
+      if (typeof window !== "undefined") {
+        window.sessionStorage.removeItem(`kpi_tour_open_${currentUser.nik}`);
+      }
+      void saveUserOnboardingStatus(currentUser.nik, "SKIPPED", tourStep);
+    }
+  };
+
+  const handleTourClose = () => {
+    setIsTourOpen(false);
+    if (currentUser?.nik) {
+      if (typeof window !== "undefined") {
+        window.sessionStorage.removeItem(`kpi_tour_open_${currentUser.nik}`);
+      }
+      void saveUserOnboardingStatus(currentUser.nik, "SKIPPED", tourStep);
+    }
+  };
+
+  const handleTourFinish = () => {
+    setIsTourOpen(false);
+    if (currentUser?.nik) {
+      if (typeof window !== "undefined") {
+        window.sessionStorage.removeItem(`kpi_tour_open_${currentUser.nik}`);
+      }
+      void saveUserOnboardingStatus(currentUser.nik, "COMPLETED", 6);
+    }
+  };
 
   // Close profile on route change
   useEffect(() => {
@@ -459,8 +565,129 @@ export function AppShell({ children, initialUser }: AppShellProps) {
     return pathname === baseHref || pathname.startsWith(baseHref + "/");
   };
 
+  const userInitials = (currentUser?.name || "U")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join("");
+
+  const { badgeClass: roleBadgeClass, label: roleBadgeLabel } = getRoleBadgeInfo(role);
+
+  const renderProfilePopoverContent = () => (
+    <>
+      {/* Header: Avatar, Nama, Role, Status & NIK */}
+      <div className="flex items-start gap-3 pb-3 border-b border-slate-100">
+        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-tr from-sky-600 to-indigo-600 text-white font-black text-sm shadow-xs ring-2 ring-white">
+          <span>{userInitials}</span>
+          <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <h4 className="font-bold text-sm text-slate-900 truncate max-w-[150px]" title={currentUser?.name}>
+              {currentUser?.name}
+            </h4>
+            <span className={`text-[10px] px-2 py-0.5 rounded-md border shrink-0 ${roleBadgeClass}`}>
+              {roleBadgeLabel}
+            </span>
+          </div>
+          <div className="text-[11px] text-slate-600 font-medium truncate mt-0.5" title={profileDetail?.jobPosition || currentUser?.jobPosition}>
+            {profileDetail?.jobPosition || currentUser?.jobPosition || "Karyawan"}
+          </div>
+          <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-400 font-mono">
+            <span>NIK: {currentUser?.nik}</span>
+            <span>•</span>
+            <span className="text-emerald-700 font-semibold font-sans flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              Aktif
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Informasi Kepegawaian (Clean 2-Column Grid) */}
+      <div className="py-3 border-b border-slate-100">
+        <div className="bg-slate-50/70 rounded-xl p-2.5 border border-slate-100 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+          <div>
+            <span className="text-[10px] text-slate-400 block font-medium">Job Level</span>
+            <span className="font-semibold text-slate-800 text-[11px] block truncate">
+              {isLoadingProfile ? "..." : profileDetail?.jobLevelName || "-"}
+            </span>
+          </div>
+          <div>
+            <span className="text-[10px] text-slate-400 block font-medium">Departemen</span>
+            <span className="font-semibold text-slate-800 text-[11px] block truncate" title={profileDetail?.departmentName || currentUser?.departmentName}>
+              {profileDetail?.departmentName || currentUser?.departmentName || "-"}
+            </span>
+          </div>
+          <div className="col-span-2 pt-1 border-t border-slate-200/50 flex items-center justify-between">
+            <span className="text-[10px] text-slate-400 font-medium">Operating Unit (OU)</span>
+            <span className="font-semibold text-slate-800 text-[11px]">
+              {profileDetail?.operatingUnit || currentUser?.operatingUnit || "HO"}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Hierarki Approval */}
+      <div className="py-2.5 border-b border-slate-100">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1.5">
+          Hierarki Persetujuan
+        </span>
+        <div className="space-y-1.5 text-[11px]">
+          <div className="flex items-center justify-between text-slate-600">
+            <span className="text-slate-400 shrink-0">Penilai:</span>
+            <span className="font-medium text-slate-800 truncate text-right ml-2" title={profileDetail?.appraiserName || "Atasan Langsung"}>
+              {isLoadingProfile ? "..." : profileDetail?.appraiserName || "Atasan Langsung"}
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-slate-600">
+            <span className="text-slate-400 shrink-0">Head Dept:</span>
+            <span className="font-medium text-slate-800 truncate text-right ml-2" title={profileDetail?.headDeptName || "Head Dept"}>
+              {isLoadingProfile ? "..." : profileDetail?.headDeptName || "Head Dept"}
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-slate-600">
+            <span className="text-slate-400 shrink-0">Manager:</span>
+            <span className="font-medium text-slate-800 truncate text-right ml-2" title={profileDetail?.managerName || "Manager Divisi"}>
+              {isLoadingProfile ? "..." : profileDetail?.managerName || "Manager Divisi"}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Footer Actions */}
+      <div className="pt-2.5 flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            setIsProfileOpen(false);
+            setIsVoluntaryPassModalOpen(true);
+          }}
+          className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 hover:text-slate-900 rounded-lg px-2.5 py-1.5 hover:bg-slate-100 transition cursor-pointer border border-transparent hover:border-slate-200"
+        >
+          <svg className="w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          </svg>
+          <span>Ubah Sandi</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100/80 border border-rose-200/80 rounded-lg px-3 py-1.5 transition cursor-pointer active:scale-95"
+        >
+          <svg className="w-3.5 h-3.5 text-rose-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+          </svg>
+          <span>Log Out</span>
+        </button>
+      </div>
+    </>
+  );
+
   return (
-    <div className="flex min-h-screen bg-slate-50 text-slate-900 antialiased">
+    <div className="flex min-h-screen bg-slate-50 text-slate-900 antialiased overflow-x-hidden max-w-full">
       {/* Sidebar Desktop (Clean Modern Enterprise) */}
       <aside
         className={`hidden md:flex flex-col shrink-0 bg-white border-r border-slate-200 text-slate-800 shadow-2xs z-20 sticky top-0 h-screen transition-all duration-300 ease-in-out ${
@@ -513,11 +740,13 @@ export function AppShell({ children, initialUser }: AppShellProps) {
         <nav className={`flex-1 overflow-y-auto py-3 space-y-1 ${isSidebarOpen ? "px-3" : "px-2"}`}>
           {visibleNav.map((l) => {
             const active = isActive(l.href);
+            const tourAttr = `nav-${l.href.replace(/[^a-z0-9]/gi, "-")}`;
             if (!isSidebarOpen) {
               return (
                 <Link
                   key={l.href}
                   href={l.href}
+                  data-tour={tourAttr}
                   title={l.label}
                   className={`flex h-10 w-10 items-center justify-center rounded-xl mx-auto transition-all cursor-pointer ${
                     active
@@ -534,6 +763,7 @@ export function AppShell({ children, initialUser }: AppShellProps) {
               <Link
                 key={l.href}
                 href={l.href}
+                data-tour={tourAttr}
                 className={`flex items-center justify-between rounded-xl px-3 py-2 text-xs transition-all group ${
                   active
                     ? "bg-blue-600 text-white shadow-xs font-semibold"
@@ -605,7 +835,7 @@ export function AppShell({ children, initialUser }: AppShellProps) {
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col max-w-full overflow-x-hidden">
         {/* Top Header Bar across all internal pages (Desktop - Clean & Minimal) */}
         <header className="sticky top-0 z-40 hidden md:flex items-center justify-between border-b border-slate-200 bg-white/95 px-6 py-3.5 backdrop-blur-md shadow-2xs">
           <div className="flex items-center gap-3">
@@ -650,42 +880,66 @@ export function AppShell({ children, initialUser }: AppShellProps) {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Help / User Guidelines Trigger Button */}
+            <button
+              type="button"
+              data-tour="help-guidelines-btn"
+              onClick={handleOpenGuidelines}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white hover:bg-blue-50 hover:border-blue-200 text-slate-700 hover:text-blue-700 px-3 py-2 text-xs font-semibold shadow-2xs transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+              title="Buka Panduan Penggunaan Sistem KPI (User Guidelines)"
+            >
+              <svg
+                className="h-4 w-4 text-blue-600 shrink-0"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+                />
+              </svg>
+              <span>Panduan</span>
+            </button>
+
             {currentUser && (
               <div ref={profileMenuRef} className="relative">
-                {/* Profile Trigger Button Desktop */}
+                {/* Modern Enterprise Profile Trigger Button Desktop */}
                 <button
                   type="button"
                   onClick={() => setIsProfileOpen((prev) => !prev)}
-                  className={`flex items-center gap-2.5 rounded-xl border px-3 py-1.5 transition active:scale-95 cursor-pointer text-left shadow-2xs ${
+                  className={`flex items-center gap-2.5 rounded-xl border px-2.5 py-1.5 transition-all duration-150 active:scale-95 cursor-pointer text-left shadow-2xs group ${
                     isProfileOpen
                       ? "border-sky-400 bg-white ring-2 ring-sky-400/20 shadow-xs"
-                      : "border-sky-200/80 bg-white/90 hover:bg-white hover:border-sky-300"
+                      : "border-slate-200/90 bg-white/90 hover:bg-white hover:border-slate-300 hover:shadow-xs"
                   }`}
-                  title="Klik untuk melihat informasi profil akun"
+                  title="Klik untuk melihat profil akun"
                 >
-                  {/* Profile Avatar Icon */}
-                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-800 font-bold text-white text-xs shadow-2xs">
-                    <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                    </svg>
+                  {/* Modern Avatar with Initials & Active Status Dot */}
+                  <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-600 font-bold text-white text-xs shadow-xs ring-1 ring-white/60">
+                    <span>{userInitials}</span>
+                    <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-white" />
                   </div>
 
                   <div className="hidden sm:block leading-tight text-left">
-                    <div className="font-extrabold text-slate-800 text-xs truncate max-w-[140px]">
+                    <div className="font-bold text-slate-800 text-xs truncate max-w-[140px] group-hover:text-sky-900 transition-colors">
                       {currentUser.name}
                     </div>
                     <div className="text-[10px] text-slate-400 font-medium truncate max-w-[140px]">
-                      {currentUser.jobPosition || role}
+                      {profileDetail?.jobPosition || currentUser.jobPosition || (profileDetail?.departmentName || "Karyawan")}
                     </div>
                   </div>
 
-                  <span className="rounded-full bg-slate-900 text-white font-extrabold px-2 py-0.5 text-[10px] uppercase tracking-wider shrink-0">
-                    {role}
+                  {/* Soft Role Badge */}
+                  <span className={`px-2 py-0.5 text-[10px] uppercase tracking-wider rounded-md border shrink-0 ${roleBadgeClass}`}>
+                    {roleBadgeLabel}
                   </span>
 
                   <svg
                     className={`h-3.5 w-3.5 text-slate-400 transition-transform duration-200 ${
-                      isProfileOpen ? "rotate-180 text-sky-600" : ""
+                      isProfileOpen ? "rotate-180 text-sky-600" : "group-hover:text-slate-600"
                     }`}
                     fill="none"
                     viewBox="0 0 24 24"
@@ -695,109 +949,10 @@ export function AppShell({ children, initialUser }: AppShellProps) {
                   </svg>
                 </button>
 
-                {/* Profile Information Popover (Clean, Simple & Compact) */}
+                {/* Modern Profile Popover Menu Desktop */}
                 {isProfileOpen && (
-                  <div className="absolute right-0 mt-2 w-72 sm:w-80 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-xl z-50 animate-in fade-in zoom-in-95 duration-150">
-                    {/* Header: Avatar kecil, Nama, NIK, Jabatan, Status */}
-                    <div className="flex items-center gap-2.5 pb-2.5 border-b border-slate-100">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-800 text-white font-bold text-xs shadow-2xs">
-                        {currentUser.name.charAt(0).toUpperCase()}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <h4 className="font-bold text-xs text-slate-900 truncate" title={currentUser.name}>
-                            {currentUser.name}
-                          </h4>
-                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded shrink-0">
-                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                            Aktif
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-slate-500 truncate mt-0.5" title={profileDetail?.jobPosition || currentUser.jobPosition}>
-                          {profileDetail?.jobPosition || currentUser.jobPosition || "Karyawan"}
-                        </div>
-                        <div className="text-[10px] font-mono text-slate-400">
-                          NIK: {currentUser.nik}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Informasi Kepegawaian (List 2 Kolom Sederhana, Tanpa Card/Border Tiap Field) */}
-                    <div className="py-2.5 border-b border-slate-100 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
-                      <div>
-                        <span className="text-[10px] text-slate-400 block">Job Level</span>
-                        <span className="font-semibold text-slate-800 text-[11px] block truncate">
-                          {isLoadingProfile ? "..." : profileDetail?.jobLevelName || "-"}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-slate-400 block">Departemen</span>
-                        <span className="font-semibold text-slate-800 text-[11px] block truncate" title={profileDetail?.departmentName || currentUser.departmentName}>
-                          {profileDetail?.departmentName || currentUser.departmentName || "-"}
-                        </span>
-                      </div>
-                      <div className="col-span-2">
-                        <span className="text-[10px] text-slate-400 block">Operating Unit (OU)</span>
-                        <span className="font-semibold text-slate-800 text-[11px] block truncate">
-                          {profileDetail?.operatingUnit || currentUser.operatingUnit || "HO"}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Hierarki Approval (List Compact, Tanpa Card) */}
-                    <div className="py-2.5 border-b border-slate-100">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1.5">
-                        Hierarki Persetujuan
-                      </span>
-                      <div className="space-y-1 text-[11px]">
-                        <div className="flex items-center justify-between text-slate-600">
-                          <span className="text-slate-400 shrink-0">Penilai:</span>
-                          <span className="font-medium text-slate-800 truncate text-right ml-2" title={profileDetail?.appraiserName || "Atasan Langsung"}>
-                            {isLoadingProfile ? "..." : profileDetail?.appraiserName || "Atasan Langsung"}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between text-slate-600">
-                          <span className="text-slate-400 shrink-0">Head Dept:</span>
-                          <span className="font-medium text-slate-800 truncate text-right ml-2" title={profileDetail?.headDeptName || "Head Dept"}>
-                            {isLoadingProfile ? "..." : profileDetail?.headDeptName || "Head Dept"}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between text-slate-600">
-                          <span className="text-slate-400 shrink-0">Manager:</span>
-                          <span className="font-medium text-slate-800 truncate text-right ml-2" title={profileDetail?.managerName || "Manager Divisi"}>
-                            {isLoadingProfile ? "..." : profileDetail?.managerName || "Manager Divisi"}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Footer Actions */}
-                    <div className="pt-2 flex items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsProfileOpen(false);
-                          setIsVoluntaryPassModalOpen(true);
-                        }}
-                        className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-600 hover:text-slate-900 rounded-lg px-2 py-1 hover:bg-slate-100 transition cursor-pointer"
-                      >
-                        <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                        </svg>
-                        <span>Ubah Sandi</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={handleLogout}
-                        className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200/80 rounded-lg px-2.5 py-1 transition cursor-pointer active:scale-95"
-                      >
-                        <svg className="w-3.5 h-3.5 text-rose-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                        </svg>
-                        <span>Log Out</span>
-                      </button>
-                    </div>
+                  <div className="absolute right-0 mt-2 w-80 rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xl z-50 animate-in fade-in zoom-in-95 duration-150">
+                    {renderProfilePopoverContent()}
                   </div>
                 )}
               </div>
@@ -805,9 +960,9 @@ export function AppShell({ children, initialUser }: AppShellProps) {
           </div>
         </header>
 
-        {/* Mobile Header dengan Tombol Menu Burger & Profile */}
-        <header className="sticky top-0 z-40 border-b border-sky-200/80 bg-sky-50 px-4 py-3 md:hidden flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
+        {/* Mobile Header dengan Tombol Menu Burger & Profile Capsule Konsisten */}
+        <header className="sticky top-0 z-40 border-b border-slate-200/90 bg-white/95 px-3 sm:px-4 py-2 backdrop-blur-md md:hidden flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-2">
             {/* Tombol Burger Mobile */}
             <button
               type="button"
@@ -821,37 +976,87 @@ export function AppShell({ children, initialUser }: AppShellProps) {
               </svg>
             </button>
 
-            <Link href="/dashboard" className="font-bold text-sky-600 flex items-center gap-1.5">
-              <span>KPI System</span>
-              <span className="rounded bg-sky-100 text-sky-900 px-1.5 py-0.2 text-[10px] font-bold">
-                {role}
-              </span>
+            <Link href="/dashboard" className="flex items-center gap-2">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-600 text-white font-bold text-xs shadow-2xs">
+                KPI
+              </div>
+              <div className="leading-tight">
+                <span className="font-bold text-slate-900 text-xs tracking-wider block">KPI SYSTEM</span>
+              </div>
             </Link>
           </div>
 
-          <div ref={mobileProfileMenuRef} className="relative flex items-center gap-2">
+          <div className="flex items-center gap-2">
+            {/* Mobile Help / Guidelines Trigger Button */}
+            <button
+              type="button"
+              onClick={handleOpenGuidelines}
+              className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-blue-600 shadow-2xs hover:bg-blue-50 transition active:scale-95 cursor-pointer"
+              title="Panduan Penggunaan (User Guidelines)"
+              aria-label="Panduan Penggunaan"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+                />
+              </svg>
+            </button>
+
+            <div ref={mobileProfileMenuRef} className="relative">
             {currentUser && (
               <button
                 type="button"
                 onClick={() => setIsProfileOpen((prev) => !prev)}
-                className="flex items-center gap-1.5 rounded-lg border border-sky-200 bg-white px-2 py-1 text-xs font-bold text-slate-800 shadow-2xs cursor-pointer active:scale-95"
+                className={`flex items-center gap-2 rounded-xl border px-2 py-1 transition-all duration-150 active:scale-95 cursor-pointer text-left shadow-2xs group ${
+                  isProfileOpen
+                    ? "border-sky-400 bg-white ring-2 ring-sky-400/20 shadow-xs"
+                    : "border-slate-200/90 bg-white/90 hover:bg-white hover:border-slate-300 hover:shadow-xs"
+                }`}
+                title="Klik untuk melihat profil akun"
               >
-                <div className="flex h-5 w-5 items-center justify-center rounded bg-slate-800 text-[10px] text-white">
-                  {currentUser.name.charAt(0).toUpperCase()}
+                {/* Modern Avatar with Initials & Active Status Dot */}
+                <div className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-600 font-bold text-white text-[11px] shadow-xs ring-1 ring-white/60">
+                  <span>{userInitials}</span>
+                  <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-white" />
                 </div>
-                <span className="max-w-[80px] truncate text-[11px]">{currentUser.name}</span>
+
+                <div className="leading-tight text-left max-w-[70px] xs:max-w-[110px]">
+                  <div className="font-bold text-slate-800 text-[11px] truncate group-hover:text-sky-900 transition-colors">
+                    {currentUser.name}
+                  </div>
+                  <div className="text-[9px] text-slate-400 font-medium truncate">
+                    {profileDetail?.jobPosition || currentUser.jobPosition || (profileDetail?.departmentName || "Karyawan")}
+                  </div>
+                </div>
+
+                {/* Soft Role Badge */}
+                <span className={`px-1.5 py-0.5 text-[9px] uppercase tracking-wider rounded-md border shrink-0 ${roleBadgeClass}`}>
+                  {roleBadgeLabel}
+                </span>
+
+                <svg
+                  className={`h-3 w-3 text-slate-400 transition-transform duration-200 ${
+                    isProfileOpen ? "rotate-180 text-sky-600" : "group-hover:text-slate-600"
+                  }`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                </svg>
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="rounded-lg bg-slate-100 border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-200 transition cursor-pointer"
-              title="Log Out"
-            >
-              Keluar
-            </button>
-          </div>
+            {/* Modern Profile Popover Menu Mobile */}
+            {isProfileOpen && (
+              <div className="absolute right-0 mt-2 w-[calc(100vw-24px)] max-w-xs rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xl z-50 animate-in fade-in zoom-in-95 duration-150">
+                {renderProfilePopoverContent()}
+                  </div>
+                )}
+              </div>
+            </div>
         </header>
 
         {/* Mobile Slide-Out Drawer (Terbuka saat burger mobile diklik) */}
@@ -865,24 +1070,50 @@ export function AppShell({ children, initialUser }: AppShellProps) {
               onClick={(e) => e.stopPropagation()}
             >
               {/* Drawer Header Clean Slate */}
-              <div className="bg-slate-900 p-4 flex items-center justify-between text-white shadow-xs">
+              <div className="border-b border-slate-100 p-4 flex items-center justify-between bg-white">
                 <div className="flex items-center gap-2.5">
-                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/20 text-white font-black text-xs">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-600 text-white font-bold text-xs shadow-2xs">
                     KPI
                   </div>
                   <div>
-                    <div className="text-xs font-black text-white">KPI SYSTEM</div>
-                    <div className="text-[10px] text-sky-100 font-semibold">Performance Portal</div>
+                    <div className="text-xs font-bold text-slate-900 tracking-wider">KPI SYSTEM</div>
+                    <div className="text-[10px] text-slate-400 font-medium">Enterprise Performance</div>
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-white/80 hover:bg-white/20 hover:text-white"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition cursor-pointer"
+                  aria-label="Tutup Menu"
                 >
-                  ✕
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
                 </button>
               </div>
+
+              {/* Drawer User Profile Capsule */}
+              {currentUser && (
+                <div className="p-3 border-b border-slate-100 bg-slate-50/70">
+                  <div className="flex items-center gap-2.5">
+                    <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-600 font-bold text-white text-xs shadow-xs ring-1 ring-white/60">
+                      <span>{userInitials}</span>
+                      <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-white" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-slate-800 text-xs truncate max-w-[120px]">{currentUser.name}</span>
+                        <span className={`px-1.5 py-0.2 text-[9px] uppercase tracking-wider rounded-md border shrink-0 ${roleBadgeClass}`}>
+                          {roleBadgeLabel}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-medium truncate">
+                        {profileDetail?.jobPosition || currentUser.jobPosition || "Karyawan"}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Drawer Nav Items */}
               <div className="flex-1 overflow-y-auto p-3 space-y-1">
@@ -907,6 +1138,23 @@ export function AppShell({ children, initialUser }: AppShellProps) {
                     </Link>
                   );
                 })}
+
+                <div className="pt-2 mt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={handleOpenGuidelines}
+                    className="w-full flex items-center gap-2.5 rounded-xl px-3.5 py-2.5 text-xs font-semibold text-blue-700 bg-blue-50/70 hover:bg-blue-100/80 transition cursor-pointer"
+                  >
+                    <svg className="h-4 w-4 text-blue-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+                      />
+                    </svg>
+                    <span>Panduan Penggunaan</span>
+                  </button>
+                </div>
               </div>
 
               {/* Drawer Logout */}
@@ -924,7 +1172,7 @@ export function AppShell({ children, initialUser }: AppShellProps) {
         )}
 
         {/* Page Children */}
-        <main className="flex-1 p-4 md:p-8">{children}</main>
+        <main className="flex-1 p-3 sm:p-4 md:p-8 min-w-0 max-w-full overflow-x-hidden">{children}</main>
       </div>
 
       {/* Voluntary Change Password Modal (Dibuka dari profile popover) */}
@@ -1007,6 +1255,17 @@ export function AppShell({ children, initialUser }: AppShellProps) {
           </div>
         </div>
       )}
+
+      {/* Contextual Guided Tour / Spotlight Tutorial */}
+      <KpiGuidedTour
+        isOpen={isTourOpen}
+        currentStep={tourStep}
+        userRole={role}
+        onStepChange={handleTourStepChange}
+        onSkip={handleTourSkip}
+        onClose={handleTourClose}
+        onFinish={handleTourFinish}
+      />
     </div>
   );
 }

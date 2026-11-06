@@ -26,7 +26,7 @@ export function ReportPageClient({ reportData }: ReportPageClientProps) {
         backLabel="Kembali ke Dashboard"
         actions={
           period && (
-            <div className="flex items-center gap-2">
+            <div data-tour="step-6-report-export" className="flex items-center gap-2">
               <a
                 href={`/api/report/export?periodId=${period.id}`}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white px-3.5 py-2 text-xs font-bold shadow-xs transition active:scale-98 cursor-pointer"
@@ -49,7 +49,10 @@ export function ReportPageClient({ reportData }: ReportPageClientProps) {
       />
 
       {/* 2. Top Navigation Tabs (Inspired by Reference Screenshot) */}
-      <div className="flex items-center gap-1 bg-slate-900 text-slate-300 p-1.5 rounded-xl border border-slate-800 shadow-md overflow-x-auto">
+      <div
+        data-tour="step-6-report-tabs"
+        className="flex items-center gap-1 bg-slate-900 text-slate-300 p-1.5 rounded-xl border border-slate-800 shadow-md overflow-x-auto"
+      >
         {/* Tab 1: Summary KPI */}
         <button
           type="button"

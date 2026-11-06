@@ -31,6 +31,7 @@ echo 2. Memeriksa direktori konfigurasi systemprofile...
 if not exist "C:\Windows\System32\config\systemprofile\.cloudflared" (
     mkdir "C:\Windows\System32\config\systemprofile\.cloudflared" >nul 2>&1
 )
+copy /y "%~dp0cloudflared\*.*" "C:\Windows\System32\config\systemprofile\.cloudflared\" >nul 2>&1
 copy /y "%USERPROFILE%\.cloudflared\*.*" "C:\Windows\System32\config\systemprofile\.cloudflared\" >nul 2>&1
 
 :: Install service

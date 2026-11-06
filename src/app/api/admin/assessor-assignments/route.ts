@@ -112,12 +112,23 @@ export async function DELETE(req: NextRequest) {
     }
 
     const { searchParams } = new URL(req.url);
-    const id = Number(searchParams.get("id"));
-    if (!id) {
+    const idsParam = searchParams.get("ids");
+    const idParam = searchParams.get("id");
+
+    const ids: number[] = idsParam
+      ? idsParam
+          .split(",")
+          .map((s) => Number(s.trim()))
+          .filter(Boolean)
+      : idParam
+      ? [Number(idParam)]
+      : [];
+
+    if (ids.length === 0) {
       return NextResponse.json({ error: "ID penugasan wajib disertakan." }, { status: 400 });
     }
 
-    await deleteAssessorAssignment(id);
+    await deleteAssessorAssignment(ids);
     return NextResponse.json({ success: true, message: "Penugasan berhasil dihapus." });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Gagal menghapus penugasan asesor.";

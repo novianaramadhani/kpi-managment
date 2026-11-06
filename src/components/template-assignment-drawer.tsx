@@ -742,14 +742,6 @@ export function TemplateAssignmentDrawer({
                   <span className="font-medium text-slate-600">{drawerData.template.departmentName}</span>
                   <span className="text-slate-300">·</span>
                   <span className="font-medium text-slate-500">{drawerData.template.jobLevelName}</span>
-                  {isPersonalTemplate && drawerData.employees[0] && (
-                    <>
-                      <span className="text-slate-300">·</span>
-                      <span className="inline-flex items-center gap-1 font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 text-[10px]">
-                        Personal: {drawerData.employees[0].name} ({drawerData.employees[0].nik})
-                      </span>
-                    </>
-                  )}
                 </div>
               )}
             </div>
@@ -842,10 +834,10 @@ export function TemplateAssignmentDrawer({
                         <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex items-start gap-3">
                           <Info className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
                           <div className="text-slate-600 text-xs leading-relaxed">
-                            Template ini adalah template KPI personal khusus untuk karyawan{" "}
+                            Template KPI ini ditugaskan untuk karyawan{" "}
                             <b className="text-slate-900">{filteredEmployees[0]?.name || drawerData.employees[0]?.name}</b>{" "}
                             ({filteredEmployees[0]?.nik || drawerData.employees[0]?.nik}).
-                            Penilai untuk karyawan ini akan otomatis ditentukan dari <b className="text-slate-900">Head Department</b> unit{" "}
+                            Penilai akan otomatis ditentukan dari <b className="text-slate-900">Head Department</b> unit{" "}
                             <b className="text-slate-900">{filteredEmployees[0]?.operatingUnit || drawerData.employees[0]?.operatingUnit || "HO"}</b>.
                           </div>
                         </div>
@@ -951,11 +943,6 @@ export function TemplateAssignmentDrawer({
                                       <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
                                         Unit: {emp.operatingUnit || "HO"}
                                       </span>
-                                      {isPersonalTemplate && (
-                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                                          Personal Template
-                                        </span>
-                                      )}
                                     </div>
                                     <p className="text-[11px] text-slate-500 mt-0.5">
                                       NIK: {emp.nik} · {emp.jobPosition || "-"} · {emp.jobLevelName}
@@ -989,7 +976,7 @@ export function TemplateAssignmentDrawer({
                       <div className="text-xs text-slate-600">
                         {isPersonalTemplate ? (
                           <span>
-                            Karyawan Ditugaskan: <span className="font-bold text-slate-900">1</span> (Personal)
+                            Karyawan Ditugaskan: <span className="font-bold text-slate-900">1</span>
                           </span>
                         ) : (
                           <>

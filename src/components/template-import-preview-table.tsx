@@ -11,6 +11,8 @@ import {
   AlertCircle,
   FileMinus,
   Sparkles,
+  RotateCcw,
+  MoveHorizontal,
 } from "lucide-react";
 import type {
   ParsedCategory,
@@ -84,6 +86,16 @@ interface TemplateImportPreviewTableProps {
     paramIndex: number,
     newWeight: number
   ) => void;
+  onUpdateIndicatorName?: (
+    catIndex: number,
+    paramIndex: number,
+    newName: string
+  ) => void;
+  onUpdateIndicatorTarget?: (
+    catIndex: number,
+    paramIndex: number,
+    newTarget: string
+  ) => void;
   onUpdateCategoryWeight?: (
     catIndex: number,
     newWeight: number
@@ -92,6 +104,38 @@ interface TemplateImportPreviewTableProps {
   onAutoHarmonizeParamBands?: (catIndex: number, paramIndex: number) => void;
   onAutoHarmonizeAllBands?: () => void;
 }
+
+export type ColumnKey =
+  | "no"
+  | "parameter"
+  | "indicator"
+  | "criteria"
+  | "score"
+  | "internalWeight"
+  | "weight"
+  | "mapping";
+
+const DEFAULT_COL_WIDTHS: Record<ColumnKey, number> = {
+  no: 44,
+  parameter: 170,
+  indicator: 250,
+  criteria: 270,
+  score: 64,
+  internalWeight: 84,
+  weight: 76,
+  mapping: 220,
+};
+
+const MIN_COL_WIDTHS: Record<ColumnKey, number> = {
+  no: 36,
+  parameter: 100,
+  indicator: 130,
+  criteria: 160,
+  score: 48,
+  internalWeight: 65,
+  weight: 60,
+  mapping: 140,
+};
 
 export function TemplateImportPreviewTable({
   categories,
@@ -108,6 +152,8 @@ export function TemplateImportPreviewTable({
   onUpdateBandOperator,
   onUpdateBandCriteriaValue,
   onUpdateIndicatorWeight,
+  onUpdateIndicatorName,
+  onUpdateIndicatorTarget,
   onUpdateCategoryWeight,
   onAutoBalanceIndicatorWeights,
   onAutoHarmonizeParamBands,
@@ -115,11 +161,80 @@ export function TemplateImportPreviewTable({
 }: TemplateImportPreviewTableProps) {
   const [searchQuery, setSearchQuery] = useState("");
 
+  // State lebar kolom yang dapat di-drag / diubah ukurannya secara bebas
+  const [colWidths, setColWidths] = useState<Record<ColumnKey, number>>(DEFAULT_COL_WIDTHS);
+
+  const startResizing = (colKey: ColumnKey, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startWidth = colWidths[colKey];
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const diff = moveEvent.clientX - startX;
+      const newWidth = Math.max(MIN_COL_WIDTHS[colKey], startWidth + diff);
+      setColWidths((prev) => ({
+        ...prev,
+        [colKey]: newWidth,
+      }));
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  };
+
+  const resetColWidth = (colKey: ColumnKey) => {
+    setColWidths((prev) => ({
+      ...prev,
+      [colKey]: DEFAULT_COL_WIDTHS[colKey],
+    }));
+  };
+
+  const resetAllColWidths = () => {
+    setColWidths(DEFAULT_COL_WIDTHS);
+  };
+
+  const isAnyColumnResized = useMemo(() => {
+    return (Object.keys(DEFAULT_COL_WIDTHS) as ColumnKey[]).some(
+      (k) => colWidths[k] !== DEFAULT_COL_WIDTHS[k]
+    );
+  }, [colWidths]);
+
+  const totalTableWidth = useMemo(() => {
+    return (Object.keys(colWidths) as ColumnKey[]).reduce(
+      (sum, k) => sum + (colWidths[k] || DEFAULT_COL_WIDTHS[k]),
+      0
+    );
+  }, [colWidths]);
+
+  const renderResizeHandle = (colKey: ColumnKey) => (
+    <div
+      onMouseDown={(e) => startResizing(colKey, e)}
+      onDoubleClick={() => resetColWidth(colKey)}
+      className="absolute top-0 right-0 bottom-0 w-3 cursor-col-resize select-none flex items-center justify-end z-30 group/handle"
+      title="Tarik untuk ubah lebar kolom (Klik ganda untuk reset)"
+    >
+      <div className="w-[3px] h-full bg-slate-300/80 group-hover/handle:bg-blue-500 transition-colors" />
+    </div>
+  );
+
   // State untuk Modal Pemilihan Parameter (Target catIndex & paramIndex)
   const [pickerTarget, setPickerTarget] = useState<{
     catIndex: number;
     paramIndex: number;
   } | null>(null);
+
+  // State untuk popover detail alert overlap / celah kriteria saat icon diklik
+  const [activeAlertKey, setActiveAlertKey] = useState<string | null>(null);
 
   // Ambil parameter & kategori target yang sedang aktif di modal
   const activeTargetParam = useMemo(() => {
@@ -258,53 +373,99 @@ export function TemplateImportPreviewTable({
   return (
     <div className="space-y-3">
       {/* Toolbar Pencarian & Aksi Otomatis */}
-      <div className="flex items-center justify-between flex-wrap gap-2.5 bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs">
-        {/* Search input */}
-        <div className="relative min-w-[220px] max-w-sm flex-1">
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Cari indikator atau parameter..."
-            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-500"
-          />
+      <div className="flex items-center justify-between flex-wrap gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200 text-xs">
+        {/* Search input & Column width hint */}
+        <div className="flex items-center gap-3 flex-1 min-w-[280px]">
+          <div className="relative min-w-[200px] max-w-xs flex-1">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Cari indikator atau parameter..."
+              className="w-full pl-8 pr-3 py-1 text-xs rounded-lg border border-slate-200 bg-white text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div className="hidden sm:flex items-center gap-2 text-[11px] text-slate-500 font-medium">
+            <span className="inline-flex items-center gap-1 text-slate-400">
+              <MoveHorizontal className="w-3.5 h-3.5" />
+              <span>Batas kolom dapat digeser</span>
+            </span>
+            {isAnyColumnResized && (
+              <button
+                type="button"
+                onClick={resetAllColWidths}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold text-slate-600 bg-white hover:bg-slate-100 border border-slate-300 shadow-2xs transition cursor-pointer"
+                title="Kembalikan semua lebar kolom ke ukuran awal"
+              >
+                <RotateCcw className="w-3 h-3 text-slate-500" />
+                <span>Reset Lebar</span>
+              </button>
+            )}
+          </div>
         </div>
-
-        {/* Tombol Perbaiki Otomatis Seluruh Rentang */}
-        {indicatorsWithIssuesCount > 0 && onAutoHarmonizeAllBands && (
-          <button
-            type="button"
-            onClick={onAutoHarmonizeAllBands}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-300 text-xs font-semibold shadow-2xs transition cursor-pointer"
-            title="Otomatis sesuaikan seluruh rentang kriteria agar tidak ada celah nilai (gap) maupun overlap"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-            <span>Auto-Perbaiki Seluruh Rentang ({indicatorsWithIssuesCount})</span>
-          </button>
-        )}
       </div>
 
-      {/* Tabel Pratinjau Utama: Tepat 8 Kolom */}
+      {/* Tabel Pratinjau Utama: Kolom Terstruktur & Dapat Digeser */}
       <div className="rounded-xl border border-slate-300 bg-white shadow-xs overflow-hidden">
-        <div className="overflow-x-auto max-h-[560px] overflow-y-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead className="sticky top-0 z-20 bg-slate-100 text-[11px] font-bold text-slate-800 border-b border-slate-300">
+        <div className="overflow-x-auto max-h-[580px] overflow-y-auto">
+          <table
+            className="w-full text-left text-xs border-collapse table-fixed"
+            style={{ minWidth: `${totalTableWidth}px` }}
+          >
+            <colgroup>
+              <col style={{ width: `${colWidths.no}px` }} />
+              <col style={{ width: `${colWidths.parameter}px` }} />
+              <col style={{ width: `${colWidths.indicator}px` }} />
+              <col style={{ width: `${colWidths.criteria}px` }} />
+              <col style={{ width: `${colWidths.score}px` }} />
+              <col style={{ width: `${colWidths.internalWeight}px` }} />
+              <col style={{ width: `${colWidths.weight}px` }} />
+              <col style={{ width: `${colWidths.mapping}px` }} />
+            </colgroup>
+            <thead className="sticky top-0 z-20 bg-slate-100 text-[11px] font-bold text-slate-800 border-b border-slate-300 shadow-2xs">
               <tr>
-                <th className="py-2.5 px-3 w-12 text-center border-r border-slate-300">No</th>
-                <th className="py-2.5 px-3 min-w-[160px] border-r border-slate-300">Parameter</th>
-                <th className="py-2.5 px-3 min-w-[220px] border-r border-slate-300">Indikator</th>
-                <th className="py-2.5 px-3 min-w-[240px] border-r border-slate-300">Kriteria Penilaian</th>
-                <th className="py-2.5 px-2 w-20 text-center border-r border-slate-300" title="Skor dapat diedit langsung">
+                <th className="relative py-1.5 px-2 text-center border-r border-slate-300 select-none">
+                  No
+                  {renderResizeHandle("no")}
+                </th>
+                <th className="relative py-1.5 px-2 border-r border-slate-300 select-none">
+                  Parameter
+                  {renderResizeHandle("parameter")}
+                </th>
+                <th className="relative py-1.5 px-2 border-r border-slate-300 select-none">
+                  Indikator
+                  {renderResizeHandle("indicator")}
+                </th>
+                <th className="relative py-1.5 px-2 border-r border-slate-300 select-none">
+                  Kriteria Penilaian
+                  {renderResizeHandle("criteria")}
+                </th>
+                <th
+                  className="relative py-1.5 px-1.5 text-center border-r border-slate-300 select-none"
+                  title="Skor dapat diedit langsung"
+                >
                   Skor
+                  {renderResizeHandle("score")}
                 </th>
-                <th className="py-2.5 px-2 w-28 text-center border-r border-slate-300" title="Bobot internal sub bab dapat diedit">
+                <th
+                  className="relative py-1.5 px-1.5 text-center border-r border-slate-300 select-none"
+                  title="Bobot internal sub bab dapat diedit"
+                >
                   Bobot Internal
+                  {renderResizeHandle("internalWeight")}
                 </th>
-                <th className="py-2.5 px-2 w-24 text-center border-r border-slate-300" title="Bobot parameter utama dapat diedit">
+                <th
+                  className="relative py-1.5 px-1.5 text-center border-r border-slate-300 select-none"
+                  title="Bobot parameter utama dapat diedit"
+                >
                   Bobot
+                  {renderResizeHandle("weight")}
                 </th>
-                <th className="py-2.5 px-3 min-w-[200px]">Mapping Kamus</th>
+                <th className="relative py-1.5 px-2 select-none">
+                  Mapping Kamus
+                  {renderResizeHandle("mapping")}
+                </th>
               </tr>
             </thead>
             <tbody className="text-xs">
@@ -341,16 +502,12 @@ export function TemplateImportPreviewTable({
                             (param.indicatorNumber ? param.indicatorNumber : `${catNo}.${origParamIdx + 1}`)
                           : `${catNo}.1`;
 
-                      const matchedMaster = masterParameters.find(
-                        (mp) => mp.id === param.masterParameterId
-                      );
-                      const isMatched = Boolean(
-                        matchedMaster &&
-                          (!departmentId ||
-                            matchedMaster.departmentId === Number(departmentId) ||
-                            matchedMaster.departmentId === null ||
-                            matchedMaster.departmentId === undefined)
-                      );
+                      const matchedMaster = param.masterParameterId != null
+                        ? masterParameters.find(
+                            (mp) => Number(mp.id) === Number(param.masterParameterId)
+                          )
+                        : undefined;
+                      const isMatched = Boolean(matchedMaster);
 
                       const paramCriteriaItems: CriteriaItem[] = (
                         param.bands.length > 0 ? param.bands : []
@@ -458,9 +615,9 @@ export function TemplateImportPreviewTable({
                             {isFirstRowOfCat && (
                               <td
                                 rowSpan={catTotalRows}
-                                className="py-3 px-2 text-center align-top bg-slate-50/40 border-r border-slate-300 border-b border-slate-300"
+                                className="py-2 px-1 text-center align-top bg-slate-50/40 border-r border-slate-300 border-b border-slate-300"
                               >
-                                <div className="sticky top-12 flex justify-center">
+                                <div className="sticky top-10 flex justify-center">
                                   <span className="font-mono font-bold text-xs text-slate-800">
                                     {catNo}
                                   </span>
@@ -472,28 +629,28 @@ export function TemplateImportPreviewTable({
                             {isFirstRowOfCat && (
                               <td
                                 rowSpan={catTotalRows}
-                                className="py-3 px-3 border-r border-slate-300 border-b border-slate-300 align-top bg-slate-50/20"
+                                className="py-2 px-2 border-r border-slate-300 border-b border-slate-300 align-top bg-slate-50/20"
                               >
-                                <div className="space-y-1 sticky top-12">
-                                  <span className="font-bold text-slate-900 block text-xs">
+                                <div className="space-y-1 sticky top-10">
+                                  <span className="font-bold text-slate-900 block text-xs leading-snug break-words">
                                     {cleanCatName}
                                   </span>
 
                                   {/* Hanya tampilkan peringatan bila bobot internal sub-parameter tidak pas 100% */}
                                   {cat.categoryType === "SUB_ITEMS" && !isInternalWeightValid && (
-                                    <div className="mt-2 flex flex-col gap-1">
+                                    <div className="mt-1 flex flex-col gap-0.5">
                                       <span
-                                        className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded border bg-rose-50 text-rose-800 border-rose-300"
+                                        className="inline-flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.5 rounded border bg-rose-50 text-rose-800 border-rose-300"
                                         title="Total bobot internal seluruh subparameter dalam kategori wajib 100%"
                                       >
-                                        <AlertTriangle className="w-3 h-3 text-rose-600 shrink-0" />
+                                        <AlertTriangle className="w-2.5 h-2.5 text-rose-600 shrink-0" />
                                         <span>Total Sub: {catInternalWeightPct}%</span>
                                       </span>
                                       {onAutoBalanceIndicatorWeights && (
                                         <button
                                           type="button"
                                           onClick={() => onAutoBalanceIndicatorWeights(origCatIdx)}
-                                          className="text-[10px] text-blue-700 hover:text-blue-900 underline text-left font-semibold cursor-pointer"
+                                          className="text-[9px] text-blue-700 hover:text-blue-900 underline text-left font-semibold cursor-pointer"
                                           title="Bagi rata bobot subparameter agar total tepat 100%"
                                         >
                                           Seimbangkan (100%)
@@ -505,49 +662,32 @@ export function TemplateImportPreviewTable({
                               </td>
                             )}
 
-                            {/* 3. Indikator (Kolom Sub Bab dengan nomor sendiri) */}
+                            {/* 3. Indikator (Nama Indikator Bersih) */}
                             {isFirstRowOfParam && (
                               <td
                                 rowSpan={paramRowSpan}
-                                className={`py-2.5 px-3 border-r border-slate-300 border-b border-slate-300 align-top bg-white ${
+                                className={`py-1.5 px-2 border-r border-slate-300 border-b border-slate-300 align-top bg-white ${
                                   isNewIndicator ? "border-t border-slate-300" : ""
                                 }`}
                               >
-                                <div className="space-y-1">
-                                  <div className="flex items-baseline gap-1.5">
-                                    <span className="font-mono text-xs font-bold text-slate-800 shrink-0">
-                                      {subNumber}
-                                    </span>
-                                    <div className="min-w-0 flex-1">
-                                      <span className="font-semibold text-slate-900 text-xs block">
+                                <div className="flex items-start gap-1">
+                                  <span className="font-mono text-xs font-bold text-slate-800 shrink-0 mt-0.5">
+                                    {subNumber}
+                                  </span>
+                                  <div className="min-w-0 flex-1">
+                                    {onUpdateIndicatorName ? (
+                                      <input
+                                        type="text"
+                                        value={param.name}
+                                        onChange={(e) => onUpdateIndicatorName(origCatIdx, origParamIdx, e.target.value)}
+                                        className="w-full px-1.5 py-0.5 text-xs font-semibold text-slate-900 rounded border border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white focus:outline-none transition leading-tight"
+                                        title="Ubah nama indikator langsung"
+                                        aria-label={`Nama indikator ${subNumber}`}
+                                      />
+                                    ) : (
+                                      <span className="font-semibold text-slate-900 text-xs block leading-snug break-words">
                                         {param.name}
                                       </span>
-                                    </div>
-                                  </div>
-
-                                  {param.description && (
-                                    <p className="text-[11px] text-slate-500 line-clamp-2">
-                                      {param.description}
-                                    </p>
-                                  )}
-
-                                  {/* Target & Satuan */}
-                                  <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
-                                    {param.target ? (
-                                      <div>Target: <span className="font-semibold text-slate-800">{param.target}{param.unit || "%"}</span></div>
-                                    ) : (
-                                      <div />
-                                    )}
-                                    {onAutoHarmonizeParamBands && (
-                                      <button
-                                        type="button"
-                                        onClick={() => onAutoHarmonizeParamBands(origCatIdx, origParamIdx)}
-                                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 text-[10px] font-medium border border-blue-200 transition cursor-pointer"
-                                        title="Sesuaikan otomatis batas rentang kriteria agar berurutan tanpa gap atau overlap"
-                                      >
-                                        <Sparkles className="w-2.5 h-2.5 text-blue-600" />
-                                        <span>Auto-Isi Rentang</span>
-                                      </button>
                                     )}
                                   </div>
                                 </div>
@@ -556,153 +696,215 @@ export function TemplateImportPreviewTable({
 
                             {/* 4. Kriteria Penilaian (Operator dan Nilai Kriteria Terpisah) */}
                             <td
-                              className={`py-2 px-2.5 text-slate-800 border-r border-slate-300 align-top bg-white ${
+                              className={`py-1 px-1.5 text-slate-800 border-r border-slate-300 align-top bg-white ${
                                 isLastBandOfParam ? "border-b border-slate-300" : "border-b border-slate-100"
                               } ${isNewIndicator ? "border-t border-slate-300" : ""}`}
                             >
-                              <div className="space-y-1.5">
-                                <div className="flex items-center gap-1.5">
-                                  {/* Field Operator */}
-                                  <div className="relative shrink-0">
-                                    <select
-                                      value={
-                                        band.operatorSymbol ||
-                                        (band.operator === "GTE"
-                                          ? ">="
-                                          : band.operator === "GT"
-                                          ? ">"
-                                          : band.operator === "LTE"
-                                          ? "<="
-                                          : band.operator === "LT"
-                                          ? "<"
-                                          : band.operator === "EQ"
-                                          ? "="
-                                          : band.operator === "BETWEEN"
-                                          ? "Rentang"
-                                          : "Teks")
-                                      }
-                                      onChange={(e) => {
-                                        onUpdateBandOperator?.(
-                                          origCatIdx,
-                                          origParamIdx,
-                                          bIdx,
-                                          e.target.value
-                                        );
-                                      }}
-                                      className={`h-7 px-1.5 py-0.5 rounded-md text-xs font-mono font-semibold border transition focus:outline-none focus:ring-1 cursor-pointer ${
-                                        band.isUnrecognizedOperator || band.operatorSymbol === "?" || band.needsManualReview
-                                          ? "bg-amber-50 text-amber-900 border-amber-400 focus:border-amber-600 focus:ring-amber-200"
-                                          : "bg-white text-slate-800 border-slate-300 hover:border-slate-400 focus:border-slate-500 focus:ring-slate-300"
-                                      }`}
-                                      title="Pilih operator pembanding kriteria"
-                                      aria-label={`Operator kriteria ${param.name} baris ${bIdx + 1}`}
-                                    >
-                                      <option value=">=">&gt;= (≥)</option>
-                                      <option value=">">&gt;</option>
-                                      <option value="<=">&lt;= (≤)</option>
-                                      <option value="<">&lt;</option>
-                                      <option value="=">=</option>
-                                      <option value="Rentang">Rentang</option>
-                                      <option value="Teks">Teks</option>
-                                      {(band.isUnrecognizedOperator || band.operatorSymbol === "?" || band.needsManualReview) && (
-                                        <option value="?">⚠️ ? (Tidak Dikenali)</option>
-                                      )}
-                                    </select>
-                                  </div>
-
-                                  {/* Field Nilai Kriteria */}
-                                  <div className="min-w-0 flex-1">
-                                    <input
-                                      type="text"
-                                      value={
-                                        band.criteriaValue !== undefined && band.criteriaValue !== null
-                                          ? band.criteriaValue
-                                          : extractCriteriaValue(band.label, band.operator)
-                                      }
-                                      onChange={(e) => {
-                                        onUpdateBandCriteriaValue?.(
-                                          origCatIdx,
-                                          origParamIdx,
-                                          bIdx,
-                                          e.target.value
-                                        );
-                                      }}
-                                      placeholder="Nilai kriteria..."
-                                      className="w-full h-7 px-2 py-0.5 rounded-md text-xs text-slate-800 bg-white border border-slate-300 hover:border-slate-400 focus:outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-300 transition"
-                                      title={`Ubah nilai kriteria (saat ini: ${band.label})`}
-                                      aria-label={`Nilai kriteria ${param.name} baris ${bIdx + 1}`}
-                                    />
-                                  </div>
+                              <div className="flex items-center gap-1">
+                                {/* Field Operator */}
+                                <div className="relative shrink-0">
+                                  <select
+                                    value={
+                                      band.operatorSymbol ||
+                                      (band.operator === "GTE"
+                                        ? ">="
+                                        : band.operator === "GT"
+                                        ? ">"
+                                        : band.operator === "LTE"
+                                        ? "<="
+                                        : band.operator === "LT"
+                                        ? "<"
+                                        : band.operator === "EQ"
+                                        ? "="
+                                        : band.operator === "BETWEEN"
+                                        ? "Rentang"
+                                        : "Teks")
+                                    }
+                                    onChange={(e) => {
+                                      onUpdateBandOperator?.(
+                                        origCatIdx,
+                                        origParamIdx,
+                                        bIdx,
+                                        e.target.value
+                                      );
+                                    }}
+                                    className={`h-6 px-1 py-0 rounded text-[11px] font-mono font-semibold border transition focus:outline-none focus:ring-1 cursor-pointer ${
+                                      band.isUnrecognizedOperator || band.operatorSymbol === "?" || band.needsManualReview
+                                        ? "bg-amber-50 text-amber-900 border-amber-400 focus:border-amber-600 focus:ring-amber-200"
+                                        : "bg-white text-slate-800 border-slate-300 hover:border-slate-400 focus:border-slate-500 focus:ring-slate-300"
+                                    }`}
+                                    title="Pilih operator pembanding kriteria"
+                                    aria-label={`Operator kriteria ${param.name} baris ${bIdx + 1}`}
+                                  >
+                                    <option value=">=">&gt;= (≥)</option>
+                                    <option value=">">&gt;</option>
+                                    <option value="<=">&lt;= (≤)</option>
+                                    <option value="<">&lt;</option>
+                                    <option value="=">=</option>
+                                    <option value="Rentang">Rentang</option>
+                                    <option value="Teks">Teks</option>
+                                    {(band.isUnrecognizedOperator || band.operatorSymbol === "?" || band.needsManualReview) && (
+                                      <option value="?">⚠️ ? (Tidak Dikenali)</option>
+                                    )}
+                                  </select>
                                 </div>
 
-                                {/* Marker Pemeriksaan Manual jika operator tidak dikenali atau nilai belum pasti */}
+                                {/* Field Nilai Kriteria */}
+                                <div className="min-w-0 flex-1">
+                                  <input
+                                    type="text"
+                                    value={
+                                      band.criteriaValue !== undefined && band.criteriaValue !== null
+                                        ? band.criteriaValue
+                                        : extractCriteriaValue(band.label, band.operator)
+                                    }
+                                    onChange={(e) => {
+                                      onUpdateBandCriteriaValue?.(
+                                        origCatIdx,
+                                        origParamIdx,
+                                        bIdx,
+                                        e.target.value
+                                      );
+                                    }}
+                                    placeholder="Nilai kriteria..."
+                                    className="w-full h-6 px-1.5 py-0 rounded text-[11px] text-slate-800 bg-white border border-slate-300 hover:border-slate-400 focus:outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-300 transition"
+                                    title={`Ubah nilai kriteria (saat ini: ${band.label})`}
+                                    aria-label={`Nilai kriteria ${param.name} baris ${bIdx + 1}`}
+                                  />
+                                </div>
+
+                                {/* Marker Pemeriksaan Manual jika operator belum pasti (klik icon untuk lihat detail) */}
                                 {(band.isUnrecognizedOperator || band.operatorSymbol === "?" || band.needsManualReview) && (
-                                  <div className="flex items-center gap-1">
-                                    <span
-                                      className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-900 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-300"
-                                      title={band.manualReviewReason || "Perlu pemeriksaan manual"}
+                                  <div className="relative shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setActiveAlertKey(
+                                          activeAlertKey === `manual-${origCatIdx}-${origParamIdx}-${bIdx}`
+                                            ? null
+                                            : `manual-${origCatIdx}-${origParamIdx}-${bIdx}`
+                                        )
+                                      }
+                                      className="h-6 w-6 rounded flex items-center justify-center bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-300 transition cursor-pointer"
+                                      title="Perlu periksa manual (Klik icon untuk detail)"
+                                      aria-label="Detail periksa manual"
                                     >
-                                      <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
-                                      <span>{band.manualReviewReason ? `Perlu pemeriksaan manual: ${band.manualReviewReason}` : "Perlu pemeriksaan manual"}</span>
-                                    </span>
+                                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                                    </button>
+
+                                    {activeAlertKey === `manual-${origCatIdx}-${origParamIdx}-${bIdx}` && (
+                                      <>
+                                        <div
+                                          className="fixed inset-0 z-30"
+                                          onClick={() => setActiveAlertKey(null)}
+                                        />
+                                        <div className="absolute right-0 top-full mt-1 w-72 z-40 bg-white rounded-lg shadow-xl border border-slate-300 p-2.5 text-xs text-left">
+                                          <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-slate-200">
+                                            <div className="flex items-center gap-1.5 font-bold text-amber-900 text-[11px]">
+                                              <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                              <span>Perlu Pemeriksaan Manual</span>
+                                            </div>
+                                            <button
+                                              type="button"
+                                              onClick={() => setActiveAlertKey(null)}
+                                              className="text-slate-400 hover:text-slate-700 p-0.5 rounded transition cursor-pointer text-xs"
+                                              title="Tutup"
+                                            >
+                                              ✕
+                                            </button>
+                                          </div>
+                                          <p className="text-[11px] text-slate-700 leading-snug">
+                                            {band.manualReviewReason || "Operator pembanding atau nilai kriteria belum dikenali dengan pasti."}
+                                          </p>
+                                        </div>
+                                      </>
+                                    )}
                                   </div>
                                 )}
 
-                                {/* Indikasi gap / overlap bila ada pada indikator ini */}
-                                {isFirstRowOfParam && paramValidation?.hasErrors && (
-                                  <div className="text-[10px] text-rose-800 bg-rose-50 px-2.5 py-2 rounded-md border border-rose-200 space-y-1.5 mt-1">
-                                    <div className="flex items-center justify-between gap-1.5 font-semibold text-rose-900">
-                                      <div className="flex items-center gap-1">
-                                        <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
-                                        <span>
-                                          {paramValidation.errors.some((e) => e.includes("Overlap") || e.includes("tumpang tindih"))
-                                            ? "Overlap terdeteksi pada kriteria:"
-                                            : "Peringatan kriteria penilaian:"}
-                                        </span>
-                                      </div>
-                                      {onAutoHarmonizeParamBands && (
-                                        <button
-                                          type="button"
-                                          onClick={() => onAutoHarmonizeParamBands(origCatIdx, origParamIdx)}
-                                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white hover:bg-rose-100 border border-rose-300 text-[10px] font-semibold text-rose-700 cursor-pointer shadow-2xs transition"
-                                          title="Otomatis sesuaikan rentang nilai agar valid dan tidak bertabrakan"
-                                        >
-                                          <Sparkles className="w-3 h-3 text-rose-600 shrink-0" />
-                                          <span>Auto Perbaiki</span>
-                                        </button>
+                                {/* Icon Alert Overlap / Gap kriteria (klik icon untuk lihat detail) */}
+                                {isFirstRowOfParam && (paramValidation?.hasErrors || paramValidation?.hasWarnings) && (
+                                  <div className="relative shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setActiveAlertKey(
+                                          activeAlertKey === `crit-${origCatIdx}-${origParamIdx}`
+                                            ? null
+                                            : `crit-${origCatIdx}-${origParamIdx}`
+                                        )
+                                      }
+                                      className={`h-6 w-6 rounded flex items-center justify-center transition cursor-pointer border ${
+                                        paramValidation.hasErrors
+                                          ? "bg-rose-50 hover:bg-rose-100 text-rose-600 border-rose-300 animate-pulse"
+                                          : "bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-300"
+                                      }`}
+                                      title={
+                                        paramValidation.hasErrors
+                                          ? "Overlap nilai terdeteksi (Klik icon untuk detail)"
+                                          : "Celah rentang terdeteksi (Klik icon untuk detail)"
+                                      }
+                                      aria-label="Detail peringatan kriteria"
+                                    >
+                                      {paramValidation.hasErrors ? (
+                                        <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+                                      ) : (
+                                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
                                       )}
-                                    </div>
-                                    <div className="space-y-0.5 pl-4 text-rose-700">
-                                      {paramValidation.errors.map((err, eIdx) => (
-                                        <div key={eIdx}>• {err}</div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                                {isFirstRowOfParam && paramValidation?.hasWarnings && !paramValidation?.hasErrors && (
-                                  <div className="text-[10px] text-amber-800 bg-amber-50 px-2.5 py-2 rounded-md border border-amber-200 space-y-1.5 mt-1">
-                                    <div className="flex items-center justify-between gap-1.5 font-semibold text-amber-900">
-                                      <div className="flex items-center gap-1">
-                                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                                        <span>Gap rentang nilai terdeteksi:</span>
-                                      </div>
-                                      {onAutoHarmonizeParamBands && (
-                                        <button
-                                          type="button"
-                                          onClick={() => onAutoHarmonizeParamBands(origCatIdx, origParamIdx)}
-                                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white hover:bg-amber-100 border border-amber-300 text-[10px] font-semibold text-amber-800 cursor-pointer shadow-2xs transition"
-                                          title="Otomatis tutup celah rentang kriteria ini"
-                                        >
-                                          <Sparkles className="w-3 h-3 text-amber-600 shrink-0" />
-                                          <span>Auto Perbaiki</span>
-                                        </button>
-                                      )}
-                                    </div>
-                                    <div className="space-y-0.5 pl-4 text-amber-800">
-                                      {paramValidation.warnings.map((warn, wIdx) => (
-                                        <div key={wIdx}>• {warn}</div>
-                                      ))}
-                                    </div>
+                                    </button>
+
+                                    {activeAlertKey === `crit-${origCatIdx}-${origParamIdx}` && (
+                                      <>
+                                        <div
+                                          className="fixed inset-0 z-30"
+                                          onClick={() => setActiveAlertKey(null)}
+                                        />
+                                        <div className="absolute right-0 top-full mt-1 w-80 z-40 bg-white rounded-lg shadow-xl border border-slate-300 p-2.5 text-xs text-left">
+                                          <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-slate-200">
+                                            <div className="flex items-center gap-1.5 font-bold">
+                                              {paramValidation.hasErrors ? (
+                                                <>
+                                                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                                                  <span className="text-rose-900 text-[11px]">
+                                                    Overlap Nilai Terdeteksi
+                                                  </span>
+                                                </>
+                                              ) : (
+                                                <>
+                                                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                                                  <span className="text-amber-900 text-[11px]">
+                                                    Celah Rentang Terdeteksi
+                                                  </span>
+                                                </>
+                                              )}
+                                            </div>
+                                            <button
+                                              type="button"
+                                              onClick={() => setActiveAlertKey(null)}
+                                              className="text-slate-400 hover:text-slate-700 p-0.5 rounded transition cursor-pointer text-xs"
+                                              title="Tutup"
+                                            >
+                                              ✕
+                                            </button>
+                                          </div>
+
+                                          <div className="space-y-1 text-[11px] text-slate-700 max-h-48 overflow-y-auto pr-1">
+                                            {paramValidation.hasErrors &&
+                                              paramValidation.errors.map((err, eIdx) => (
+                                                <div key={`err-${eIdx}`} className="text-rose-700 leading-snug">
+                                                  • {err}
+                                                </div>
+                                              ))}
+                                            {!paramValidation.hasErrors &&
+                                              paramValidation.warnings.map((warn, wIdx) => (
+                                                <div key={`warn-${wIdx}`} className="text-amber-800 leading-snug">
+                                                  • {warn}
+                                                </div>
+                                              ))}
+                                          </div>
+                                        </div>
+                                      </>
+                                    )}
                                   </div>
                                 )}
                               </div>
@@ -710,7 +912,7 @@ export function TemplateImportPreviewTable({
 
                             {/* 5. Skor (Bisa diedit langsung) */}
                             <td
-                              className={`py-2 px-2 text-center border-r border-slate-300 align-top ${
+                              className={`py-1 px-1 text-center border-r border-slate-300 align-top ${
                                 isLastBandOfParam ? "border-b border-slate-300" : "border-b border-slate-100"
                               } ${isNewIndicator ? "border-t border-slate-300" : ""}`}
                             >
@@ -723,7 +925,7 @@ export function TemplateImportPreviewTable({
                                   const val = parseFloat(e.target.value);
                                   onUpdateBandScore(origCatIdx, origParamIdx, bIdx, isNaN(val) ? 0 : val);
                                 }}
-                                className="w-14 text-center px-1.5 py-1 rounded-md font-mono font-semibold text-xs border border-slate-300 bg-white text-slate-800 hover:border-slate-400 focus:outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-300 transition"
+                                className="w-12 h-6 text-center px-1 py-0 rounded font-mono font-semibold text-[11px] border border-slate-300 bg-white text-slate-800 hover:border-slate-400 focus:outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-300 transition"
                                 title={`Edit skor kriteria "${band.label}" (Nilai: ${band.score})`}
                                 aria-label={`Skor ${band.label}`}
                               />
@@ -733,16 +935,16 @@ export function TemplateImportPreviewTable({
                             {isFirstRowOfParam && (
                               <td
                                 rowSpan={paramRowSpan}
-                                className={`py-2.5 px-2 text-center border-r border-slate-300 border-b border-slate-300 align-top bg-white ${
+                                className={`py-1.5 px-1 text-center border-r border-slate-300 border-b border-slate-300 align-top bg-white ${
                                   isNewIndicator ? "border-t border-slate-300" : ""
                                 }`}
                               >
                                 {cat.categoryType === "DIRECT" ? (
-                                  <span className="inline-block px-2 py-0.5 rounded text-[11px] bg-slate-100 text-slate-700 border border-slate-200 font-bold" title="Penilaian langsung memiliki bobot internal 100%">
+                                  <span className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700 border border-slate-200 font-bold" title="Penilaian langsung memiliki bobot internal 100%">
                                     100%
                                   </span>
                                 ) : (
-                                  <div className="inline-flex items-center justify-center gap-1">
+                                  <div className="inline-flex items-center justify-center gap-0.5">
                                     <input
                                       type="number"
                                       min="0"
@@ -754,11 +956,11 @@ export function TemplateImportPreviewTable({
                                         const w = isNaN(val) ? 0 : Math.max(0, val) / 100;
                                         onUpdateIndicatorWeight?.(origCatIdx, origParamIdx, w);
                                       }}
-                                      className="w-12 text-center px-1 py-0.5 rounded-md text-xs font-mono font-semibold border border-slate-300 bg-white text-slate-800 hover:border-slate-400 focus:outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-300"
+                                      className="w-11 h-6 text-center px-0.5 py-0 rounded text-[11px] font-mono font-semibold border border-slate-300 bg-white text-slate-800 hover:border-slate-400 focus:outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-300"
                                       title={`Ubah bobot internal "${param.name}"`}
                                       aria-label={`Bobot internal ${param.name}`}
                                     />
-                                    <span className="text-slate-600 font-mono text-[11px] font-semibold">%</span>
+                                    <span className="text-slate-600 font-mono text-[10px] font-semibold">%</span>
                                   </div>
                                 )}
                               </td>
@@ -768,9 +970,9 @@ export function TemplateImportPreviewTable({
                             {isFirstRowOfCat && (
                               <td
                                 rowSpan={catTotalRows}
-                                className="py-3 px-2 text-center border-r border-slate-300 border-b border-slate-300 align-top bg-slate-50/20"
+                                className="py-2 px-1 text-center border-r border-slate-300 border-b border-slate-300 align-top bg-slate-50/20"
                               >
-                                <div className="inline-flex items-center justify-center gap-1 sticky top-12">
+                                <div className="inline-flex items-center justify-center gap-0.5 sticky top-10">
                                   <input
                                     type="number"
                                     min="0"
@@ -782,11 +984,11 @@ export function TemplateImportPreviewTable({
                                       const w = isNaN(val) ? 0 : Math.max(0, val) / 100;
                                       onUpdateCategoryWeight?.(origCatIdx, w);
                                     }}
-                                    className="w-12 text-center px-1 py-0.5 rounded-md text-xs font-mono font-semibold border border-slate-300 bg-white text-slate-800 hover:border-slate-400 focus:outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-300"
+                                    className="w-11 h-6 text-center px-0.5 py-0 rounded text-[11px] font-mono font-semibold border border-slate-300 bg-white text-slate-800 hover:border-slate-400 focus:outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-300"
                                     title={`Ubah bobot parameter utama "${cleanCatName}"`}
                                     aria-label={`Bobot parameter ${cleanCatName}`}
                                   />
-                                  <span className="text-slate-600 font-mono text-[11px] font-semibold">%</span>
+                                  <span className="text-slate-600 font-mono text-[10px] font-semibold">%</span>
                                 </div>
                               </td>
                             )}
@@ -795,35 +997,44 @@ export function TemplateImportPreviewTable({
                             {isFirstRowOfParam && (
                               <td
                                 rowSpan={paramRowSpan}
-                                className={`py-2.5 px-3 align-top min-w-[210px] bg-white border-b border-slate-300 ${
-                                  isNewIndicator ? "border-t border-slate-300" : ""
-                                }`}
+                                className={`py-1.5 px-2 align-top border-b border-slate-300 transition-colors ${
+                                  isMatched && matchedMaster
+                                    ? "bg-emerald-50/25"
+                                    : "bg-rose-50/30"
+                                } ${isNewIndicator ? "border-t border-slate-300" : ""}`}
                               >
-                                <div className="space-y-1.5">
+                                <div className="space-y-1">
                                   {isMatched && matchedMaster ? (
-                                    <div className="flex items-center justify-between gap-2 p-1.5 rounded-lg border border-slate-200 bg-slate-50/50">
+                                    <div className="flex items-center justify-between gap-1.5 p-1 rounded-md border border-emerald-300 bg-emerald-50/70">
                                       <div className="min-w-0 flex-1">
-                                        <div className="flex items-center gap-1 text-slate-800 font-semibold text-xs truncate">
-                                          <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                        <div className="flex items-center gap-1 text-emerald-950 font-semibold text-[11px] truncate">
+                                          <Check className="w-3 h-3 text-emerald-600 shrink-0" />
                                           <span className="truncate" title={matchedMaster.name}>
                                             {matchedMaster.name}
                                           </span>
                                         </div>
-                                        <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-slate-500 font-mono">
+                                        <div className="flex items-center gap-1 mt-0.5 text-[9px] text-emerald-700 font-mono">
                                           {matchedMaster.code && (
-                                            <span className="bg-white px-1 py-0.5 rounded border border-slate-200 text-slate-600 font-semibold">
+                                            <span className="bg-white px-1 py-0.2 rounded border border-emerald-300 text-emerald-800 font-bold shrink-0">
                                               {matchedMaster.code}
                                             </span>
                                           )}
                                           <span className="truncate">
                                             {matchedMaster.departmentId
-                                              ? (matchedMaster.departmentName || "Departemen")
+                                              ? (matchedMaster.departmentName || "Dept")
                                               : "[Umum]"}
                                           </span>
+                                          {matchedMaster.departmentId &&
+                                            departmentId &&
+                                            Number(matchedMaster.departmentId) !== Number(departmentId) && (
+                                              <span className="text-[8px] text-amber-800 bg-amber-50 px-1 py-0.2 rounded border border-amber-300 shrink-0 font-sans font-semibold">
+                                                Lintas
+                                              </span>
+                                            )}
                                         </div>
                                       </div>
 
-                                      <div className="flex items-center gap-1 shrink-0">
+                                      <div className="flex items-center gap-0.5 shrink-0">
                                         <button
                                           type="button"
                                           onClick={() =>
@@ -832,7 +1043,7 @@ export function TemplateImportPreviewTable({
                                               paramIndex: origParamIdx,
                                             })
                                           }
-                                          className="px-2 py-1 text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-100 rounded border border-slate-200 shadow-2xs transition cursor-pointer"
+                                          className="px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800 bg-white hover:bg-emerald-100 rounded border border-emerald-300 shadow-2xs transition cursor-pointer"
                                           title="Ganti pemetaan parameter"
                                         >
                                           Ubah
@@ -842,7 +1053,7 @@ export function TemplateImportPreviewTable({
                                           onClick={() =>
                                             onUpdateIndicatorMasterId(origCatIdx, origParamIdx, null)
                                           }
-                                          className="p-1 text-slate-400 hover:text-rose-600 rounded transition cursor-pointer"
+                                          className="p-0.5 text-emerald-600 hover:text-rose-600 rounded transition cursor-pointer text-xs"
                                           title="Lepas pemetaan parameter"
                                           aria-label="Lepas pemetaan"
                                         >
@@ -851,7 +1062,15 @@ export function TemplateImportPreviewTable({
                                       </div>
                                     </div>
                                   ) : (
-                                    <div className="flex items-center gap-2 flex-wrap">
+                                    <div className="flex items-center justify-between gap-1.5 p-1 rounded-md border border-rose-300 bg-rose-50/70">
+                                      <div className="min-w-0 flex-1 flex items-center gap-1">
+                                        <AlertCircle className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                                        <div className="min-w-0">
+                                          <span className="text-[11px] font-bold text-rose-900 block truncate">
+                                            Belum di Kamus
+                                          </span>
+                                        </div>
+                                      </div>
                                       <button
                                         type="button"
                                         onClick={() =>
@@ -860,15 +1079,12 @@ export function TemplateImportPreviewTable({
                                             paramIndex: origParamIdx,
                                           })
                                         }
-                                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 shadow-2xs transition cursor-pointer"
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold text-rose-800 bg-white hover:bg-rose-100 border border-rose-300 shadow-2xs transition cursor-pointer shrink-0"
                                         title={`Pilih parameter dari kamus untuk "${param.name}"`}
                                       >
-                                        <Plus className="w-3.5 h-3.5" />
+                                        <Plus className="w-3 h-3 text-rose-600" />
                                         <span>Pilih Kamus</span>
                                       </button>
-                                      <span className="text-[11px] text-slate-400 font-medium">
-                                        Belum Dipetakan
-                                      </span>
                                     </div>
                                   )}
                                 </div>
@@ -882,15 +1098,15 @@ export function TemplateImportPreviewTable({
                 );
               })}
             </tbody>
-            <tfoot className="sticky bottom-0 z-10 bg-slate-50 text-xs font-bold text-slate-800 border-t-2 border-slate-300">
+            <tfoot className="sticky bottom-0 z-10 bg-slate-50 text-[11px] font-bold text-slate-800 border-t-2 border-slate-300">
               <tr>
-                <td colSpan={6} className="py-2.5 px-3 text-right pr-4 border-r border-slate-300 font-bold">
+                <td colSpan={6} className="py-1.5 px-2 text-right pr-3 border-r border-slate-300 font-bold">
                   Total Bobot Parameter
                 </td>
-                <td className="py-2.5 px-2 text-center text-slate-900 border-r border-slate-300 font-mono font-bold text-xs">
+                <td className="py-1.5 px-1 text-center text-slate-900 border-r border-slate-300 font-mono font-bold text-[11px]">
                   {Math.round(categories.reduce((acc, c) => acc + c.weight, 0) * 100)}%
                 </td>
-                <td className="py-2.5 px-3 text-slate-600 text-[11px] font-normal">
+                <td className="py-1.5 px-2 text-slate-600 text-[10px] font-normal truncate">
                   Total bobot parameter utama wajib berjumlah tepat 115%.
                 </td>
               </tr>

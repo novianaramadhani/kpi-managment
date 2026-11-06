@@ -245,7 +245,7 @@ export function ParameterPickerModal({
             </div>
           ) : (
             filteredList.map((mp) => {
-              const isSelected = currentMasterParameterId === mp.id;
+              const isSelected = currentMasterParameterId != null && Number(currentMasterParameterId) === Number(mp.id);
               const isDept = Boolean(mp.departmentId);
 
               return (
@@ -276,6 +276,16 @@ export function ParameterPickerModal({
                           <span>Umum</span>
                         </span>
                       )}
+                      {mp.weight != null && !isNaN(Number(mp.weight)) && (
+                        <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                          Bobot: {Math.round(Number(mp.weight) <= 1 ? Number(mp.weight) * 100 : Number(mp.weight))}%
+                        </span>
+                      )}
+                      {mp.target && (
+                        <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          Target: {mp.target}
+                        </span>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-2 text-[11px] text-slate-500">
@@ -302,10 +312,18 @@ export function ParameterPickerModal({
 
                   <div className="shrink-0">
                     {isSelected ? (
-                      <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 shadow-2xs">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onSelectParameter(mp.id);
+                          onClose();
+                        }}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 shadow-2xs transition cursor-pointer"
+                        title="Klik untuk memilih ulang / sinkronkan parameter ini"
+                      >
                         <Check className="w-3.5 h-3.5 text-emerald-700" />
-                        <span>Terpilih</span>
-                      </span>
+                        <span>Terpilih (Pilih Ulang)</span>
+                      </button>
                     ) : (
                       <button
                         type="button"

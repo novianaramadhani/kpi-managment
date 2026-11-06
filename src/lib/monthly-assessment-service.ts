@@ -18,6 +18,8 @@ import {
   kpiAssessorAssignments,
   kpiAssessorDelegations,
   appraisalEvidence,
+  departmentKpiActuals,
+  masterParameters,
 } from "@/db/schema";
 import { and, eq, inArray, sql, asc, desc, or, isNull, isNotNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
@@ -458,6 +460,72 @@ export async function getMonthlyAssessmentDetail(params: {
     }
   }
 
+  // Pre-fetch realisasi Department KPI untuk departemen karyawan & periode terkait
+  const deptActualsMap = new Map<number, { annualActual: number | null; monthlyActuals: (number | null)[] }>();
+  const deptParamScopeMap = new Map<number, "DEPARTMENT" | "INDIVIDUAL">();
+
+  const deptMasterParamById = new Map<
+    number,
+    { id: number; name: string; scope: "DEPARTMENT" | "INDIVIDUAL"; unit?: string | null; target?: string | null; defaultBands?: any }
+  >();
+  const deptMasterParamByName = new Map<
+    string,
+    { id: number; name: string; scope: "DEPARTMENT" | "INDIVIDUAL"; unit?: string | null; target?: string | null; defaultBands?: any }
+  >();
+
+  const masterParamsList = await db
+    .select({
+      id: masterParameters.id,
+      name: masterParameters.name,
+      code: masterParameters.code,
+      scope: masterParameters.scope,
+      unit: masterParameters.unit,
+      target: masterParameters.target,
+      defaultBands: masterParameters.defaultBands,
+    })
+    .from(masterParameters);
+
+  for (const mp of masterParamsList) {
+    const sc: "DEPARTMENT" | "INDIVIDUAL" = mp.scope === "DEPARTMENT" ? "DEPARTMENT" : "INDIVIDUAL";
+    deptParamScopeMap.set(mp.id, sc);
+    const itemData: {
+      id: number;
+      name: string;
+      scope: "DEPARTMENT" | "INDIVIDUAL";
+      unit?: string | null;
+      target?: string | null;
+      defaultBands?: any;
+    } = {
+      id: mp.id,
+      name: mp.name,
+      scope: sc,
+      unit: mp.unit,
+      target: mp.target,
+      defaultBands: mp.defaultBands,
+    };
+    deptMasterParamById.set(mp.id, itemData);
+    deptMasterParamByName.set(mp.name.trim().toLowerCase(), itemData);
+  }
+
+  if (apprRow.employee.departmentId && period.id) {
+    const rawDeptActuals = await db
+      .select()
+      .from(departmentKpiActuals)
+      .where(
+        and(
+          eq(departmentKpiActuals.departmentId, apprRow.employee.departmentId),
+          eq(departmentKpiActuals.periodId, period.id)
+        )
+      );
+
+    for (const da of rawDeptActuals) {
+      deptActualsMap.set(da.masterParameterId, {
+        annualActual: da.annualActual !== null && da.annualActual !== undefined ? Number(da.annualActual) : null,
+        monthlyActuals: Array.isArray(da.monthlyActuals) ? (da.monthlyActuals as (number | null)[]) : [],
+      });
+    }
+  }
+
   for (const row of items) {
     const it = row.item;
     const catId = row.category?.id ?? 0;
@@ -498,8 +566,17 @@ export async function getMonthlyAssessmentDetail(params: {
     const indWeightNorm = normalizeWeight(it.weightSnapshot ?? row.parameter?.weight ?? 0.2);
     const maxScore = Number(row.parameter?.maxScore) || 25;
     const indName = it.indicatorNameSnapshot || row.parameter?.name || "Indikator";
+    const masterParamLookup = deptMasterParamByName.get(indName.trim().toLowerCase());
+    const effectiveParamId = row.parameter?.id ?? it.parameterId ?? null;
+    const effectiveMasterParamId = row.parameter?.masterParameterId ?? masterParamLookup?.id ?? null;
+
+    let indUnit = (it.unitSnapshot || row.parameter?.unit || "").trim();
+    if ((!indUnit || indUnit === "%") && masterParamLookup?.unit && masterParamLookup.unit.trim() !== "%") {
+      indUnit = masterParamLookup.unit.trim();
+    }
+    if (!indUnit) indUnit = "%";
+
     const compareBasis = row.parameter?.compareBasis || "ACTUAL";
-    const indUnit = it.unitSnapshot || row.parameter?.unit || "";
     const indMeasurementType = row.parameter?.measurementType || null;
     const indScoringMethod = row.parameter?.scoringMethod || null;
     const indDirection = resolveKpiDirection(
@@ -509,16 +586,64 @@ export async function getMonthlyAssessmentDetail(params: {
       indMeasurementType,
       indUnit
     );
-    const indTarget =
-      it.target !== null && it.target !== undefined && !isNaN(Number(it.target))
-        ? Number(it.target)
-        : it.targetSnapshot !== null && it.targetSnapshot !== undefined && !isNaN(Number(it.targetSnapshot))
-        ? Number(it.targetSnapshot)
-        : row.parameter?.target !== null && row.parameter?.target !== undefined && !isNaN(Number(row.parameter.target))
-        ? Number(row.parameter.target)
-        : null;
 
-    const effectiveParamId = row.parameter?.id ?? it.parameterId ?? null;
+    // Prioritas Target: Ambil langsung dari Kamus Parameter (Master Parameter) sebagai Single Source of Truth
+    const masterParamObj =
+      (effectiveMasterParamId ? deptMasterParamById.get(effectiveMasterParamId) : null) ||
+      masterParamLookup;
+
+    let indTarget: number | null = null;
+    if (
+      masterParamObj?.target !== null &&
+      masterParamObj?.target !== undefined &&
+      String(masterParamObj.target).trim() !== "" &&
+      !isNaN(Number(masterParamObj.target))
+    ) {
+      indTarget = Number(masterParamObj.target);
+    } else if (it.target !== null && it.target !== undefined && !isNaN(Number(it.target))) {
+      indTarget = Number(it.target);
+    } else if (it.targetSnapshot !== null && it.targetSnapshot !== undefined && !isNaN(Number(it.targetSnapshot))) {
+      indTarget = Number(it.targetSnapshot);
+    } else if (row.parameter?.target !== null && row.parameter?.target !== undefined && !isNaN(Number(row.parameter.target))) {
+      indTarget = Number(row.parameter.target);
+    }
+
+    // Check Band 1 threshold if indTarget is null or was defaulted to 100
+    const sortedRules = [...rules].sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+    if (sortedRules.length > 0) {
+      const topRule = sortedRules[0];
+      let b1Threshold: number | null = null;
+      const op = String(topRule.operator || "").toUpperCase();
+      if ((op === "LTE" || op === "LT" || op === "<=" || op === "<") && topRule.maxValue !== null && topRule.maxValue !== undefined && !isNaN(Number(topRule.maxValue))) {
+        b1Threshold = Number(topRule.maxValue);
+      } else if ((op === "GTE" || op === "GT" || op === ">=" || op === ">") && topRule.minValue !== null && topRule.minValue !== undefined && !isNaN(Number(topRule.minValue))) {
+        b1Threshold = Number(topRule.minValue);
+      } else if ((op === "EQ" || op === "=") && topRule.minValue !== null && topRule.minValue !== undefined && !isNaN(Number(topRule.minValue))) {
+        b1Threshold = Number(topRule.minValue);
+      } else if ((op === "EQ" || op === "=") && topRule.maxValue !== null && topRule.maxValue !== undefined && !isNaN(Number(topRule.maxValue))) {
+        b1Threshold = Number(topRule.maxValue);
+      } else if (topRule.label) {
+        const numMatch = topRule.label.match(/([0-9]+(?:[\.,][0-9]+)?)/);
+        if (numMatch) {
+          b1Threshold = parseFloat(numMatch[1].replace(",", "."));
+        }
+      }
+
+      if (b1Threshold !== null && (indTarget === null || indTarget === 100)) {
+        indTarget = b1Threshold;
+      }
+    }
+
+    const effectiveScope: "DEPARTMENT" | "INDIVIDUAL" =
+      row.parameter?.scope === "DEPARTMENT" ||
+      (effectiveMasterParamId ? deptParamScopeMap.get(effectiveMasterParamId) === "DEPARTMENT" : false) ||
+      masterParamLookup?.scope === "DEPARTMENT"
+        ? "DEPARTMENT"
+        : "INDIVIDUAL";
+
+    const deptActualData = effectiveMasterParamId ? deptActualsMap.get(effectiveMasterParamId) : null;
+    let isDeptSynced = false;
+
     const paramEvidence = effectiveParamId ? (evidenceByParamId.get(effectiveParamId) || []) : [];
 
     // Bangun data 12 bulan (Jan - Des)
@@ -532,10 +657,22 @@ export async function getMonthlyAssessmentDetail(params: {
         Array.isArray(it.monthlyActuals) && it.monthlyActuals[m - 1] !== null && it.monthlyActuals[m - 1] !== undefined
           ? Number(it.monthlyActuals[m - 1])
           : null;
-      const mActual =
+      let mActual =
         mVal?.actualValue !== null && mVal?.actualValue !== undefined && mVal.actualValue !== ""
           ? Number(mVal.actualValue)
           : legacyActual;
+
+      // Sinkronisasi otomatis dari Department KPI jika scope DEPARTMENT dan belum ada override mandiri
+      if (
+        mActual === null &&
+        effectiveScope === "DEPARTMENT" &&
+        deptActualData &&
+        deptActualData.monthlyActuals[m - 1] !== null &&
+        deptActualData.monthlyActuals[m - 1] !== undefined
+      ) {
+        mActual = deptActualData.monthlyActuals[m - 1];
+        isDeptSynced = true;
+      }
       const mNotes = mVal?.notes ?? (Array.isArray(it.monthlyNotes) ? it.monthlyNotes[m - 1] : null);
       const mStatus = (mVal?.status as "NOT_STARTED" | "DRAFT" | "SUBMITTED" | "APPROVED") ?? (mActual !== null ? "DRAFT" : "NOT_STARTED");
       const monthEvidence = paramEvidence.filter((e) => e.month === m);
@@ -603,6 +740,15 @@ export async function getMonthlyAssessmentDetail(params: {
     } else if (it.actual !== null && it.actual !== undefined && !isNaN(Number(it.actual))) {
       annualActual = Number(it.actual);
       annualInputMode = "ANNUAL_DIRECT";
+    } else if (
+      effectiveScope === "DEPARTMENT" &&
+      deptActualData &&
+      deptActualData.annualActual !== null &&
+      deptActualData.annualActual !== undefined
+    ) {
+      annualActual = deptActualData.annualActual;
+      annualInputMode = "ANNUAL_DIRECT";
+      isDeptSynced = true;
     }
 
     const annualScoreRes = calculateKpiScore(annualActual, rules, {
@@ -637,18 +783,23 @@ export async function getMonthlyAssessmentDetail(params: {
       if (!effectiveAnnualBandLabel && it.bandLabel) effectiveAnnualBandLabel = it.bandLabel;
     }
 
+    const isAppraisalFinal = apprRow.appraisal.status === "FINAL";
     const annualStatus: "Completed" | "In Progress" | "Not Started" =
-      annualInputMode === "MONTHLY"
+      isAppraisalFinal
+        ? "Completed"
+        : annualInputMode === "MONTHLY"
         ? (filledMonthsCount === 12 ? "Completed" : filledMonthsCount > 0 ? "In Progress" : "Not Started")
-        : (annualActual !== null ? "Completed" : "Not Started");
+        : (annualActual !== null || (effectiveAnnualScore !== null && effectiveAnnualScore > 0) ? "Completed" : "Not Started");
 
     // Data bulan terpilih (current selected month)
     const curMonthVal = monthlyMap.get(`${it.id}_${month}`);
     const curActual = monthlyDetails[month - 1].actual;
-    if (curActual !== null) {
+    if (curActual !== null || isAppraisalFinal) {
       totalFilled++;
     }
-    if (curMonthVal?.status === "SUBMITTED" || curMonthVal?.status === "APPROVED") {
+    if (isAppraisalFinal || curMonthVal?.status === "APPROVED") {
+      hasSubmitted = true;
+    } else if (curMonthVal?.status === "SUBMITTED") {
       hasSubmitted = true;
     } else if (curMonthVal?.status === "DRAFT" || curActual !== null) {
       hasDraft = true;
@@ -775,6 +926,9 @@ export async function getMonthlyAssessmentDetail(params: {
       isDelegatedAccess,
       evidenceList: paramEvidence,
       latestEvidence: paramEvidence[0] || null,
+      scope: effectiveScope,
+      isDepartmentSynced: isDeptSynced,
+      masterParameterId: effectiveMasterParamId,
     });
   }
 
@@ -819,14 +973,17 @@ export async function getMonthlyAssessmentDetail(params: {
     });
   }
 
+  const isDetailFinal = apprRow.appraisal.status === "FINAL";
   const overall = calculateOverallKpiScore(paramScoreSummaries);
   const annualOverall = calculateOverallKpiScore(annualParamScoreSummaries);
   const totalCount = items.length;
-  const unfilledCount = totalCount - totalFilled;
-  const completionPercentage = totalCount > 0 ? parseFloat(((totalFilled / totalCount) * 100).toFixed(1)) : 0;
+  const unfilledCount = isDetailFinal ? 0 : Math.max(0, totalCount - totalFilled);
+  const completionPercentage = isDetailFinal ? 100 : (totalCount > 0 ? parseFloat(((totalFilled / totalCount) * 100).toFixed(1)) : 0);
 
   let overallMonthlyStatus: "NOT_STARTED" | "DRAFT" | "SUBMITTED" | "APPROVED" = "NOT_STARTED";
-  if (hasSubmitted) {
+  if (isDetailFinal) {
+    overallMonthlyStatus = "APPROVED";
+  } else if (hasSubmitted) {
     overallMonthlyStatus = "SUBMITTED";
   } else if (hasDraft || totalFilled > 0) {
     overallMonthlyStatus = "DRAFT";
@@ -1247,14 +1404,23 @@ export async function getMonthlyAssessmentEmployees(params: {
         if (isParamFilled) filledParameters++;
       }
 
-      const hasSub = mRows.some((r) => r.status === "SUBMITTED" || r.status === "APPROVED");
-      const hasDft = mRows.some((r) => r.status === "DRAFT");
-      if (hasSub || row.appraisalStatus === "FINAL" || row.appraisalStatus === "REVIEWED" || row.appraisalStatus.startsWith("PENDING_")) {
-        monthStatus = "SUBMITTED";
-      } else if (hasDft || filledIndicatorsCount > 0) {
-        monthStatus = "DRAFT";
+      const isRowFinal = row.appraisalStatus === "FINAL";
+      if (isRowFinal) {
+        filledParameters = totalParameters;
+        filledIndicatorsCount = totalIndicators;
+        monthStatus = "APPROVED";
+      } else {
+        const hasSub = mRows.some((r) => r.status === "SUBMITTED" || r.status === "APPROVED");
+        const hasDft = mRows.some((r) => r.status === "DRAFT");
+        if (hasSub || row.appraisalStatus === "REVIEWED" || row.appraisalStatus.startsWith("PENDING_")) {
+          monthStatus = "SUBMITTED";
+        } else if (hasDft || filledIndicatorsCount > 0) {
+          monthStatus = "DRAFT";
+        }
       }
     }
+
+    const isRowFinal = row.appraisalStatus === "FINAL";
 
     // Kalkulasi skor final jika ada (skor disimpan sebagai fraksi <= 2.0 atau persentase 0-100)
     let finalScoreNum: number | null = null;
@@ -1295,14 +1461,16 @@ export async function getMonthlyAssessmentEmployees(params: {
       month,
       totalIndicators,
       totalParameters,
-      filledParameters,
-      filledCount: filledIndicatorsCount,
-      unfilledCount: totalIndicators - filledIndicatorsCount,
+      filledParameters: isRowFinal ? totalParameters : filledParameters,
+      filledCount: isRowFinal ? totalIndicators : filledIndicatorsCount,
+      unfilledCount: isRowFinal ? 0 : Math.max(0, totalIndicators - filledIndicatorsCount),
       completionRate:
-        totalIndicators > 0
+        isRowFinal
+          ? 100
+          : totalIndicators > 0
           ? parseFloat(((filledIndicatorsCount / totalIndicators) * 100).toFixed(1))
           : 0,
-      monthlyStatus: monthStatus,
+      monthlyStatus: isRowFinal ? "APPROVED" : monthStatus,
     });
   }
 
@@ -2206,6 +2374,25 @@ export async function recalculateAppraisal(appraisalId: number): Promise<number>
     bandsByParamId.set(b.parameterId, list);
   }
 
+  // Ambil target langsung dari Kamus Parameter (Master Parameter)
+  const masterParamIds = items
+    .map((r) => r.parameter?.masterParameterId)
+    .filter((id): id is number => typeof id === "number");
+
+  const masterParams = masterParamIds.length
+    ? await db
+        .select({ id: masterParameters.id, target: masterParameters.target })
+        .from(masterParameters)
+        .where(inArray(masterParameters.id, masterParamIds))
+    : [];
+
+  const masterTargetMap = new Map<number, number>();
+  for (const mp of masterParams) {
+    if (mp.target !== null && mp.target !== undefined && String(mp.target).trim() !== "" && !isNaN(Number(mp.target))) {
+      masterTargetMap.set(mp.id, Number(mp.target));
+    }
+  }
+
   let totalWeightedScore = 0;
 
   for (const row of items) {
@@ -2240,8 +2427,11 @@ export async function recalculateAppraisal(appraisalId: number): Promise<number>
     const hasMonthly = mActuals.some((v) => v !== null);
 
     let annualActual: number | null = null;
+    const masterTargetVal = p?.masterParameterId ? masterTargetMap.get(p.masterParameterId) : null;
     let target =
-      it.target !== null && it.target !== undefined
+      masterTargetVal !== null && masterTargetVal !== undefined
+        ? masterTargetVal
+        : it.target !== null && it.target !== undefined
         ? Number(it.target)
         : it.targetSnapshot !== null && it.targetSnapshot !== undefined
         ? Number(it.targetSnapshot)

@@ -125,12 +125,21 @@ export interface SheetParseResult {
   isValidSheet: boolean;
 }
 
+export interface ParsedDeptKpiRow {
+  departmentName: string;
+  parameterName: string;
+  annualActual: number | null;
+  monthlyActuals: (number | null)[];
+  notes?: string;
+}
+
 export interface MultiSheetBatchResult {
   fileName: string;
   totalSheets: number;
   totalEmployeesDetected: number;
   sheets: SheetParseResult[];
   activeSheetIndex: number;
+  departmentKpis?: ParsedDeptKpiRow[];
 }
 
 // ============================================================================
@@ -246,19 +255,29 @@ function parseFormRealisasiActual(rawMatrix: unknown[][], startHeaderIdx = 6): E
   let monthStartCol = 6;
   let annualCol = 18;
 
-  for (let r = 0; r < Math.min(rawMatrix.length, 15); r++) {
+  const searchStart = startHeaderIdx >= 0 ? Math.max(0, startHeaderIdx - 2) : 0;
+  const searchEnd = startHeaderIdx >= 0 ? Math.min(rawMatrix.length, startHeaderIdx + 12) : Math.min(rawMatrix.length, 30);
+
+  for (let r = searchStart; r < searchEnd; r++) {
     const row = (rawMatrix[r] as unknown[]) || [];
+    let hasType = false;
     for (let c = 0; c < row.length; c++) {
       const val = String(row[c] || "").trim().toLowerCase();
-      if (val === "type") {
-        headerRow = r;
-        typeCol = c;
+      if (val === "type" || val === "tipe") hasType = true;
+    }
+
+    if (hasType) {
+      headerRow = r;
+      for (let c = 0; c < row.length; c++) {
+        const val = String(row[c] || "").trim().toLowerCase();
+        if (val === "type" || val === "tipe") typeCol = c;
+        if (val === "indikator" || val === "indikator kpi") nameCol = c;
+        if (val === "target" || val.includes("target tahunan")) targetCol = c;
+        if (val === "satuan" || val === "unit") unitCol = c;
+        if (val === "jan" || val === "januari") monthStartCol = c;
+        if (val.includes("realisasi tahunan") || val === "realisasi") annualCol = c;
       }
-      if (val === "indikator" || val === "indikator kpi") nameCol = c;
-      if (val === "target" || val.includes("target tahunan")) targetCol = c;
-      if (val === "satuan" || val === "unit") unitCol = c;
-      if (val === "jan" || val === "januari") monthStartCol = c;
-      if (val.includes("realisasi tahunan")) annualCol = c;
+      break;
     }
   }
 
@@ -311,14 +330,23 @@ function parseFormRealisasiActual(rawMatrix: unknown[][], startHeaderIdx = 6): E
       const warningNotes: string[] = [];
 
       if (actualRow) {
+        const isPct = rawUnit.toLowerCase() === "%" || rawUnit.toLowerCase().includes("persen");
         for (let m = 0; m < 12; m++) {
-          monthlyActuals.push(sanitizeNumericCell(actualRow[monthStartCol + m]));
+          let mVal = sanitizeNumericCell(actualRow[monthStartCol + m]);
+          if (mVal !== null && isPct && mVal > 0 && mVal <= 2.5) {
+            mVal = Math.round(mVal * 10000) / 100;
+          }
+          monthlyActuals.push(mVal);
         }
         const rawAnnAct = actualRow[annualCol];
         if (typeof rawAnnAct === "string" && rawAnnAct.includes("#DIV/0!")) {
           warningNotes.push("Formula Excel menghasilkan error #DIV/0! (pembagian nol).");
         }
-        annualActual = sanitizeNumericCell(rawAnnAct);
+        let aAct = sanitizeNumericCell(rawAnnAct);
+        if (aAct !== null && isPct && aAct > 0 && aAct <= 2.5) {
+          aAct = Math.round(aAct * 10000) / 100;
+        }
+        annualActual = aAct;
       }
 
       blocks.push({
@@ -355,7 +383,7 @@ function parseFormRealisasiActual(rawMatrix: unknown[][], startHeaderIdx = 6): E
  * - Col 9 (J): Skor
  * - Col 10 (K): Nilai Akhir
  */
-function parseFormPenilaian(rawMatrix: unknown[][], startHeaderIdx = 6): ExcelParsedBlock[] {
+function parseFormPenilaian(rawMatrix: unknown[][], startHeaderIdx = 6, maxRowIdx?: number): ExcelParsedBlock[] {
   const blocks: ExcelParsedBlock[] = [];
   let headerRow = startHeaderIdx >= 0 ? startHeaderIdx : 6;
   let nameCol = 3;
@@ -365,7 +393,7 @@ function parseFormPenilaian(rawMatrix: unknown[][], startHeaderIdx = 6): ExcelPa
   let scoreCol = 9;
   let finalCol = 10;
 
-  for (let r = 0; r < Math.min(rawMatrix.length, 12); r++) {
+  for (let r = Math.max(0, headerRow - 2); r < Math.min(rawMatrix.length, headerRow + 5); r++) {
     const row = (rawMatrix[r] as unknown[]) || [];
     for (let c = 0; c < row.length; c++) {
       const val = String(row[c] || "").trim().toLowerCase();
@@ -381,8 +409,21 @@ function parseFormPenilaian(rawMatrix: unknown[][], startHeaderIdx = 6): ExcelPa
     }
   }
 
-  for (let r = headerRow + 1; r < rawMatrix.length; r++) {
+  const endLimit = maxRowIdx !== undefined ? Math.min(rawMatrix.length, maxRowIdx) : rawMatrix.length;
+
+  for (let r = headerRow + 1; r < endLimit; r++) {
     const row = (rawMatrix[r] as unknown[]) || [];
+    const rowText = row.map((cell) => String(cell || "").toLowerCase().trim()).join(" ");
+
+    // STOP parsing Table 1 if reaching Table 2 or Total row
+    if (
+      rowText.includes("total hasil penilaian akhir") ||
+      rowText.includes("rincian target & realisasi bulanan") ||
+      rowText.includes("rincian target dan realisasi bulanan")
+    ) {
+      break;
+    }
+
     let rawTitle = String(row[nameCol] || "").trim();
 
     if (
@@ -557,49 +598,85 @@ function parseLegacyKpiMatrix(rawMatrix: unknown[][]): ExcelParsedBlock[] {
 export function parseKpiExcelMatrix(rawMatrix: unknown[][], sheetName = ""): ExcelParsedBlock[] {
   if (!rawMatrix || rawMatrix.length === 0) return [];
 
-  let isFormRealisasiActual = false;
-  let isFormPenilaian = false;
-  let headerRowIdx = -1;
+  let table1HeaderIdx = -1;
+  let table2HeaderIdx = -1;
 
-  for (let r = 0; r < Math.min(rawMatrix.length, 15); r++) {
+  for (let r = 0; r < rawMatrix.length; r++) {
     const row = (rawMatrix[r] as unknown[]) || [];
     const rowText = row.map((cell) => String(cell || "").toLowerCase().trim()).join(" ");
 
     if (
-      rowText.includes("realisasi bulanan") ||
-      (rowText.includes("type") && (rowText.includes("realisasi tahunan") || rowText.includes("indikator")))
-    ) {
-      isFormRealisasiActual = true;
-      headerRowIdx = r;
-      break;
-    }
-
-    if (
+      table1HeaderIdx < 0 &&
       (rowText.includes("kriteria penilaian") || rowText.includes("nilai akhir")) &&
       (rowText.includes("parameter") || rowText.includes("indikator"))
     ) {
-      isFormPenilaian = true;
-      headerRowIdx = r;
-      break;
+      table1HeaderIdx = r;
+    }
+
+    if (
+      table2HeaderIdx < 0 &&
+      (rowText.includes("realisasi bulanan") ||
+        rowText.includes("rincian target & realisasi") ||
+        (rowText.includes("type") && (rowText.includes("jan") || rowText.includes("januari") || rowText.includes("realisasi tahunan"))))
+    ) {
+      table2HeaderIdx = r;
     }
   }
 
-  if (!isFormRealisasiActual && !isFormPenilaian) {
-    const sLow = sheetName.toLowerCase();
-    if (sLow.includes("realisasi") || sLow.includes("actual")) {
-      isFormRealisasiActual = true;
-    } else if (sLow.includes("penilaian") || sLow.includes("matrix")) {
-      isFormPenilaian = true;
+  // Skenario 1: Sheet Terpadu (Memuat Form Penilaian di atas dan Rincian Bulanan di bawah)
+  if (table1HeaderIdx >= 0 && table2HeaderIdx >= 0 && table2HeaderIdx > table1HeaderIdx) {
+    const table1Blocks = parseFormPenilaian(rawMatrix, table1HeaderIdx, table2HeaderIdx);
+    const table2Blocks = parseFormRealisasiActual(rawMatrix, table2HeaderIdx);
+
+    if (table2Blocks.length > 0) {
+      // Gabungkan kriteria evaluasi dan skor dari Tabel 1 ke baris Tabel 2 tanpa duplikasi
+      for (const actItem of table2Blocks) {
+        const actClean = cleanParamTitle(actItem.rawTitle);
+        const matchedP = table1Blocks.find((p) => {
+          const pClean = cleanParamTitle(p.rawTitle);
+          return pClean === actClean || (pClean.length > 3 && (pClean.includes(actClean) || actClean.includes(pClean)));
+        });
+
+        if (matchedP) {
+          if (matchedP.excelScore !== null && matchedP.excelScore !== undefined) {
+            actItem.excelScore = matchedP.excelScore;
+          }
+          if (matchedP.excelWeightedScore !== null && matchedP.excelWeightedScore !== undefined) {
+            actItem.excelWeightedScore = matchedP.excelWeightedScore;
+          }
+          if (matchedP.excelBandCriteria) {
+            actItem.excelBandCriteria = matchedP.excelBandCriteria;
+          }
+          if (matchedP.excelUnit && !actItem.excelUnit) {
+            actItem.excelUnit = matchedP.excelUnit;
+          }
+        }
+      }
+      return table2Blocks;
     }
+
+    if (table1Blocks.length > 0) return table1Blocks;
   }
 
-  if (isFormRealisasiActual) {
-    const res = parseFormRealisasiActual(rawMatrix, headerRowIdx);
+  // Skenario 2: Sheet Form Realisasi Bulanan berdiri sendiri
+  if (table2HeaderIdx >= 0) {
+    const res = parseFormRealisasiActual(rawMatrix, table2HeaderIdx);
     if (res.length > 0) return res;
   }
 
-  if (isFormPenilaian) {
-    const res = parseFormPenilaian(rawMatrix, headerRowIdx);
+  // Skenario 3: Sheet Form Penilaian berdiri sendiri
+  if (table1HeaderIdx >= 0) {
+    const res = parseFormPenilaian(rawMatrix, table1HeaderIdx);
+    if (res.length > 0) return res;
+  }
+
+  // Skenario 4: Deteksi berdasarkan nama sheet
+  const sLow = sheetName.toLowerCase();
+  if (sLow.includes("realisasi") || sLow.includes("actual")) {
+    const res = parseFormRealisasiActual(rawMatrix, 6);
+    if (res.length > 0) return res;
+  } else if (sLow.includes("penilaian") || sLow.includes("matrix")) {
+    const res = parseFormPenilaian(rawMatrix, 6);
     if (res.length > 0) return res;
   }
 
@@ -846,10 +923,14 @@ export function generateBatchPreview(
     }
 
     // Peringatan jika Target Excel kosong atau tidak terbaca:
-    // PENTING: Jangan menggantinya dengan nilai default 100% secara otomatis!
     const itemWarnings = [...block.warningNotes];
     if (effectiveTarget === null) {
-      itemWarnings.push("Target pada Excel kosong atau tidak terbaca di Kolom U.");
+      // Ambil target langsung dari Kamus Parameter jika tidak terbaca di Excel
+      if (ind?.target !== null && ind?.target !== undefined && !isNaN(Number(ind.target))) {
+        effectiveTarget = Number(ind.target);
+      } else {
+        itemWarnings.push("Target pada Excel kosong atau tidak terbaca di Kolom U.");
+      }
     }
 
     // 3. Pencegahan kesalahan konversi desimal dan persentase untuk Realisasi & Target
@@ -1396,6 +1477,60 @@ export function extractSheetEmployeeInfo(
 }
 
 /**
+ * Mengekstrak baris parameter dari sheet Realisasi Departemen
+ */
+export function parseDepartmentKpiSheet(ws: XLSX.WorkSheet): ParsedDeptKpiRow[] {
+  const result: ParsedDeptKpiRow[] = [];
+  if (!ws || !ws["!ref"]) return result;
+
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  for (let r = 3; r <= range.e.r; r++) {
+    // Col 1 (B): Departemen, Col 3 (D): Nama Parameter, Col 4 (E): Satuan, Col 6 (G): Realisasi Tahunan
+    const deptCell = ws[XLSX.utils.encode_cell({ r, c: 1 })];
+    const nameCell = ws[XLSX.utils.encode_cell({ r, c: 3 })];
+    if (!nameCell || !nameCell.v) continue;
+
+    const paramName = String(nameCell.v).trim();
+    if (paramName.toUpperCase() === "NAMA PARAMETER" || paramName === "") continue;
+
+    const deptName = deptCell && deptCell.v ? String(deptCell.v).trim() : "";
+    const unitCell = ws[XLSX.utils.encode_cell({ r, c: 4 })];
+    const rawUnit = unitCell && unitCell.v ? String(unitCell.v).trim().toLowerCase() : "%";
+    const isPct = rawUnit === "%" || rawUnit.includes("persen");
+
+    const annualCell = ws[XLSX.utils.encode_cell({ r, c: 6 })];
+    let annualActual = sanitizeNumericCell(annualCell?.v);
+    // Normalisasi skala persen jika user mengetik simbol '%' di Excel (misal 101% disimpan sebagai 1.01)
+    if (annualActual !== null && isPct && annualActual > 0 && annualActual <= 2.5) {
+      annualActual = Math.round(annualActual * 10000) / 100;
+    }
+
+    const monthlyActuals: (number | null)[] = [];
+    for (let m = 0; m < 12; m++) {
+      const mCell = ws[XLSX.utils.encode_cell({ r, c: 7 + m })];
+      let mVal = sanitizeNumericCell(mCell?.v);
+      if (mVal !== null && isPct && mVal > 0 && mVal <= 2.5) {
+        mVal = Math.round(mVal * 10000) / 100;
+      }
+      monthlyActuals.push(mVal);
+    }
+
+    const noteCell = ws[XLSX.utils.encode_cell({ r, c: 19 })];
+    const notes = noteCell && noteCell.v ? String(noteCell.v).trim() : undefined;
+
+    result.push({
+      departmentName: deptName,
+      parameterName: paramName,
+      annualActual,
+      monthlyActuals,
+      notes,
+    });
+  }
+
+  return result;
+}
+
+/**
  * Membaca seluruh sheet dalam berkas Excel (1 sheet = 1 karyawan)
  */
 export function parseKpiExcelWorkbook(
@@ -1405,11 +1540,23 @@ export function parseKpiExcelWorkbook(
   currentEmployee?: { nik?: string; name?: string; department?: string; periodYear?: number }
 ): MultiSheetBatchResult {
   const sheets: SheetParseResult[] = [];
+  const parsedDepartmentKpis: ParsedDeptKpiRow[] = [];
 
   for (let i = 0; i < wb.SheetNames.length; i++) {
     const sheetName = wb.SheetNames[i];
-    // Lewati sheet mapping sistem dan panduan
-    if (/^_system_mapping|panduan & ketentuan|panduan/i.test(sheetName)) {
+
+    // Ekstrak sheet Realisasi Departemen jika ada
+    if (/realisasi departemen/i.test(sheetName)) {
+      const wsDept = wb.Sheets[sheetName];
+      if (wsDept) {
+        const dRows = parseDepartmentKpiSheet(wsDept);
+        parsedDepartmentKpis.push(...dRows);
+      }
+      continue;
+    }
+
+    // Lewati sheet mapping sistem, panduan, dan rekap
+    if (/^_system_mapping|panduan & ketentuan|panduan|^rekap$/i.test(sheetName)) {
       continue;
     }
 
@@ -1496,5 +1643,6 @@ export function parseKpiExcelWorkbook(
     totalEmployeesDetected,
     sheets,
     activeSheetIndex,
+    departmentKpis: parsedDepartmentKpis,
   };
 }

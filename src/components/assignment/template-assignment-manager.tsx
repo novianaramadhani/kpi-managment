@@ -4,21 +4,9 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Swal from "sweetalert2";
 import {
   Search,
-  Filter,
-  Layers,
-  Building2,
-  Briefcase,
-  UserCheck,
-  UserX,
-  Plus,
   RefreshCw,
-  CheckCircle2,
-  AlertCircle,
-  FileSpreadsheet,
   ChevronLeft,
   ChevronRight,
-  ShieldAlert,
-  ArrowRight,
 } from "lucide-react";
 
 interface Department {
@@ -303,306 +291,170 @@ export function TemplateAssignmentManager({
   }, [rows, modalEmpSearch]);
 
   const unassignedCount = totalCount - assignedCount;
-  const coveragePercent = totalCount > 0 ? Math.round((assignedCount / totalCount) * 100) : 0;
 
   return (
-    <div className="space-y-5">
-      {/* Top Metric Cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Karyawan</span>
-            <span className="rounded-lg bg-slate-100 p-2 text-slate-600">
-              <Briefcase className="h-4 w-4" />
-            </span>
-          </div>
-          <div className="mt-2 text-2xl font-bold text-slate-900">{totalCount.toLocaleString()}</div>
-          <p className="mt-1 text-xs text-slate-500">Karyawan aktif dalam basis data</p>
-        </div>
-
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-emerald-800 uppercase tracking-wider">Sudah Ber-Template</span>
-            <span className="rounded-lg bg-emerald-100 p-2 text-emerald-700">
-              <UserCheck className="h-4 w-4" />
-            </span>
-          </div>
-          <div className="mt-2 text-2xl font-bold text-emerald-700">{assignedCount.toLocaleString()}</div>
-          <p className="mt-1 text-xs text-emerald-600">Siap dinilai pada periode terpilih</p>
-        </div>
-
-        <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-amber-800 uppercase tracking-wider">Belum Ber-Template</span>
-            <span className="rounded-lg bg-amber-100 p-2 text-amber-700">
-              <UserX className="h-4 w-4" />
-            </span>
-          </div>
-          <div className="mt-2 text-2xl font-bold text-amber-700">{unassignedCount.toLocaleString()}</div>
-          <p className="mt-1 text-xs text-amber-600">Perlu penugasan template KPI</p>
-        </div>
-
-        <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-4 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-blue-800 uppercase tracking-wider">Cakupan Penugasan</span>
-            <span className="rounded-lg bg-blue-100 p-2 text-blue-700">
-              <Layers className="h-4 w-4" />
-            </span>
-          </div>
-          <div className="mt-2 text-2xl font-bold text-blue-700">{coveragePercent}%</div>
-          <div className="mt-2 h-1.5 w-full rounded-full bg-blue-200 overflow-hidden">
-            <div
-              className="h-full bg-blue-600 transition-all duration-300"
-              style={{ width: `${coveragePercent}%` }}
+    <div className="space-y-4">
+      {/* Compact Single-Row Toolbar */}
+      <div
+        data-tour="step-4-assign-toolbar"
+        className="flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-slate-200 bg-white p-3 shadow-2xs"
+      >
+        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[260px]">
+          {/* Search */}
+          <div className="relative w-full sm:w-56">
+            <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Cari nama atau NIK..."
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setPage(1);
+              }}
+              className="w-full rounded-lg border border-slate-200 bg-slate-50/60 pl-8 pr-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:bg-white focus:outline-hidden"
             />
           </div>
-        </div>
-      </div>
 
-      {/* Filter Toolbar */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Filter className="h-4 w-4 text-slate-500" />
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-700">Filter Penugasan</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => fetchData()}
-              disabled={loading}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-              Segarkan
-            </button>
-            <button
-              onClick={() => setIsAddModalOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition shadow-xs"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Tambah Penugasan
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-6">
           {/* Periode */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Periode</label>
-            <select
-              value={selectedPeriodId}
-              onChange={(e) => {
-                setSelectedPeriodId(Number(e.target.value));
-                setPage(1);
-              }}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-            >
-              {periods.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.year}) {p.status === "ACTIVE" ? "[Aktif]" : ""}
-                </option>
-              ))}
-            </select>
-          </div>
+          <select
+            value={selectedPeriodId}
+            onChange={(e) => {
+              setSelectedPeriodId(Number(e.target.value));
+              setPage(1);
+            }}
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-blue-500 focus:outline-hidden"
+          >
+            {periods.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} ({p.year})
+              </option>
+            ))}
+          </select>
 
           {/* Department */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Departemen</label>
-            <select
-              value={selectedDeptId}
-              onChange={(e) => {
-                setSelectedDeptId(e.target.value);
-                setPage(1);
-              }}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-            >
-              <option value="ALL">Semua Departemen</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name} ({d.code})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Job Level */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Job Level</label>
-            <select
-              value={selectedJobLevelId}
-              onChange={(e) => {
-                setSelectedJobLevelId(e.target.value);
-                setPage(1);
-              }}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-            >
-              <option value="ALL">Semua Job Level</option>
-              {jobLevels.map((jl) => (
-                <option key={jl.id} value={jl.id}>
-                  {jl.name} (Rank {jl.rank})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Jabatan */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Jabatan</label>
-            <select
-              value={selectedJobPositionId}
-              onChange={(e) => {
-                setSelectedJobPositionId(e.target.value);
-                setPage(1);
-              }}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-            >
-              <option value="ALL">Semua Jabatan</option>
-              {jobPositions.map((jp) => (
-                <option key={jp.id} value={jp.id}>
-                  {jp.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <select
+            value={selectedDeptId}
+            onChange={(e) => {
+              setSelectedDeptId(e.target.value);
+              setPage(1);
+            }}
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-blue-500 focus:outline-hidden"
+          >
+            <option value="ALL">Semua Departemen</option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
 
           {/* Status Penugasan */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Status</label>
-            <select
-              value={selectedStatus}
-              onChange={(e) => {
-                setSelectedStatus(e.target.value);
-                setPage(1);
-              }}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-            >
-              <option value="ALL">Semua Status</option>
-              <option value="ASSIGNED">Sudah Terpasang</option>
-              <option value="UNASSIGNED">Belum Terpasang</option>
-            </select>
-          </div>
-
-          {/* Search */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Pencarian</label>
-            <div className="relative">
-              <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Nama / NIK..."
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setPage(1);
-                }}
-                className="w-full rounded-lg border border-slate-300 bg-white pl-8 pr-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-hidden"
-              />
-            </div>
-          </div>
+          <select
+            value={selectedStatus}
+            onChange={(e) => {
+              setSelectedStatus(e.target.value);
+              setPage(1);
+            }}
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-blue-500 focus:outline-hidden"
+          >
+            <option value="ALL">Semua Status ({totalCount})</option>
+            <option value="ASSIGNED">Terpasang ({assignedCount})</option>
+            <option value="UNASSIGNED">Belum Terpasang ({unassignedCount})</option>
+          </select>
         </div>
-      </div>
 
-      {/* Relation Banner (Department → Jabatan / Job Level → Template → Employee) */}
-      <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-        <span className="font-semibold text-slate-700">Relasi Penugasan:</span>
-        <span className="font-medium text-blue-700">Departemen</span>
-        <ArrowRight className="h-3 w-3 text-slate-400" />
-        <span className="font-medium text-indigo-700">Jabatan / Job Level</span>
-        <ArrowRight className="h-3 w-3 text-slate-400" />
-        <span className="font-medium text-emerald-700">Template KPI</span>
-        <ArrowRight className="h-3 w-3 text-slate-400" />
-        <span className="font-medium text-slate-900">Karyawan (Appraisal Target)</span>
+        <div className="flex items-center gap-2">
+          <button
+            data-tour="step-4-assign-btn"
+            onClick={() => setIsAddModalOpen(true)}
+            className="inline-flex items-center rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition shadow-2xs"
+          >
+            + Tambah Penugasan
+          </button>
+        </div>
       </div>
 
       {/* Main Table */}
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs">
+      <div
+        data-tour="step-4-assign-table"
+        className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xs"
+      >
         {loading ? (
           <div className="flex flex-col items-center justify-center p-12 text-center">
-            <RefreshCw className="h-8 w-8 animate-spin text-blue-600 mb-2" />
-            <p className="text-sm font-semibold text-slate-700">Memuat data penugasan template...</p>
-            <p className="text-xs text-slate-400">Sinkronisasi data karyawan dan status appraisal</p>
+            <RefreshCw className="h-6 w-6 animate-spin text-blue-600 mb-2" />
+            <p className="text-xs font-medium text-slate-600">Memuat data penugasan template...</p>
           </div>
         ) : error ? (
           <div className="flex flex-col items-center justify-center p-12 text-center">
-            <AlertCircle className="h-8 w-8 text-rose-500 mb-2" />
-            <p className="text-sm font-semibold text-rose-700">{error}</p>
+            <p className="text-xs font-semibold text-rose-700">{error}</p>
             <button
               onClick={() => fetchData()}
-              className="mt-3 rounded-lg bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition"
+              className="mt-3 rounded-lg bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition"
             >
               Coba Lagi
             </button>
           </div>
         ) : rows.length === 0 ? (
           <div className="flex flex-col items-center justify-center p-12 text-center">
-            <FileSpreadsheet className="h-10 w-10 text-slate-300 mb-3" />
-            <p className="text-sm font-bold text-slate-700">Tidak ada data penugasan template yang cocok</p>
+            <p className="text-sm font-semibold text-slate-700">Tidak ada data penugasan template</p>
             <p className="text-xs text-slate-400 max-w-md mt-1">
-              Sesuaikan filter pencarian atau gunakan tombol &quot;Tambah Penugasan&quot; untuk memasang template ke karyawan.
+              Sesuaikan filter pencarian atau klik tombol &quot;+ Tambah Penugasan&quot; untuk memasang template.
             </p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-600">
-                  <th className="py-2.5 px-3">Karyawan</th>
-                  <th className="py-2.5 px-3">Departemen</th>
-                  <th className="py-2.5 px-3">Jabatan & Level</th>
-                  <th className="py-2.5 px-3">Template Terpasang</th>
-                  <th className="py-2.5 px-3">Status</th>
-                  <th className="py-2.5 px-3 text-right">Aksi</th>
+                <tr className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <th className="py-2.5 px-3.5">Karyawan</th>
+                  <th className="py-2.5 px-3.5">Departemen</th>
+                  <th className="py-2.5 px-3.5">Jabatan</th>
+                  <th className="py-2.5 px-3.5">Template KPI</th>
+                  <th className="py-2.5 px-3.5">Status</th>
+                  <th className="py-2.5 px-3.5 text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {rows.map((row) => {
                   const hasTemplate = !!row.templateId;
                   return (
-                    <tr key={row.employeeId} className="hover:bg-slate-50/80 transition-colors">
+                    <tr key={row.employeeId} className="hover:bg-slate-50/70 transition-colors">
                       {/* Karyawan */}
-                      <td className="py-2 px-3">
+                      <td className="py-2.5 px-3.5">
                         <div className="font-semibold text-slate-900">{row.name}</div>
                         <div className="text-[11px] font-mono text-slate-500">{row.nik}</div>
                       </td>
 
                       {/* Departemen */}
-                      <td className="py-2 px-3">
-                        <div className="font-medium text-slate-700">{row.departmentName}</div>
-                        <div className="text-[10px] text-slate-400 uppercase tracking-wider">
-                          Kode: {row.departmentCode}
-                        </div>
+                      <td className="py-2.5 px-3.5 text-slate-700">
+                        {row.departmentName}
                       </td>
 
-                      {/* Jabatan & Level */}
-                      <td className="py-2 px-3">
-                        <div className="font-medium text-slate-700">{row.jobPositionName}</div>
-                        <div className="text-[11px] text-slate-500">{row.jobLevelName}</div>
+                      {/* Jabatan */}
+                      <td className="py-2.5 px-3.5">
+                        <div className="text-slate-800">{row.jobPositionName}</div>
+                        <div className="text-[11px] text-slate-400">{row.jobLevelName}</div>
                       </td>
 
                       {/* Template Terpasang */}
-                      <td className="py-2 px-3">
+                      <td className="py-2.5 px-3.5">
                         {hasTemplate ? (
-                          <div className="flex items-center gap-1.5">
-                            <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">
-                              <CheckCircle2 className="h-3 w-3" />
-                              {row.templateName}
-                            </span>
-                          </div>
+                          <span className="inline-flex items-center rounded-md bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-800">
+                            {row.templateName}
+                          </span>
                         ) : (
-                          <div className="flex items-center gap-1 text-slate-400 italic">
-                            <span>Belum ada template</span>
-                          </div>
+                          <span className="text-slate-400">-</span>
                         )}
                       </td>
 
                       {/* Status */}
-                      <td className="py-2 px-3">
+                      <td className="py-2.5 px-3.5">
                         {hasTemplate ? (
-                          <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold text-emerald-800">
+                          <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-700 border border-emerald-200">
                             {row.appraisalStatus || "ASSIGNED"}
                           </span>
                         ) : (
-                          <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold text-amber-800">
+                          <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-[10px] font-semibold text-amber-700 border border-amber-200">
                             UNASSIGNED
                           </span>
                         )}
@@ -918,9 +770,9 @@ export function TemplateAssignmentManager({
                 type="button"
                 onClick={handleSubmitAssignment}
                 disabled={isSubmitting}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50 transition shadow-xs"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 transition shadow-2xs"
               >
-                {isSubmitting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                {isSubmitting && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
                 Terapkan Penugasan
               </button>
             </div>

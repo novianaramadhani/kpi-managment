@@ -24,6 +24,7 @@ import {
   batchUpdateTemplateStructure,
   type BatchBandUpdatePayload,
 } from "@/lib/actions";
+import { stripIndicatorPrefix } from "./indicator-modal";
 
 export interface KpiModernSpreadsheetProps {
   categories: KpiCategory[];
@@ -290,6 +291,7 @@ export function KpiModernSpreadsheet({
   onEditIndicator,
   onDeleteIndicator,
   onAddCriteriaBand,
+  onDeleteCriteriaBand,
   isEditTemplateMode = false,
   onToggleEditTemplateMode,
   templateId,
@@ -516,16 +518,16 @@ export function KpiModernSpreadsheet({
   };
 
   return (
-    <div className="w-full overflow-x-auto rounded-lg border border-slate-200 bg-white text-slate-800">
+    <div className="w-full space-y-3 text-[#0F172A]">
       {/* Sticky Banner Mode Edit Template */}
       {isEditTemplateMode && (
-        <div className="px-4 py-2.5 bg-sky-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 sticky top-0 z-10">
+        <div className="px-4 py-2.5 bg-[#EFF6FF] border border-[#E2E8F0] rounded-xl flex flex-wrap items-center justify-between gap-3 sticky top-0 z-10 shadow-xs">
           <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-sky-600 shrink-0" />
-            <span className="text-xs font-semibold text-sky-950">
+            <span className="w-2 h-2 rounded-full bg-[#2563EB] shrink-0" />
+            <span className="text-xs font-semibold text-[#0F172A]">
               Mode Edit Massal Aktif:
             </span>
-            <span className="text-xs text-slate-600">
+            <span className="text-xs text-[#64748B]">
               Ubah Operator, Kriteria Penilaian, dan Skor langsung pada tabel.
             </span>
           </div>
@@ -535,7 +537,7 @@ export function KpiModernSpreadsheet({
               type="button"
               onClick={handleCancelEditTemplate}
               disabled={isSavingBands}
-              className="px-3 py-1 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white border border-slate-200 rounded-md transition cursor-pointer disabled:opacity-50"
+              className="px-3 py-1 text-xs font-medium text-[#64748B] hover:text-[#0F172A] bg-[#FFFFFF] border border-[#E2E8F0] rounded-md transition cursor-pointer disabled:opacity-50"
             >
               Batal
             </button>
@@ -543,7 +545,7 @@ export function KpiModernSpreadsheet({
               type="button"
               onClick={handleSaveAllTemplateEdits}
               disabled={isSavingBands}
-              className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-sky-950 bg-sky-100 hover:bg-sky-200/80 border border-sky-200 rounded-md transition cursor-pointer disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-white bg-[#2563EB] hover:bg-blue-700 border border-[#2563EB] rounded-md transition cursor-pointer disabled:opacity-50"
             >
               {isSavingBands ? (
                 <>
@@ -561,25 +563,29 @@ export function KpiModernSpreadsheet({
         </div>
       )}
 
-      <table className="w-full text-left text-xs border-collapse">
+      {/* ========================================================= */}
+      {/* 1. DESKTOP VIEW: FULL SPREADSHEET (hidden md:block)       */}
+      {/* ========================================================= */}
+      <div className="hidden md:block w-full overflow-x-auto rounded-xl border border-[#E2E8F0] bg-[#FFFFFF] text-[#0F172A] shadow-2xs">
+        <table className="w-full text-left text-xs border-collapse">
         {/* ========================================================= */}
-        {/* HEADER TABEL (Nama Kolom Tetap Sama, Desain Sama dengan Form Penilaian) */}
+        {/* HEADER TABEL (Dark Navy #16345B) */}
         {/* ========================================================= */}
         <thead>
-          <tr className="border-b border-[#0F2C59] bg-[#0F2C59] text-xs font-medium text-white select-none">
-            <th className="py-2.5 px-3.5 text-left border-r border-white/20 min-w-[220px]">
+          <tr className="border-b border-[#16345B] bg-[#16345B] text-xs font-semibold text-white select-none">
+            <th className="py-2.5 px-3.5 text-left border-r border-white/15 min-w-[220px]">
               Parameter / Indikator
             </th>
-            <th className="py-2.5 px-2.5 text-center border-r border-white/20 w-24 min-w-[80px]">
+            <th className="py-2.5 px-2.5 text-center border-r border-white/15 w-24 min-w-[80px]">
               Operator
             </th>
-            <th className="py-2.5 px-3 text-left border-r border-white/20 min-w-[180px]">
+            <th className="py-2.5 px-3 text-left border-r border-white/15 min-w-[180px]">
               Kriteria Penilaian
             </th>
-            <th className="py-2.5 px-2 text-center border-r border-white/20 w-20 min-w-[68px]">
+            <th className="py-2.5 px-2 text-center border-r border-white/15 w-20 min-w-[68px]">
               Skor
             </th>
-            <th className="py-2.5 px-2 text-center border-r border-white/20 w-20 min-w-[72px]">
+            <th className="py-2.5 px-2 text-center border-r border-white/15 w-20 min-w-[72px]">
               Bobot
             </th>
             <th className="py-2.5 px-2.5 text-center w-24 min-w-[84px]">
@@ -591,15 +597,15 @@ export function KpiModernSpreadsheet({
         <tbody>
           {sortedCategories.length === 0 ? (
             <tr>
-              <td colSpan={6} className="py-12 px-6 text-center bg-white">
+              <td colSpan={6} className="py-12 px-6 text-center bg-[#FFFFFF]">
                 <div className="max-w-md mx-auto flex flex-col items-center justify-center text-center">
-                  <div className="h-12 w-12 rounded-xl bg-sky-50 border border-sky-200/80 flex items-center justify-center mb-3 text-sky-700">
+                  <div className="h-12 w-12 rounded-xl bg-[#EFF6FF] border border-[#E2E8F0] flex items-center justify-center mb-3 text-[#2563EB]">
                     <FileSpreadsheet className="h-6 w-6" />
                   </div>
-                  <h3 className="text-sm font-bold text-slate-800 mb-1">
+                  <h3 className="text-sm font-bold text-[#0F172A] mb-1">
                     Struktur KPI Belum Terisi
                   </h3>
-                  <p className="text-xs text-slate-500 leading-relaxed mb-4">
+                  <p className="text-xs text-[#64748B] leading-relaxed mb-4">
                     Unggah file template Excel untuk langsung mengisi kategori, indikator, target, bobot, dan kriteria skor, atau susun parameter secara manual.
                   </p>
                   <div className="flex flex-wrap items-center justify-center gap-2">
@@ -607,20 +613,20 @@ export function KpiModernSpreadsheet({
                       <button
                         type="button"
                         onClick={onImportExcel}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-sky-100 hover:bg-sky-200/80 text-sky-950 border border-sky-200 px-3.5 py-1.5 text-xs font-semibold transition cursor-pointer"
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#FFFFFF] hover:bg-[#EFF6FF] text-[#2563EB] border border-[#2563EB] px-3.5 py-1.5 text-xs font-semibold transition cursor-pointer"
                       >
-                        <Upload className="h-3.5 w-3.5" />
-                        <span>Upload Template Excel</span>
+                        <Upload className="h-3.5 w-3.5 text-[#2563EB]" />
+                        <span>Import Excel</span>
                       </button>
                     )}
                     {onAddCategory && (
                       <button
                         type="button"
                         onClick={onAddCategory}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 px-3.5 py-1.5 text-xs font-semibold transition cursor-pointer"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#2563EB] bg-[#2563EB] hover:bg-blue-700 text-white px-3.5 py-1.5 text-xs font-semibold transition cursor-pointer"
                       >
-                        <Plus className="h-3.5 w-3.5 text-slate-500" />
-                        <span>Tambah Kategori Manual</span>
+                        <Plus className="h-3.5 w-3.5 text-white" />
+                        <span>Tambah Kategori</span>
                       </button>
                     )}
                   </div>
@@ -667,25 +673,25 @@ export function KpiModernSpreadsheet({
               return (
                 <React.Fragment key={cat.id}>
                   {/* ========================================================= */}
-                  {/* 1. HEADER PARAMETER: Minimalist Soft Gray Ribbon */}
+                  {/* 1. HEADER PARAMETER: Background #F1F5F9 */}
                   {/* ========================================================= */}
                   <tr
                     id={`category-row-${cat.id}`}
                     onClick={() => onToggleCategory(cat.id)}
-                    className={`cursor-pointer select-none border-t-2 border-slate-300 border-b border-slate-300 bg-slate-100/90 hover:bg-slate-100 transition-colors ${
-                      isCatHighlighted ? "ring-1 ring-slate-400" : ""
+                    className={`cursor-pointer select-none border-y border-[#E2E8F0] bg-[#F1F5F9] hover:bg-slate-200/60 transition-colors ${
+                      isCatHighlighted ? "ring-1 ring-[#2563EB]" : ""
                     }`}
                   >
                     {/* Kolom 1: Parameter Name & Status */}
-                    <td className="py-2.5 px-3.5 align-middle border-r border-slate-200 border-t-2 border-slate-300 border-b border-slate-300">
+                    <td className="py-2.5 px-3.5 align-middle border-r border-[#E2E8F0] border-y border-[#E2E8F0]">
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 min-w-0">
                           {isExpanded ? (
-                            <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0 transition-transform" />
+                            <ChevronDown className="w-3.5 h-3.5 text-[#64748B] shrink-0 transition-transform" />
                           ) : (
-                            <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0 transition-transform" />
+                            <ChevronRight className="w-3.5 h-3.5 text-[#64748B] shrink-0 transition-transform" />
                           )}
-                          <span className="text-xs font-bold text-slate-700 shrink-0">
+                          <span className="text-xs font-bold text-[#0F172A] shrink-0">
                             {catIdx + 1}.
                           </span>
 
@@ -703,12 +709,12 @@ export function KpiModernSpreadsheet({
                                   if (e.key === "Escape") setEditingCatId(null);
                                 }}
                                 autoFocus
-                                className="h-6 px-2 text-xs font-medium text-slate-900 bg-white rounded border border-slate-300 focus:outline-hidden"
+                                className="h-6 px-2 text-xs font-medium text-[#0F172A] bg-[#FFFFFF] rounded border border-[#E2E8F0] focus:outline-hidden"
                               />
                               <button
                                 type="button"
                                 onClick={() => handleSaveEditCategory(cat.id)}
-                                className="p-0.5 text-emerald-700 hover:bg-emerald-50 rounded cursor-pointer"
+                                className="p-0.5 text-[#16A34A] hover:bg-[#F0FDF4] rounded cursor-pointer"
                                 title="Simpan"
                               >
                                 <Check className="w-3.5 h-3.5" />
@@ -716,14 +722,14 @@ export function KpiModernSpreadsheet({
                               <button
                                 type="button"
                                 onClick={() => setEditingCatId(null)}
-                                className="p-0.5 text-slate-400 hover:text-slate-700 rounded cursor-pointer"
+                                className="p-0.5 text-[#64748B] hover:text-[#0F172A] rounded cursor-pointer"
                                 title="Batal"
                               >
                                 <X className="w-3.5 h-3.5" />
                               </button>
                             </div>
                           ) : (
-                            <span className="font-medium text-slate-800 text-xs tracking-tight uppercase truncate">
+                            <span className="font-semibold text-[#0F172A] text-xs tracking-tight uppercase truncate">
                               {cat.name}
                             </span>
                           )}
@@ -733,7 +739,7 @@ export function KpiModernSpreadsheet({
                               {issueSeverity === "ERROR" ? (
                                 <AlertCircle className="w-3.5 h-3.5 text-rose-500" />
                               ) : issueSeverity === "INFO" ? (
-                                <Info className="w-3.5 h-3.5 text-blue-500" />
+                                <Info className="w-3.5 h-3.5 text-[#2563EB]" />
                               ) : (
                                 <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
                               )}
@@ -741,8 +747,8 @@ export function KpiModernSpreadsheet({
                           )}
                         </div>
 
-                        <span className="inline-flex items-center gap-1.5 font-normal shrink-0 select-none text-[11px] text-slate-500">
-                          <span className="rounded-full shrink-0 w-1.5 h-1.5 bg-emerald-500" />
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full font-semibold shrink-0 select-none text-[11px] bg-[#F0FDF4] text-[#16A34A] border border-[#BBF7D0]">
+                          <span className="rounded-full shrink-0 w-1.5 h-1.5 bg-[#16A34A]" />
                           <span>Aktif</span>
                         </span>
                       </div>
@@ -751,7 +757,7 @@ export function KpiModernSpreadsheet({
                     {/* Kolom 2 & 3: Ringkasan Indikator & Kriteria */}
                     <td
                       colSpan={2}
-                      className="py-2.5 px-3 align-middle border-r border-slate-200 border-t-2 border-slate-300 border-b border-slate-300 text-slate-600 font-normal text-xs"
+                      className="py-2.5 px-3 align-middle border-r border-[#E2E8F0] border-y border-[#E2E8F0] text-[#64748B] font-normal text-xs"
                     >
                       {isDirect
                         ? `1 Indikator Utama • ${totalKriteria} Kriteria`
@@ -759,13 +765,13 @@ export function KpiModernSpreadsheet({
                     </td>
 
                     {/* Kolom 4: Skor */}
-                    <td className="py-2.5 px-2 text-slate-400 text-center text-xs align-middle border-r border-slate-200 border-t-2 border-slate-300 border-b border-slate-300 font-normal">
+                    <td className="py-2.5 px-2 text-[#64748B] text-center text-xs align-middle border-r border-[#E2E8F0] border-y border-[#E2E8F0] font-normal">
                       -
                     </td>
 
                     {/* Kolom 5: Bobot Parameter */}
                     <td
-                      className="py-2.5 px-2 text-slate-800 text-center align-middle border-r border-slate-200 border-t-2 border-slate-300 border-b border-slate-300 text-xs font-normal"
+                      className="py-2.5 px-2 text-[#0F172A] text-center align-middle border-r border-[#E2E8F0] border-y border-[#E2E8F0] text-xs font-semibold"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {quickWeightCatId === cat.id ? (
@@ -781,12 +787,12 @@ export function KpiModernSpreadsheet({
                               if (e.key === "Escape") setQuickWeightCatId(null);
                             }}
                             autoFocus
-                            className="w-11 h-6 text-center text-xs font-medium text-slate-900 bg-white rounded border border-slate-300 focus:outline-hidden"
+                            className="w-11 h-6 text-center text-xs font-medium text-[#0F172A] bg-[#FFFFFF] rounded border border-[#E2E8F0] focus:outline-hidden"
                           />
                           <button
                             type="button"
                             onClick={() => handleSaveQuickWeightCat(cat.id)}
-                            className="p-0.5 text-emerald-700 hover:bg-emerald-50 rounded cursor-pointer"
+                            className="p-0.5 text-[#16A34A] hover:bg-[#F0FDF4] rounded cursor-pointer"
                             title="Simpan"
                           >
                             <Check className="w-3 h-3" />
@@ -799,7 +805,7 @@ export function KpiModernSpreadsheet({
                             setQuickWeightCatId(cat.id);
                             setQuickWeightCatValue(String(catWeightPct));
                           }}
-                          className="font-medium text-xs text-slate-700 hover:text-slate-900 cursor-pointer"
+                          className="font-semibold text-xs text-[#0F172A] hover:text-[#2563EB] cursor-pointer"
                           title="Klik untuk ubah bobot parameter"
                         >
                           {catWeightPct}%
@@ -809,14 +815,14 @@ export function KpiModernSpreadsheet({
 
                     {/* Kolom 6: Aksi Parameter */}
                     <td
-                      className="py-2.5 px-2.5 text-center align-middle border-t-2 border-slate-300 border-b border-slate-300 relative action-menu-container"
+                      className="py-2.5 px-2.5 text-center align-middle border-y border-[#E2E8F0] relative action-menu-container"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <div className="inline-flex items-center justify-center gap-1.5">
                         <button
                           type="button"
                           onClick={() => onToggleCategory(cat.id)}
-                          className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
+                          className="inline-flex items-center gap-1 text-[11px] font-medium text-[#64748B] hover:text-[#0F172A] transition-colors cursor-pointer"
                         >
                           <span>{isExpanded ? "Tutup" : "Buka"}</span>
                         </button>
@@ -828,7 +834,7 @@ export function KpiModernSpreadsheet({
                               openActionMenuId === `cat-${cat.id}` ? null : `cat-${cat.id}`
                             );
                           }}
-                          className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer inline-flex items-center justify-center"
+                          className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-slate-200/70 transition cursor-pointer inline-flex items-center justify-center"
                           title="Menu Aksi Parameter"
                         >
                           <Settings className="w-3.5 h-3.5" />
@@ -838,7 +844,7 @@ export function KpiModernSpreadsheet({
                       {openActionMenuId === `cat-${cat.id}` && (
                         <div
                           onClick={(e) => e.stopPropagation()}
-                          className="absolute right-1 top-full mt-1 z-30 w-44 bg-white border border-slate-200 rounded-lg shadow-lg py-1 text-left text-xs text-slate-700"
+                          className="absolute right-1 top-full mt-1 z-30 w-44 bg-[#FFFFFF] border border-[#E2E8F0] rounded-lg shadow-lg py-1 text-left text-xs text-[#0F172A]"
                         >
                           {!isDirect && onAddIndicator && (
                             <button
@@ -847,9 +853,9 @@ export function KpiModernSpreadsheet({
                                 setOpenActionMenuId(null);
                                 onAddIndicator(cat.id);
                               }}
-                              className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
+                              className="w-full px-3 py-1.5 text-left hover:bg-[#F8FAFC] flex items-center gap-2 cursor-pointer transition-colors text-[#0F172A] font-medium"
                             >
-                              <Plus className="w-3.5 h-3.5 text-blue-600" />
+                              <Plus className="w-3.5 h-3.5 text-[#2563EB]" />
                               <span>Tambah Indikator</span>
                             </button>
                           )}
@@ -860,9 +866,9 @@ export function KpiModernSpreadsheet({
                                 setOpenActionMenuId(null);
                                 onAddCriteriaBand(directParam.id);
                               }}
-                              className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
+                              className="w-full px-3 py-1.5 text-left hover:bg-[#F8FAFC] flex items-center gap-2 cursor-pointer transition-colors text-[#0F172A] font-medium"
                             >
-                              <Plus className="w-3.5 h-3.5 text-blue-600" />
+                              <Plus className="w-3.5 h-3.5 text-[#2563EB]" />
                               <span>Tambah Kriteria</span>
                             </button>
                           )}
@@ -872,9 +878,9 @@ export function KpiModernSpreadsheet({
                               setOpenActionMenuId(null);
                               handleStartEditCategory(cat, e);
                             }}
-                            className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
+                            className="w-full px-3 py-1.5 text-left hover:bg-[#F8FAFC] flex items-center gap-2 cursor-pointer transition-colors text-[#0F172A] font-medium"
                           >
-                            <Pencil className="w-3.5 h-3.5 text-slate-500" />
+                            <Pencil className="w-3.5 h-3.5 text-[#64748B]" />
                             <span>Ubah Nama</span>
                           </button>
                           {onDeleteCategory && (
@@ -896,18 +902,18 @@ export function KpiModernSpreadsheet({
                   </tr>
 
                   {/* ========================================================= */}
-                  {/* 2. BARIS INDIKATOR & KRITERIA (Desain Sama dengan Form KPI) */}
+                  {/* 2. BARIS INDIKATOR & KRITERIA (Background #FFFFFF) */}
                   {/* ========================================================= */}
                   {isExpanded &&
                     (indicatorsToRender.length === 0 ? (
-                      <tr className="bg-white border-b-2 border-slate-300">
-                        <td colSpan={6} className="py-6 text-center text-slate-400 italic text-xs border-b-2 border-slate-300">
+                      <tr className="bg-[#FFFFFF] border-b border-[#E2E8F0]">
+                        <td colSpan={6} className="py-6 text-center text-[#64748B] italic text-xs border-b border-[#E2E8F0]">
                           Belum ada indikator pada parameter ini.{" "}
                           {onAddIndicator && (
                             <button
                               type="button"
                               onClick={() => onAddIndicator(cat.id)}
-                              className="ml-1 font-semibold text-blue-600 hover:underline not-italic cursor-pointer"
+                              className="ml-1 font-semibold text-[#2563EB] hover:underline not-italic cursor-pointer"
                             >
                               + Tambah Indikator
                             </button>
@@ -934,17 +940,17 @@ export function KpiModernSpreadsheet({
                           <tr
                             id={`indicator-row-${ind.id}`}
                             key={ind.id}
-                            className={`border-b-2 border-slate-300 transition-colors ${
+                            className={`border-b border-[#E2E8F0] transition-colors ${
                               isIndHighlighted
-                                ? "bg-amber-50/50"
-                                : "bg-white hover:bg-slate-50/50"
+                                ? "bg-[#EFF6FF]/60"
+                                : "bg-[#FFFFFF] hover:bg-[#F8FAFC]"
                             }`}
                           >
                             {/* 1. Parameter / Indikator & Target */}
-                            <td className="py-2.5 px-3.5 pl-6 border-r border-slate-200 border-b-2 border-slate-300 align-middle">
+                            <td className="py-2.5 px-3.5 pl-6 border-r border-[#E2E8F0] border-b border-[#E2E8F0] align-middle">
                               <div className="flex items-start gap-2">
                                 {hasSub && indCode && (
-                                  <span className="text-xs font-semibold text-slate-600 shrink-0 mt-0.5 w-7 select-none">
+                                  <span className="text-xs font-semibold text-[#64748B] shrink-0 mt-0.5 w-7 select-none">
                                     {indCode}
                                   </span>
                                 )}
@@ -954,44 +960,31 @@ export function KpiModernSpreadsheet({
                                       onClick={() =>
                                         onEditIndicator && onEditIndicator(cat.id, ind)
                                       }
-                                      className="font-medium text-slate-800 text-xs leading-snug hover:text-slate-900 cursor-pointer block"
+                                      className="font-medium text-[#0F172A] text-xs leading-snug hover:text-[#2563EB] cursor-pointer block"
                                       title="Klik untuk edit indikator"
                                     >
-                                      {displayIndName}
+                                      {stripIndicatorPrefix(displayIndName)}
                                     </span>
                                   ) : (
-                                    <span className="text-slate-300 text-xs font-normal select-none block">
+                                    <span className="text-[#CBD5E1] text-xs font-normal select-none block">
                                       -
                                     </span>
                                   )}
-                                  {(() => {
-                                    const tStr = ind.target !== null && ind.target !== undefined ? String(ind.target).trim() : "";
-                                    if (!tStr || tStr === "-" || tStr === "null" || tStr === "undefined") return null;
-                                    return (
-                                      <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1 font-normal">
-                                        <span className="text-slate-400">Target:</span>
-                                        <span className="font-medium text-slate-700">
-                                          {tStr}
-                                          {ind.unit === "%" ? "%" : ind.unit && ind.unit !== "Teks" ? ` ${ind.unit}` : ""}
-                                        </span>
-                                      </div>
-                                    );
-                                  })()}
                                 </div>
                               </div>
                             </td>
 
                             {/* 2. Operator (Flat sub-rows dengan border tipis) */}
-                            <td className="p-0 border-r border-slate-200 border-b-2 border-slate-300 align-middle text-center">
+                            <td className="p-0 border-r border-[#E2E8F0] border-b border-[#E2E8F0] align-middle text-center">
                               {indBands.length > 0 ? (
-                                <div className="divide-y divide-slate-100">
+                                <div className="divide-y divide-[#E2E8F0]">
                                   {indBands.map((band) => {
                                     const { operatorSymbol, isUnrecognizedOperator } =
                                       formatCriteriaValues(band, ind.unit);
                                     return (
                                       <div
                                         key={band.id}
-                                        className="h-7 flex items-center justify-center px-2 text-[11px] font-normal text-slate-600"
+                                        className="h-7 flex items-center justify-center px-2 text-[11px] font-normal text-[#64748B]"
                                       >
                                         {isEditTemplateMode
                                           ? renderEditableOperatorCell(
@@ -1009,14 +1002,14 @@ export function KpiModernSpreadsheet({
                                   })}
                                 </div>
                               ) : (
-                                <div className="px-2 py-2 text-slate-300 font-normal text-xs">-</div>
+                                <div className="px-2 py-2 text-[#CBD5E1] font-normal text-xs">-</div>
                               )}
                             </td>
 
                             {/* 3. Kriteria Penilaian (Flat sub-rows dengan border tipis) */}
-                            <td className="p-0 border-r border-slate-200 border-b-2 border-slate-300 align-middle">
+                            <td className="p-0 border-r border-[#E2E8F0] border-b border-[#E2E8F0] align-middle">
                               {indBands.length > 0 ? (
-                                <div className="divide-y divide-slate-100">
+                                <div className="divide-y divide-[#E2E8F0]">
                                   {indBands.map((band) => {
                                     const { criteriaValue } = formatCriteriaValues(
                                       band,
@@ -1025,7 +1018,7 @@ export function KpiModernSpreadsheet({
                                     return (
                                       <div
                                         key={band.id}
-                                        className="h-7 flex items-center px-3 text-[11px] font-normal text-slate-700 truncate"
+                                        className="h-7 flex items-center px-3 text-[11px] font-normal text-[#0F172A] truncate"
                                         title={criteriaValue}
                                       >
                                         {isEditTemplateMode
@@ -1041,22 +1034,22 @@ export function KpiModernSpreadsheet({
                                   })}
                                 </div>
                               ) : (
-                                <div className="px-3 py-2 text-slate-400 italic text-xs">
+                                <div className="px-3 py-2 text-[#64748B] italic text-xs">
                                   Belum ada kriteria
                                 </div>
                               )}
                             </td>
 
                             {/* 4. Skor (Flat sub-rows dengan border tipis) */}
-                            <td className="p-0 border-r border-slate-200 border-b-2 border-slate-300 align-middle text-center">
+                            <td className="p-0 border-r border-[#E2E8F0] border-b border-[#E2E8F0] align-middle text-center">
                               {indBands.length > 0 ? (
-                                <div className="divide-y divide-slate-100">
+                                <div className="divide-y divide-[#E2E8F0]">
                                   {indBands.map((band) => {
                                     const { score } = formatCriteriaValues(band, ind.unit);
                                     return (
                                       <div
                                         key={band.id}
-                                        className="h-7 flex items-center justify-center px-2 text-[11px] font-normal text-slate-700"
+                                        className="h-7 flex items-center justify-center px-2 text-[11px] font-normal text-[#0F172A]"
                                       >
                                         {isEditTemplateMode
                                           ? renderEditableScoreCell(
@@ -1071,13 +1064,13 @@ export function KpiModernSpreadsheet({
                                   })}
                                 </div>
                               ) : (
-                                <div className="px-2 py-2 text-slate-300 font-normal text-xs">-</div>
+                                <div className="px-2 py-2 text-[#CBD5E1] font-normal text-xs">-</div>
                               )}
                             </td>
 
                             {/* 5. Bobot */}
                             <td
-                              className="py-2.5 px-2 border-r border-slate-200 border-b-2 border-slate-300 text-center align-middle text-xs font-normal text-slate-700"
+                              className="py-2.5 px-2 border-r border-[#E2E8F0] border-b border-[#E2E8F0] text-center align-middle text-xs font-normal text-[#0F172A]"
                               onClick={(e) => e.stopPropagation()}
                             >
                               {!isDirect && quickWeightParamId === ind.id ? (
@@ -1094,12 +1087,36 @@ export function KpiModernSpreadsheet({
                                       if (e.key === "Escape") setQuickWeightParamId(null);
                                     }}
                                     autoFocus
-                                    className="w-11 h-6 text-center text-xs font-normal border border-slate-300 rounded bg-white focus:outline-hidden"
+                                    className="w-11 h-6 text-center text-xs font-normal border border-[#E2E8F0] rounded bg-[#FFFFFF] focus:outline-hidden"
                                   />
                                   <button
                                     type="button"
                                     onClick={() => handleSaveQuickWeightParam(ind)}
-                                    className="p-0.5 text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer"
+                                    className="p-0.5 text-[#16A34A] hover:bg-[#F0FDF4] rounded cursor-pointer"
+                                    title="Simpan"
+                                  >
+                                    <Check className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ) : isDirect && quickWeightCatId === cat.id ? (
+                                <div className="flex items-center justify-center gap-1">
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="100"
+                                    value={quickWeightCatValue}
+                                    onChange={(e) => setQuickWeightCatValue(e.target.value)}
+                                    onKeyDown={async (e) => {
+                                      if (e.key === "Enter") await handleSaveQuickWeightCat(cat.id);
+                                      if (e.key === "Escape") setQuickWeightCatId(null);
+                                    }}
+                                    autoFocus
+                                    className="w-11 h-6 text-center text-xs font-medium text-[#0F172A] bg-[#FFFFFF] rounded border border-[#E2E8F0] focus:outline-hidden"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveQuickWeightCat(cat.id)}
+                                    className="p-0.5 text-[#16A34A] hover:bg-[#F0FDF4] rounded cursor-pointer"
                                     title="Simpan"
                                   >
                                     <Check className="w-3 h-3" />
@@ -1112,12 +1129,15 @@ export function KpiModernSpreadsheet({
                                     if (!isDirect) {
                                       setQuickWeightParamId(ind.id);
                                       setQuickWeightParamValue(String(indWeightPct));
+                                    } else {
+                                      setQuickWeightCatId(cat.id);
+                                      setQuickWeightCatValue(String(catWeightPct));
                                     }
                                   }}
-                                  className="font-normal text-xs text-slate-700 hover:text-slate-900 cursor-pointer"
+                                  className="font-normal text-xs text-[#0F172A] hover:text-[#2563EB] cursor-pointer"
                                   title={
                                     isDirect
-                                      ? "Bobot mengikuti parameter utama"
+                                      ? "Klik untuk ubah bobot parameter"
                                       : "Klik untuk ubah bobot indikator"
                                   }
                                 >
@@ -1128,7 +1148,7 @@ export function KpiModernSpreadsheet({
 
                             {/* 6. Aksi Indikator */}
                             <td
-                              className="py-2.5 px-2.5 border-b-2 border-slate-300 text-center align-middle relative action-menu-container"
+                              className="py-2.5 px-2.5 border-b border-[#E2E8F0] text-center align-middle relative action-menu-container"
                               onClick={(e) => e.stopPropagation()}
                             >
                               <div className="inline-flex items-center justify-center gap-1">
@@ -1136,10 +1156,10 @@ export function KpiModernSpreadsheet({
                                   <button
                                     type="button"
                                     onClick={() => onEditIndicator(cat.id, ind)}
-                                    className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold text-blue-700 hover:text-blue-800 bg-blue-50/90 hover:bg-blue-100 border border-blue-200/90 shadow-2xs transition cursor-pointer whitespace-nowrap"
+                                    className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold text-[#2563EB] hover:bg-blue-100/80 bg-[#EFF6FF] border border-blue-200/80 shadow-2xs transition cursor-pointer whitespace-nowrap"
                                     title={`Edit indikator ${displayIndName}`}
                                   >
-                                    <Pencil className="h-3 w-3 shrink-0 text-blue-600" />
+                                    <Pencil className="h-3 w-3 shrink-0 text-[#2563EB]" />
                                     <span>Edit</span>
                                   </button>
                                 )}
@@ -1153,7 +1173,7 @@ export function KpiModernSpreadsheet({
                                         : `ind-${ind.id}`
                                     );
                                   }}
-                                  className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+                                  className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC] transition cursor-pointer"
                                   title="Menu Aksi Indikator"
                                 >
                                   <Settings className="w-3.5 h-3.5" />
@@ -1163,7 +1183,7 @@ export function KpiModernSpreadsheet({
                               {openActionMenuId === `ind-${ind.id}` && (
                                 <div
                                   onClick={(e) => e.stopPropagation()}
-                                  className="absolute right-1 top-full mt-1 z-30 w-44 bg-white border border-slate-200 rounded-lg shadow-lg py-1 text-left text-xs text-slate-700"
+                                  className="absolute right-1 top-full mt-1 z-30 w-44 bg-[#FFFFFF] border border-[#E2E8F0] rounded-lg shadow-lg py-1 text-left text-xs text-[#0F172A]"
                                 >
                                   {onAddCriteriaBand && (
                                     <button
@@ -1172,9 +1192,9 @@ export function KpiModernSpreadsheet({
                                         setOpenActionMenuId(null);
                                         onAddCriteriaBand(ind.id);
                                       }}
-                                      className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
+                                      className="w-full px-3 py-1.5 text-left hover:bg-[#F8FAFC] flex items-center gap-2 cursor-pointer transition-colors text-[#0F172A] font-medium"
                                     >
-                                      <Plus className="w-3.5 h-3.5 text-blue-600" />
+                                      <Plus className="w-3.5 h-3.5 text-[#2563EB]" />
                                       <span>Tambah Kriteria</span>
                                     </button>
                                   )}
@@ -1185,9 +1205,9 @@ export function KpiModernSpreadsheet({
                                         setOpenActionMenuId(null);
                                         onEditIndicator(cat.id, ind);
                                       }}
-                                      className="w-full px-3 py-1.5 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors text-slate-700 font-medium"
+                                      className="w-full px-3 py-1.5 text-left hover:bg-[#F8FAFC] flex items-center gap-2 cursor-pointer transition-colors text-[#0F172A] font-medium"
                                     >
-                                      <Pencil className="w-3.5 h-3.5 text-slate-500" />
+                                      <Pencil className="w-3.5 h-3.5 text-[#64748B]" />
                                       <span>Ubah Indikator</span>
                                     </button>
                                   )}
@@ -1218,23 +1238,373 @@ export function KpiModernSpreadsheet({
 
           {/* Baris Total Bobot Parameter di Bawah Tabel Master Template */}
           {sortedCategories.length > 0 && (
-            <tr className="border-t border-slate-200 bg-slate-50/90 font-medium text-slate-800 select-none">
+            <tr className="border-t border-[#E2E8F0] bg-[#F8FAFC] font-medium text-[#0F172A] select-none">
               <td
                 colSpan={4}
-                className="py-2.5 px-3.5 text-left align-middle border-r border-slate-200 text-xs font-medium uppercase tracking-tight text-slate-700"
+                className="py-2.5 px-3.5 text-left align-middle border-r border-[#E2E8F0] text-xs font-semibold uppercase tracking-tight text-[#0F172A]"
               >
                 Total Bobot Parameter KPI
               </td>
-              <td className="py-2.5 px-2 text-center align-middle border-r border-slate-200 text-xs font-medium text-slate-800">
+              <td className="py-2.5 px-2 text-center align-middle border-r border-[#E2E8F0] text-xs font-semibold text-[#0F172A]">
                 {totalTemplateWeightPct}%
               </td>
-              <td className="py-2.5 px-2.5 text-center align-middle text-[11px] font-normal text-slate-500">
+              <td className="py-2.5 px-2.5 text-center align-middle text-[11px] font-normal text-[#64748B]">
                 Target {templateTargetPct}%
               </td>
             </tr>
           )}
         </tbody>
       </table>
+      </div>
+
+      {/* ========================================================= */}
+      {/* 2. MOBILE CARD VIEW (md:hidden)                           */}
+      {/* ========================================================= */}
+      <div className="md:hidden space-y-3">
+        {sortedCategories.length === 0 ? (
+          <div className="bg-[#FFFFFF] rounded-xl border border-[#E2E8F0] p-6 text-center shadow-2xs">
+            <div className="h-12 w-12 rounded-xl bg-[#EFF6FF] border border-[#E2E8F0] flex items-center justify-center mx-auto mb-3 text-[#2563EB]">
+              <FileSpreadsheet className="h-6 w-6" />
+            </div>
+            <h3 className="text-sm font-bold text-[#0F172A] mb-1">
+              Struktur KPI Belum Terisi
+            </h3>
+            <p className="text-xs text-[#64748B] leading-relaxed mb-4">
+              Unggah file template Excel untuk langsung mengisi indikator, bobot, dan kriteria skor, atau susun parameter secara manual.
+            </p>
+            <div className="flex flex-col gap-2">
+              {onImportExcel && (
+                <button
+                  type="button"
+                  onClick={onImportExcel}
+                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#FFFFFF] hover:bg-[#EFF6FF] text-[#2563EB] border border-[#2563EB] px-3.5 py-2 text-xs font-semibold transition cursor-pointer"
+                >
+                  <Upload className="h-3.5 w-3.5 text-[#2563EB]" />
+                  <span>Import Excel</span>
+                </button>
+              )}
+              {onAddCategory && (
+                <button
+                  type="button"
+                  onClick={onAddCategory}
+                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#2563EB] bg-[#2563EB] hover:bg-blue-700 text-white px-3.5 py-2 text-xs font-semibold transition cursor-pointer"
+                >
+                  <Plus className="h-3.5 w-3.5 text-white" />
+                  <span>Tambah Kategori</span>
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          sortedCategories.map((cat, catIdx) => {
+            const isDirect = cat.categoryType === "DIRECT";
+            const catWeightPct = Math.round(Number(cat.weight) * 100);
+            const catParams = categoryParametersMap.get(cat.id) || [];
+            const isExpanded = expandedCategoryIds.has(cat.id);
+            const directParam = isDirect ? catParams[0] : null;
+            const totalIndikator = isDirect ? 1 : catParams.length;
+            const paramIds = isDirect ? (directParam ? [directParam.id] : []) : catParams.map((p) => p.id);
+            const totalKriteria = bands.filter((b) => paramIds.includes(b.parameterId)).length;
+            const indicatorsToRender = isDirect ? (directParam ? [directParam] : []) : catParams;
+
+            return (
+              <div
+                key={cat.id}
+                className="bg-[#FFFFFF] rounded-xl border border-[#E2E8F0] shadow-2xs overflow-hidden"
+              >
+                {/* Category Header Card */}
+                <div
+                  onClick={() => onToggleCategory(cat.id)}
+                  className="p-3.5 bg-[#F1F5F9] hover:bg-slate-200/60 border-b border-[#E2E8F0] flex items-center justify-between gap-2.5 cursor-pointer select-none transition-colors"
+                >
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    {isExpanded ? (
+                      <ChevronDown className="w-4 h-4 text-[#64748B] shrink-0" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4 text-[#64748B] shrink-0" />
+                    )}
+                    <span className="text-xs font-bold text-[#0F172A] shrink-0">
+                      {catIdx + 1}.
+                    </span>
+                    <span className="text-xs font-bold text-[#0F172A] uppercase truncate">
+                      {cat.name}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <span className="px-2 py-0.5 rounded-md bg-[#FFFFFF] border border-[#E2E8F0] text-xs font-bold text-[#0F172A] shadow-2xs">
+                      {catWeightPct}%
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenActionMenuId(openActionMenuId === `mobile-cat-${cat.id}` ? null : `mobile-cat-${cat.id}`);
+                      }}
+                      className="p-1.5 rounded-lg border border-[#E2E8F0] bg-[#FFFFFF] text-[#64748B] hover:text-[#0F172A] transition cursor-pointer"
+                      title="Menu Aksi Parameter"
+                    >
+                      <Settings className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Dropdown Menu for Mobile Category */}
+                {openActionMenuId === `mobile-cat-${cat.id}` && (
+                  <div className="bg-[#F8FAFC] border-b border-[#E2E8F0] p-2 space-y-1 text-xs">
+                    {!isDirect && onAddIndicator && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenActionMenuId(null);
+                          onAddIndicator(cat.id);
+                        }}
+                        className="w-full px-3 py-2 text-left rounded-lg bg-[#FFFFFF] border border-[#E2E8F0] text-[#0F172A] hover:bg-[#EFF6FF] font-medium flex items-center gap-2 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5 text-[#2563EB]" />
+                        <span>Tambah Indikator</span>
+                      </button>
+                    )}
+                    {isDirect && directParam && onAddCriteriaBand && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenActionMenuId(null);
+                          onAddCriteriaBand(directParam.id);
+                        }}
+                        className="w-full px-3 py-2 text-left rounded-lg bg-[#FFFFFF] border border-[#E2E8F0] text-[#0F172A] hover:bg-[#EFF6FF] font-medium flex items-center gap-2 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5 text-[#2563EB]" />
+                        <span>Tambah Kriteria</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        setOpenActionMenuId(null);
+                        handleStartEditCategory(cat, e);
+                      }}
+                      className="w-full px-3 py-2 text-left rounded-lg bg-[#FFFFFF] border border-[#E2E8F0] text-[#0F172A] hover:bg-[#F8FAFC] font-medium flex items-center gap-2 cursor-pointer"
+                    >
+                      <Pencil className="w-3.5 h-3.5 text-[#64748B]" />
+                      <span>Ubah Nama Parameter</span>
+                    </button>
+                    {onDeleteCategory && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenActionMenuId(null);
+                          handleDeleteCategoryConfirm(cat);
+                        }}
+                        className="w-full px-3 py-2 text-left rounded-lg bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 font-medium flex items-center gap-2 cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                        <span>Hapus Parameter</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Sub-line summary */}
+                <div className="px-3.5 py-1.5 bg-[#F8FAFC] border-b border-[#E2E8F0] flex items-center justify-between text-[11px] text-[#64748B]">
+                  <span>
+                    {isDirect ? `1 Indikator Utama • ${totalKriteria} Kriteria` : `${totalIndikator} Indikator • ${totalKriteria} Kriteria`}
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#F0FDF4] text-[#16A34A] border border-[#BBF7D0] font-semibold">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#16A34A]" />
+                    Aktif
+                  </span>
+                </div>
+
+                {/* Expanded Indicators List */}
+                {isExpanded && (
+                  <div className="p-3 space-y-3 bg-[#FFFFFF]">
+                    {indicatorsToRender.length === 0 ? (
+                      <div className="py-4 text-center text-[#64748B] italic text-xs">
+                        Belum ada indikator pada parameter ini.
+                        {onAddIndicator && (
+                          <div className="mt-2">
+                            <button
+                              type="button"
+                              onClick={() => onAddIndicator(cat.id)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#2563EB] bg-[#EFF6FF] border border-blue-200 rounded-lg cursor-pointer"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>Tambah Indikator</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      indicatorsToRender.map((ind, indIdx) => {
+                        const indWeightPct = isDirect ? catWeightPct : Math.round(Number(ind.weight) * 100);
+                        const indBands = bands
+                          .filter((b) => b.parameterId === ind.id)
+                          .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+                        const hasSub = !isDirect && catParams.length > 1;
+                        const indCode = hasSub ? `${catIdx + 1}.${indIdx + 1}` : "";
+                        const cleanName = stripIndicatorPrefix(ind.name);
+
+                        return (
+                          <div
+                            key={ind.id}
+                            className="bg-[#FFFFFF] rounded-xl border border-[#E2E8F0] p-3 space-y-2.5"
+                          >
+                            {/* Indicator Top Header */}
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex items-start gap-1.5 min-w-0 flex-1">
+                                {indCode && (
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-[#EFF6FF] border border-blue-200 text-[#2563EB] font-mono font-bold text-[11px] shrink-0">
+                                    {indCode}
+                                  </span>
+                                )}
+                                <span
+                                  onClick={() => onEditIndicator && onEditIndicator(cat.id, ind)}
+                                  className="text-xs font-bold text-[#0F172A] leading-snug hover:text-[#2563EB] cursor-pointer"
+                                >
+                                  {cleanName || "Indikator Utama"}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-1 shrink-0">
+                                <span className="px-2 py-0.5 rounded bg-[#F8FAFC] border border-[#E2E8F0] text-[11px] font-semibold text-[#0F172A]">
+                                  Bobot {indWeightPct}%
+                                </span>
+                                {onEditIndicator && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onEditIndicator(cat.id, ind)}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold text-[#2563EB] bg-[#EFF6FF] hover:bg-blue-100/80 border border-blue-200 transition cursor-pointer"
+                                    title="Edit Indikator"
+                                  >
+                                    <Pencil className="w-3 h-3" />
+                                    <span>Edit</span>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Scoring Criteria Matrix Table */}
+                            {indBands.length > 0 ? (
+                              <div className="rounded-lg border border-[#E2E8F0] bg-[#FFFFFF] overflow-hidden shadow-2xs">
+                                <table className="w-full text-left text-xs">
+                                  <thead className="bg-[#F1F5F9] border-b border-[#E2E8F0] text-[10.5px] font-semibold text-[#64748B]">
+                                    <tr>
+                                      <th className="py-1 px-2 text-center w-14">Operator</th>
+                                      <th className="py-1 px-2">Kriteria</th>
+                                      <th className="py-1 px-2 text-center w-12">Skor</th>
+                                      {isEditTemplateMode && <th className="py-1 px-1.5 text-center w-10">Aksi</th>}
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-[#E2E8F0] text-[11px]">
+                                    {indBands.map((band) => {
+                                      const { operatorSymbol, criteriaValue, score, isUnrecognizedOperator } =
+                                        formatCriteriaValues(band, ind.unit);
+                                      return (
+                                        <tr key={band.id} className="hover:bg-[#F8FAFC]">
+                                          <td className="py-1.5 px-2 text-center align-middle font-medium text-[#64748B]">
+                                            {isEditTemplateMode
+                                              ? renderEditableOperatorCell(band.id, operatorSymbol, draftBands, handleDraftBandChange)
+                                              : renderOperatorBadge(operatorSymbol, isUnrecognizedOperator)}
+                                          </td>
+                                          <td className="py-1.5 px-2 align-middle font-medium text-[#0F172A]">
+                                            {isEditTemplateMode
+                                              ? renderEditableCriteriaCell(band.id, criteriaValue, draftBands, handleDraftBandChange)
+                                              : criteriaValue}
+                                          </td>
+                                          <td className="py-1.5 px-2 text-center align-middle font-bold text-[#0F172A]">
+                                            {isEditTemplateMode
+                                              ? renderEditableScoreCell(band.id, score, draftBands, handleDraftBandChange)
+                                              : score}
+                                          </td>
+                                          {isEditTemplateMode && (
+                                            <td className="py-1.5 px-1 text-center align-middle">
+                                              {onDeleteCriteriaBand && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => onDeleteCriteriaBand(band.id)}
+                                                  className="p-1 text-[#64748B] hover:text-rose-600 rounded transition cursor-pointer"
+                                                  title="Hapus kriteria"
+                                                >
+                                                  <Trash2 className="w-3.5 h-3.5 mx-auto" />
+                                                </button>
+                                              )}
+                                            </td>
+                                          )}
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            ) : (
+                              <div className="py-2 px-3 rounded-lg bg-[#FFFFFF] border border-[#E2E8F0] text-center text-xs text-[#64748B] italic">
+                                Belum ada kriteria penilaian
+                              </div>
+                            )}
+
+                            {/* Touch Actions Bar */}
+                            <div className="flex items-center justify-between gap-2 pt-1 border-t border-[#E2E8F0]">
+                              {onAddCriteriaBand && (
+                                <button
+                                  type="button"
+                                  onClick={() => onAddCriteriaBand(ind.id)}
+                                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#2563EB] hover:bg-[#EFF6FF] bg-[#FFFFFF] border border-[#E2E8F0] rounded-lg px-2.5 py-1 transition cursor-pointer"
+                                >
+                                  <Plus className="w-3 h-3 text-[#2563EB]" />
+                                  <span>+ Kriteria</span>
+                                </button>
+                              )}
+
+                              <div className="flex items-center gap-1.5">
+                                {onEditIndicator && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onEditIndicator(cat.id, ind)}
+                                    className="text-[11px] font-medium text-[#64748B] hover:text-[#0F172A] bg-[#FFFFFF] border border-[#E2E8F0] rounded-lg px-2.5 py-1 transition cursor-pointer"
+                                  >
+                                    Atur Detail
+                                  </button>
+                                )}
+                                {!isDirect && onDeleteIndicator && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteIndicatorConfirm(ind)}
+                                    className="p-1 text-[#64748B] hover:text-rose-600 transition cursor-pointer"
+                                    title="Hapus Indikator"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+
+        {/* Mobile Total Weight Summary Footer */}
+        {sortedCategories.length > 0 && (
+          <div className="bg-[#FFFFFF] rounded-xl border border-[#E2E8F0] p-3.5 shadow-2xs flex items-center justify-between text-xs">
+            <div>
+              <span className="font-bold text-[#0F172A] uppercase block">Total Bobot Parameter</span>
+              <span className="text-[11px] text-[#64748B]">Target kelulusan publish: {templateTargetPct}%</span>
+            </div>
+            <div className="text-right">
+              <span className={`text-base font-bold ${totalTemplateWeightPct === templateTargetPct ? "text-[#16A34A]" : "text-amber-700"}`}>
+                {totalTemplateWeightPct}%
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

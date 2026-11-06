@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   X,
@@ -10,6 +10,8 @@ import {
   ExternalLink,
   Download,
   FileText,
+  Edit3,
+  Check,
 } from "lucide-react";
 import type { Department, JobLevel, KpiBand, KpiCategory, KpiParameter, KpiTemplate } from "@/db/schema";
 import { Badge } from "./ui";
@@ -34,6 +36,17 @@ interface TemplateViewModalProps {
   parameters: KpiParameter[];
   bands?: KpiBand[];
   onAssign?: (template: KpiTemplate) => void;
+  // Inline edit callbacks (used when previewing/editing from Generate Template KPI)
+  onUpdateCategory?: (catId: number, data: { name?: string; weight?: number }) => Promise<void>;
+  onUpdateIndicatorName?: (ind: KpiParameter, newName: string) => Promise<void>;
+  onUpdateIndicatorWeight?: (ind: KpiParameter, newWeight: number) => Promise<void>;
+  onDeleteIndicator?: (ind: KpiParameter) => Promise<void>;
+  onUpdateCriteriaBandInline?: (band: KpiBand, data: { label?: string; score?: string }) => Promise<void>;
+  onAddCriteriaBand?: (paramId: number) => void;
+  onDeleteCriteriaBand?: (bandId: number) => Promise<void>;
+  onAddIndicator?: (catId: number) => void;
+  onEditIndicator?: (catId: number, ind: KpiParameter) => void;
+  onOpenStep2ForEmployee?: () => void;
 }
 
 export function TemplateViewModal({
@@ -47,7 +60,22 @@ export function TemplateViewModal({
   parameters,
   bands = [],
   onAssign,
+  onUpdateCategory,
+  onUpdateIndicatorName,
+  onUpdateIndicatorWeight,
+  onDeleteIndicator,
+  onUpdateCriteriaBandInline,
+  onAddCriteriaBand,
+  onDeleteCriteriaBand,
+  onAddIndicator,
+  onEditIndicator,
+  onOpenStep2ForEmployee,
 }: TemplateViewModalProps) {
+  const canInlineEdit = Boolean(
+    onUpdateCategory || onUpdateIndicatorName || onUpdateIndicatorWeight || onUpdateCriteriaBandInline
+  );
+  const [isInlineEditing, setIsInlineEditing] = useState(false);
+
   // ESC key to close modal
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -58,6 +86,12 @@ export function TemplateViewModal({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setIsInlineEditing(false);
+    }
+  }, [isOpen]);
 
   if (!isOpen || !template) return null;
 
@@ -77,7 +111,7 @@ export function TemplateViewModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-6 animate-in fade-in duration-150"
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-6 animate-in fade-in duration-150"
       onClick={onClose}
     >
       <div
@@ -85,24 +119,33 @@ export function TemplateViewModal({
         onClick={(e) => e.stopPropagation()}
       >
         {/* ========================================================= */}
-        {/* 1. MODAL HEADER */}
+        {/* 1. MODAL HEADER (Clean White Background & Subtle Border) */}
         {/* ========================================================= */}
-        <div className="px-5 sm:px-6 pt-4 pb-3.5 border-b border-slate-200 bg-white space-y-2">
-          {/* Top: Template Name, Badges, & Close */}
+        <div className="px-5 sm:px-6 py-4 border-b border-[#E2E8F0] bg-[#FFFFFF] space-y-2">
+          {/* Top: Name, Badges, & Close */}
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1 space-y-1">
               <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-base sm:text-lg font-bold text-slate-900 leading-snug break-words">
-                  {template.name}
+                <h2 className="text-base sm:text-lg font-bold text-[#0F172A] leading-snug break-words">
+                  {employee?.name || template.name}
                 </h2>
                 <div className="flex items-center gap-1.5 shrink-0">
-                  {template.isActive ? (
-                    <Badge tone="green">Published</Badge>
-                  ) : (
-                    <Badge tone="slate">Draft</Badge>
-                  )}
-                  <span className="text-[11px] font-mono font-medium text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
-                    v{template.version}
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border ${
+                      template.isActive
+                        ? "bg-[#F0FDF4] text-[#16A34A] border-[#BBF7D0]"
+                        : "bg-[#F8FAFC] text-[#64748B] border-[#E2E8F0]"
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        template.isActive ? "bg-[#16A34A]" : "bg-[#64748B]"
+                      }`}
+                    />
+                    <span>{template.isActive ? "Published" : "Draft"}</span>
+                  </span>
+                  <span className="text-[11px] font-mono font-medium text-[#64748B] bg-[#F8FAFC] px-1.5 py-0.5 rounded border border-[#E2E8F0]">
+                    v{template.version}.0
                   </span>
                 </div>
               </div>
@@ -111,36 +154,49 @@ export function TemplateViewModal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg border border-slate-200 p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer shrink-0 -mt-1 -mr-1"
+              className="rounded-lg border border-[#E2E8F0] bg-[#FFFFFF] p-1.5 text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC] transition-colors cursor-pointer shrink-0 -mt-1 -mr-1"
               title="Tutup Modal"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Bottom: Department, Job Level & Action Buttons */}
+          {/* Bottom: Single-Line Metadata & Action Buttons */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 pt-0.5">
-            <div className="flex items-center gap-2 text-xs text-slate-600 flex-wrap">
-              <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
-                <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                <span>{department?.name ?? "Semua Departemen"}</span>
-                {department?.code && (
-                  <span className="text-slate-400 font-normal">({department.code})</span>
-                )}
+            <div className="flex items-center gap-x-2.5 gap-y-1 text-xs text-[#64748B] flex-wrap">
+              {employee?.nik && (
+                <>
+                  <span>
+                    NIK: <strong className="font-mono font-semibold text-[#0F172A]">{employee.nik}</strong>
+                  </span>
+                  <span className="text-[#CBD5E1]">•</span>
+                </>
+              )}
+              {employee?.jobPosition ? (
+                <span>
+                  Job Position: <strong className="font-semibold text-[#0F172A]">{employee.jobPosition}</strong>
+                </span>
+              ) : (
+                <span>
+                  Job Level: <strong className="font-semibold text-[#0F172A]">{jobLevel?.name ?? "Semua Jabatan"}</strong>
+                </span>
+              )}
+              <span className="text-[#CBD5E1]">•</span>
+              <span>
+                Departemen:{" "}
+                <strong className="font-semibold text-[#0F172A]">
+                  {employee?.departmentName || department?.name || "Semua Departemen"}
+                </strong>
               </span>
-              <span className="text-slate-300">•</span>
-              <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
-                <Briefcase className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                <span>{jobLevel?.name ?? "Semua Jabatan"}</span>
-                {jobLevel?.code && (
-                  <span className="text-slate-400 font-normal">({jobLevel.code})</span>
-                )}
+              <span className="text-[#CBD5E1]">•</span>
+              <span>
+                Total Bobot: <strong className="font-semibold text-[#16A34A]">{targetPct}%</strong>
               </span>
               {template.site && (
                 <>
-                  <span className="text-slate-300">•</span>
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-50 text-purple-700 border border-purple-200">
-                    Site: {template.site}
+                  <span className="text-[#CBD5E1]">•</span>
+                  <span>
+                    Site: <strong className="font-semibold text-[#0F172A]">{template.site}</strong>
                   </span>
                 </>
               )}
@@ -154,22 +210,60 @@ export function TemplateViewModal({
                     onClose();
                     onAssign(template);
                   }}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition shadow-2xs cursor-pointer"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#E2E8F0] bg-[#FFFFFF] px-2.5 py-1.5 text-xs font-semibold text-[#0F172A] hover:bg-[#F8FAFC] transition shadow-2xs cursor-pointer"
                   title="Tugaskan template ini ke karyawan"
                 >
-                  <Users className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  <Users className="w-3.5 h-3.5 text-[#64748B] shrink-0" />
                   <span>Assign Template</span>
                 </button>
               )}
 
-              <Link
-                href={`/setup/templates/${template.id}`}
-                className="col-span-2 sm:col-span-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition shadow-2xs cursor-pointer"
-                title="Edit konfigurasi parameter dan bobot template"
-              >
-                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                <span>Edit Template</span>
-              </Link>
+              {onOpenStep2ForEmployee && (
+                <button
+                  type="button"
+                  onClick={onOpenStep2ForEmployee}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#2563EB] bg-[#FFFFFF] px-3 py-1.5 text-xs font-semibold text-[#2563EB] hover:bg-[#EFF6FF] transition cursor-pointer"
+                  title="Pilih atau ganti indikator dari Kamus Parameter KPI untuk karyawan ini"
+                >
+                  <span>Pilih Indikator Kamus</span>
+                </button>
+              )}
+
+              {canInlineEdit && (
+                <button
+                  type="button"
+                  onClick={() => setIsInlineEditing((prev) => !prev)}
+                  className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                    isInlineEditing
+                      ? "bg-[#2563EB] text-white hover:bg-blue-700"
+                      : "bg-[#EFF6FF] text-[#2563EB] border border-blue-200 hover:bg-blue-100/80"
+                  }`}
+                  title="Edit nilai kriteria, skor, dan bobot secara langsung pada tabel di bawah"
+                >
+                  {isInlineEditing ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 shrink-0" />
+                      <span>Selesai Edit</span>
+                    </>
+                  ) : (
+                    <>
+                      <Edit3 className="w-3.5 h-3.5 shrink-0" />
+                      <span>Edit Template</span>
+                    </>
+                  )}
+                </button>
+              )}
+
+              {!canInlineEdit && template.id > 0 && (
+                <Link
+                  href={`/setup/templates/${template.id}`}
+                  className="col-span-2 sm:col-span-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#EFF6FF] border border-blue-200 px-3 py-1.5 text-xs font-semibold text-[#2563EB] hover:bg-blue-100/80 transition shadow-2xs cursor-pointer"
+                  title="Edit konfigurasi parameter dan bobot template"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                  <span>Edit Template</span>
+                </Link>
+              )}
             </div>
           </div>
         </div>
@@ -178,60 +272,24 @@ export function TemplateViewModal({
         {/* 2. MODAL BODY (EXCEL SPREADSHEET FORMAT: 4 KOLOM) */}
         {/* ========================================================= */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 [scrollbar-width:thin] [scrollbar-color:#cbd5e1_transparent] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-300">
-          {/* Header Info Sheet: Template, Departemen, Job Level, Target */}
-          <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-              <div>
-                <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Nama Template
-                </span>
-                <span className="font-bold text-slate-900 mt-0.5 block truncate">
-                  {template.name}
-                </span>
-                <span className="text-[10px] text-slate-400">v{template.version}.0</span>
-              </div>
-
-              <div>
-                <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Departemen
-                </span>
-                <span className="font-medium text-slate-800 mt-0.5 block truncate">
-                  {department?.name ?? "Semua Departemen"}
-                </span>
-                <span className="text-[10px] text-slate-400">
-                  {department?.code ? `Kode: ${department.code}` : "-"}
-                </span>
-              </div>
-
-              <div>
-                <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Job Level
-                </span>
-                <span className="font-medium text-slate-800 mt-0.5 block truncate">
-                  {jobLevel?.name ?? "Semua Jabatan"}
-                </span>
-                <span className="text-[10px] text-slate-400">
-                  {jobLevel?.code ? `Kode: ${jobLevel.code}` : "-"}
-                </span>
-              </div>
-
-              <div>
-                <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Target Total Bobot
-                </span>
-                <span className="font-bold text-slate-900 mt-0.5 block font-mono">
-                  {targetPct}%
-                </span>
-                <span className="text-[10px] text-emerald-700 font-semibold">
-                  {tplCategories.length} Parameter Terkonfigurasi
-                </span>
-              </div>
+          {isInlineEditing && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-900">
+              <span>
+                <strong>Mode Edit Aktif:</strong> Klik langsung pada teks <strong>Kriteria Penilaian</strong>, <strong>Skor</strong>, <strong>Nama Indikator</strong>, atau <strong>Bobot (%)</strong> di tabel bawah untuk mengubah nilainya, lalu tekan Enter.
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsInlineEditing(false)}
+                className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-[11px] font-semibold hover:bg-emerald-700 cursor-pointer"
+              >
+                Selesai Edit
+              </button>
             </div>
-          </div>
+          )}
 
-          {/* Unified KPI Excel Table (mode="template" -> 4 Kolom: Parameter | Kriteria | Skor | Bobot) */}
+          {/* Unified KPI Excel Table (mode="template" atau mode="edit") */}
           <KpiExcelTable
-            mode="template"
+            mode={isInlineEditing ? "edit" : "template"}
             categories={tplCategories}
             parameters={tplParameters}
             bands={bands}
@@ -239,6 +297,15 @@ export function TemplateViewModal({
             templateName={template.name}
             department={department}
             jobLevel={jobLevel}
+            onUpdateCategory={onUpdateCategory}
+            onUpdateIndicatorName={onUpdateIndicatorName}
+            onUpdateIndicatorWeight={onUpdateIndicatorWeight}
+            onDeleteIndicator={onDeleteIndicator}
+            onUpdateCriteriaBandInline={onUpdateCriteriaBandInline}
+            onAddCriteriaBand={onAddCriteriaBand}
+            onDeleteCriteriaBand={onDeleteCriteriaBand}
+            onAddIndicator={onAddIndicator}
+            onEditIndicator={onEditIndicator}
           />
         </div>
 
