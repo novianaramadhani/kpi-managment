@@ -9,7 +9,11 @@ echo.
 
 cd /d "%~dp0"
 
-echo [1/5] Memeriksa Docker Engine...
+if not exist ".env" (
+    if exist ".env.development" set "APP_ENV_FILE=.env.development"
+)
+
+echo [1/4] Memeriksa Docker Engine...
 docker info >nul 2>&1
 if %ERRORLEVEL% equ 0 goto :DOCKER_OK
 
@@ -29,27 +33,23 @@ pause
 exit /b
 
 :DOCKER_OK
-echo       [OK] Docker Engine terhubung dan siap.
+docker network inspect kpi-network >nul 2>&1 || docker network create kpi-network >nul 2>&1
+echo       [OK] Docker Engine dan jaringan kpi-network siap.
 
 echo.
-echo [2/5] Menyalakan Database PostgreSQL (kpi-postgres)...
+echo [2/4] Menyalakan Database PostgreSQL dan Auto-Backup (docker-compose.db.yml)...
 docker compose -f docker-compose.db.yml up -d
 echo       Menunggu database siap menerima koneksi...
 powershell -NoProfile -Command "for ($i=0; $i -lt 15; $i++) { $h = docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}' kpi-postgres 2>$null; if ($h -eq 'healthy') { break }; Start-Sleep -Seconds 1 }"
-echo       [OK] Database PostgreSQL (kpi-postgres) telah SEHAT dan siap.
+echo       [OK] Container kpi-postgres dan kpi-backup aktif.
 
 echo.
-echo [3/5] Memastikan Container Backup Otomatis Aktif (kpi-backup)...
-docker compose -f docker-compose.backup.yml up -d
-echo       [OK] Container kpi-backup aktif (jadwal backup harian berjalan).
-
-echo.
-echo [4/5] Menyalakan Container Aplikasi Next.js (kpi-app)...
+echo [3/4] Menyalakan Container Aplikasi Next.js (docker-compose.app.yml)...
 docker compose -f docker-compose.app.yml up -d
 echo       [OK] Container kpi-app aktif pada port 3001.
 
 echo.
-echo [5/5] Menyalakan Cloudflare Tunnel...
+echo [4/4] Menyalakan Cloudflare Tunnel...
 sc.exe start Cloudflared >nul 2>&1
 tasklist /fi "imagename eq cloudflared.exe" 2>nul | find /i "cloudflared.exe" >nul
 if "%ERRORLEVEL%"=="0" goto :TUNNEL_RUNNING

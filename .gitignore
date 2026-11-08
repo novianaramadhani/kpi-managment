@@ -1,47 +1,44 @@
-# Next.js & Build Outputs (Cache & Artifacts)
+# Build outputs & cache
 .next/
 .next_fresh/
 out/
 build/
 dist/
 *.tsbuildinfo
+next-env.d.ts
 
 # Dependencies
 node_modules/
 /.pnp
 .pnp.js
 
-# Environment Variables & Secrets (Kritis - Seluruh variasi .env diblokir kecuali .env.example)
+# Environment variables & secrets (hanya .env.example yang di-commit)
 .env
 .env.*
 !.env.example
-!.env.docker.example
-!.env.development.example
-!.env.production.example
 
-# Backups & Database Dumps
+# Backups & database dumps
 backups/
 *.sql
 !drizzle/*.sql
 *.sql.gz
 
-# Cloudflare Tunnel Credentials & Local Config (Credentials & config lokal diabaikan)
+# Cloudflare Tunnel credentials & local config
 cloudflared/*
-!cloudflared/*.example*
+!cloudflared/cloudflared.service.example
 !cloudflared/config.ubuntu.example.yml
 *.pem
 
-# File Eksperimen / Scratch & File Sementara
+# Scratch & temporary files
 scratch/
-scratch_test_criteria.ts
 *.tmp
 *.bak
 
-# Uploaded Files & Evidence (Data Nyata Pengguna)
+# User uploads
 public/uploads/*
 !public/uploads/.gitkeep
 
-# Logs & Debugging
+# Logs
 logs/
 *.log
 npm-debug.log*
@@ -49,7 +46,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# AI Assistants & IDE Metadata
+# AI assistants & IDE metadata
 .agents/
 .gemini/
 .claude/
@@ -59,7 +56,7 @@ pnpm-debug.log*
 !.vscode/extensions.json
 .idea/
 
-# OS Metadata
+# OS metadata
 .DS_Store
 Thumbs.db
 Desktop.ini

@@ -1,68 +1,89 @@
 #!/bin/bash
-set -eo pipefail
+# Deployment aplikasi KPI Noviana (hanya mengelola docker-compose.app.yml).
+set -Eeuo pipefail
 
-TARGET_TAG="$1"
-if [ -z "$TARGET_TAG" ]; then
-  echo "Penggunaan: ./scripts/deploy.sh <target-sha-tag>"
-  echo "Contoh: ./scripts/deploy.sh sha-a1b2c3d"
-  exit 1
-fi
+cd "$(dirname "$0")/.."
+COMPOSE="docker compose -f docker-compose.app.yml"
+CONTAINER_NAME="kpi-app"
+HEALTH_URL="http://127.0.0.1:3000/api/health"
+ROLLBACK_IN_PROGRESS=0
 
-echo "=== [DEPLOY] Memulai deployment untuk image tag: ${TARGET_TAG} ==="
+check_container_health() {
+  local attempts="$1"
+  local i
+  for i in $(seq 1 "$attempts"); do
+    if docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null | grep -q "true" && \
+       docker exec "$CONTAINER_NAME" curl -sf "$HEALTH_URL" >/dev/null 2>&1; then
+      return 0
+    fi
+    echo "Menunggu healthcheck dari dalam container ($i/$attempts)..."
+    sleep 5
+  done
+  return 1
+}
 
-# 1. Simpan tag image yang saat ini aktif
-CURRENT_TAG=$(grep '^APP_IMAGE_TAG=' .env 2>/dev/null | cut -d '=' -f2 || echo "latest")
-echo "ℹ️ Image saat ini yang sedang aktif: ${CURRENT_TAG}"
-
-# 2. Update .env dengan tag target baru
-if grep -q '^APP_IMAGE_TAG=' .env 2>/dev/null; then
-  sed -i "s/^APP_IMAGE_TAG=.*/APP_IMAGE_TAG=${TARGET_TAG}/" .env
-else
-  echo "APP_IMAGE_TAG=${TARGET_TAG}" >> .env
-fi
-
-# 3. Pull image target spesifik dari registry
-echo "⬇️ Mengunduh image target..."
-docker compose pull app
-
-# 4. Terapkan update kontainer app (pre-flight migration akan berjalan otomatis via entrypoint)
-echo "🚀 Merestart kontainer app..."
-docker compose up -d --no-deps app
-
-# 5. Healthcheck Verifikasi (Polling selama 60 detik)
-echo "🔍 Menunggu verifikasi healthcheck aplikasi..."
-HEALTHY=0
-for i in {1..12}; do
-  HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/api/health || true)
-  if [ "$HTTP_STATUS" == "200" ]; then
-    echo "✓ Healthcheck berhasil (HTTP 200) pada percobaan ke-$i."
-    HEALTHY=1
-    break
+rollback() {
+  # Matikan errexit di dalam rollback agar proses pemulihan tidak terputus di tengah jalan.
+  set +e
+  if [ "$ROLLBACK_IN_PROGRESS" -eq 1 ]; then
+    return
   fi
-  echo "Menunggu respon sehat ($i/12)... status saat ini: $HTTP_STATUS"
-  sleep 5
-done
+  ROLLBACK_IN_PROGRESS=1
+  trap - ERR
 
-# 6. Evaluasi Keberhasilan atau Eksekusi Rollback
-if [ "$HEALTHY" -eq 1 ]; then
-  echo "🎉 DEPLOYMENT BERHASIL! Versi ${TARGET_TAG} aktif melayani trafik."
-  exit 0
-else
-  echo "❌ CRITICAL: Aplikasi gagal merespons healthcheck dalam 60 detik!"
-  echo "⚠️ MEMULAI ROLLBACK DETERMINISTIK ke versi sebelumnya: ${CURRENT_TAG}..."
-  
-  # Kembalikan file .env ke tag sebelumnya
-  sed -i "s/^APP_IMAGE_TAG=.*/APP_IMAGE_TAG=${CURRENT_TAG}/" .env
-  
-  # Re-launch kontainer menggunakan image sebelumnya
-  docker compose up -d --no-deps app
-  
-  sleep 5
-  if curl -s -f http://127.0.0.1:3000/api/health | grep -q '"ok":true'; then
-    echo "✓ ROLLBACK SUKSES. Sistem telah kembali stabil pada versi ${CURRENT_TAG}."
+  echo "ERROR: Deployment gagal pada tahap aktivasi container. Menampilkan 50 baris log terakhir:"
+  docker logs --tail 50 "$CONTAINER_NAME" 2>&1 || true
+
+  if docker image inspect kpi-app:previous >/dev/null 2>&1; then
+    echo "Memulai rollback otomatis ke image kpi-app:previous..."
+    docker tag kpi-app:previous kpi-app:latest
+    $COMPOSE up -d --no-build --force-recreate
+
+    if check_container_health 12; then
+      echo "ROLLBACK BERHASIL: Container $CONTAINER_NAME kembali berjalan sehat dengan versi sebelumnya."
+    else
+      echo "KRITIS: Rollback telah dijalankan, namun container belum merespons sehat di $HEALTH_URL."
+    fi
   else
-    echo "🚨 EMERGENCY: Rollback otomatis membutuhkan intervensi admin manual!"
+    echo "PERINGATAN: Image cadangan kpi-app:previous tidak ditemukan, melewati rollback."
   fi
-  
+
   exit 1
+}
+
+# Tahap 1: Pre-flight (jika gagal di tahap ini, container yang sedang berjalan tidak disentuh).
+docker network inspect kpi-network >/dev/null 2>&1 || docker network create kpi-network >/dev/null
+$COMPOSE config --quiet
+
+echo "Menarik kode terbaru dari repository..."
+git pull --ff-only
+
+# Simpan image dari container yang sedang berjalan (atau kpi-app:latest) sebagai cadangan rollback.
+PREV_IMAGE_ID=$(docker inspect -f '{{.Image}}' "$CONTAINER_NAME" 2>/dev/null || true)
+if [ -z "$PREV_IMAGE_ID" ]; then
+  PREV_IMAGE_ID=$(docker image inspect -f '{{.Id}}' kpi-app:latest 2>/dev/null || true)
 fi
+
+if [ -n "$PREV_IMAGE_ID" ]; then
+  docker tag "$PREV_IMAGE_ID" kpi-app:previous
+  echo "Image aktif ($PREV_IMAGE_ID) disimpan sebagai kpi-app:previous."
+fi
+
+# Tahap 2: Build image baru (jika gagal, container produksi lama tetap berjalan normal).
+echo "Membangun image baru kpi-app:latest..."
+$COMPOSE build
+
+# Tahap 3: Aktivasi container baru & verifikasi healthcheck (aktifasi trap rollback).
+trap 'rollback' ERR
+
+echo "Menjalankan container baru $CONTAINER_NAME..."
+$COMPOSE up -d --no-build
+
+if check_container_health 24; then
+  trap - ERR
+  echo "DEPLOYMENT BERHASIL: $(git log -1 --oneline) aktif dan sehat di $HEALTH_URL."
+  exit 0
+fi
+
+echo "Container gagal melewati healthcheck dalam 120 detik."
+rollback

@@ -1,13 +1,21 @@
 import type { NextConfig } from "next";
 
+const allowedOrigins = [
+  "kpi.noviana.app",
+  "localhost:3000",
+  "127.0.0.1:3000",
+  "localhost:3001",
+  "127.0.0.1:3001",
+];
+
 const nextConfig: NextConfig = {
   output: "standalone",
   distDir: ".next_fresh",
   devIndicators: false,
-  allowedDevOrigins: ["kpi.noviana.app", "localhost:3000", "127.0.0.1:3000"],
+  allowedDevOrigins: allowedOrigins,
   experimental: {
     serverActions: {
-      allowedOrigins: ["kpi.noviana.app", "localhost:3000", "127.0.0.1:3000"],
+      allowedOrigins,
     },
   },
   async redirects() {
@@ -52,12 +60,18 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        source: "/:path*",
+        // Hindari no-store pada aset statis Next.js yang sudah memiliki hash versi.
+        source: "/((?!_next/static|_next/image|favicon.ico).*)",
         headers: [
           {
             key: "Cache-Control",
             value: "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
           },
+        ],
+      },
+      {
+        source: "/:path*",
+        headers: [
           {
             key: "X-Frame-Options",
             value: "SAMEORIGIN",

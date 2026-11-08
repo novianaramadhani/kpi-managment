@@ -1,15 +1,10 @@
-# ==============================================================================
-# CLOUDFLARE TUNNEL CONFIGURATION TEMPLATE UNTUK UBUNTU SERVER
-# Salin berkas ini ke /etc/cloudflared/config.yml pada Ubuntu Server
-# ==============================================================================
+# Salin berkas ini ke /etc/cloudflared/config.yml pada server Ubuntu.
 
 tunnel: dc6960bf-c1c8-451c-9684-4a68b7f3ab71
 credentials-file: /etc/cloudflared/credentials.json
 protocol: http2
 
 ingress:
-  # Rute domain utama ke aplikasi Next.js dalam Docker (koneksi internal HTTP loopback)
   - hostname: kpi.noviana.app
-    service: http://127.0.0.1:3000
+    service: http://127.0.0.1:3001
   - service: http_status:404
-

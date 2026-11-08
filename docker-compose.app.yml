@@ -19,15 +19,14 @@ services:
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       NODE_OPTIONS: "--max-old-space-size=1536"
     ports:
-      # Port host loopback (default 3001 agar tidak bentrok dengan native port 3000)
       - "127.0.0.1:${APP_PORT:-3001}:3000"
     volumes:
-      # Persistent volume bukti upload evidence agar tidak hilang saat rebuild
+      # Simpan lampiran bukti penilaian di host agar bertahan saat container di-rebuild.
       - ./public/uploads:/app/public/uploads
     networks:
       - kpi-network
     healthcheck:
-      test: [ "CMD-SHELL", "curl -f http://127.0.0.1:3000/api/health || exit 1" ]
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:3000/api/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3

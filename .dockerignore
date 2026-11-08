@@ -1,6 +1,6 @@
 # Dependencies
 node_modules
-npm-debug.log
+npm-debug.log*
 
 # Build outputs
 .next
@@ -9,6 +9,7 @@ dist
 build
 out
 *.tsbuildinfo
+next-env.d.ts
 
 # Version control & IDE
 .git
@@ -22,19 +23,19 @@ out
 .idea
 
 # Local environment & secrets
-.env*
+.env
+.env.*
 !.env.example
-!.env.docker.example
-!.env.production.example
 
-# Uploads & Persistent Evidence Attachments
+# Uploads
 uploads
 public/uploads/*
 !public/uploads/.gitkeep
 
-# Backups & SQL dumps
+# Backups & SQL dumps (tetap sertakan migrasi drizzle/*.sql)
 backups
 *.sql
+!drizzle/*.sql
 *.sql.gz
 *.bak
 *.tmp
@@ -43,6 +44,7 @@ backups
 cloudflared
 *.pem
 
-# Documentation & local scratch
+# Documentation & local scripts
 scratch
-README.md
+*.md
+*.bat

@@ -1,10 +1,7 @@
-# ==============================================================================
-# SYSTEMD SERVICE UNIT: CLOUDFLARE TUNNEL NATIVE DI UBUNTU SERVER
-# Berkas pasang: /etc/systemd/system/cloudflared.service
-# ==============================================================================
+# Salin berkas ini ke /etc/systemd/system/cloudflared.service pada server Ubuntu.
 
 [Unit]
-Description=Cloudflare Tunnel Daemon (Native)
+Description=Cloudflare Tunnel Daemon
 After=network-online.target
 Wants=network-online.target
 
@@ -17,4 +14,3 @@ TimeoutStartSec=0
 
 [Install]
 WantedBy=multi-user.target
-
