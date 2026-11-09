@@ -526,11 +526,17 @@ export async function getMonthlyAssessmentDetail(params: {
     }
   }
 
+  const isAppraisalLockedFinal = apprRow.appraisal.status === "FINAL";
+
   for (const row of items) {
     const it = row.item;
     const catId = row.category?.id ?? 0;
     const catName = row.category?.name ?? "Indikator Utama";
-    const catWeightNorm = normalizeWeight(it.parameterWeightSnapshot ?? row.category?.weight ?? 1);
+    const catWeightNorm = normalizeWeight(
+      isAppraisalLockedFinal
+        ? (it.parameterWeightSnapshot ?? row.category?.weight ?? 1)
+        : (row.category?.weight ?? it.parameterWeightSnapshot ?? 1)
+    );
 
     if (!categoryMap.has(catId)) {
       catIndex++;
@@ -563,7 +569,11 @@ export async function getMonthlyAssessmentDetail(params: {
       rules = snapshotRules;
     }
 
-    const indWeightNorm = normalizeWeight(it.weightSnapshot ?? row.parameter?.weight ?? 0.2);
+    const indWeightNorm = normalizeWeight(
+      isAppraisalLockedFinal
+        ? (it.weightSnapshot ?? row.parameter?.weight ?? 0.2)
+        : (row.parameter?.weight ?? it.weightSnapshot ?? 0.2)
+    );
     const maxScore = Number(row.parameter?.maxScore) || 25;
     const indName = it.indicatorNameSnapshot || row.parameter?.name || "Indikator";
     const masterParamLookup = deptMasterParamByName.get(indName.trim().toLowerCase());
@@ -2417,8 +2427,17 @@ export async function recalculateAppraisal(appraisalId: number): Promise<number>
       rules = bandsByParamId.get(p.id) || [];
     }
 
-    const indWeight = normalizeWeight(it.weightSnapshot ?? p?.weight ?? 0.2);
-    const catWeight = normalizeWeight(it.parameterWeightSnapshot ?? cat?.weight ?? 1.0);
+    const isLockedFinal = a.status === "FINAL";
+    const indWeight = normalizeWeight(
+      isLockedFinal
+        ? (it.weightSnapshot ?? p?.weight ?? 0.2)
+        : (p?.weight ?? it.weightSnapshot ?? 0.2)
+    );
+    const catWeight = normalizeWeight(
+      isLockedFinal
+        ? (it.parameterWeightSnapshot ?? cat?.weight ?? 1.0)
+        : (cat?.weight ?? it.parameterWeightSnapshot ?? 1.0)
+    );
     const maxScore = Number(p?.maxScore) || 25;
 
     const mActuals = (it.monthlyActuals ?? []).map((v) =>
@@ -2520,6 +2539,12 @@ export async function recalculateAppraisal(appraisalId: number): Promise<number>
         bandLabel: finalItemBandLabel,
         score: finalItemScore !== null ? String(finalItemScore) : "0",
         weightedScore: String(finalItemScoreFraction),
+        ...(!isLockedFinal
+          ? {
+              weightSnapshot: String(indWeight.toFixed(4)),
+              parameterWeightSnapshot: String(catWeight.toFixed(4)),
+            }
+          : {}),
       })
       .where(eq(appraisalItems.id, it.id));
 

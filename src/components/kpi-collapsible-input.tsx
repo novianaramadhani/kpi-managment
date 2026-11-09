@@ -664,17 +664,27 @@ export function KpiCollapsibleInput({
           totalFilledKpisCount++;
         }
 
-        // 4. Hitung Skor Akhir Indikator (Persis seperti format Excel Gambar 2):
-        // Formula Excel: (Skor / 25) * (Bobot Indikator / 100) * Bobot Kategori
-        const kpiWeightPercent = kpi.weightInParameter || 20;
+        // 4. Hitung Skor Akhir Indikator:
+        // Formula: (Skor / Skor Maksimal) * Bobot Indikator * Bobot Kategori
+        const maxScore =
+          kpi.criteria.length > 0
+            ? Math.max(...kpi.criteria.map((c) => c.score), 1)
+            : 25;
+        const kpiWeightPercent =
+          grp.kpis.length === 1 &&
+          (kpi.weightInParameter === grp.weight || !kpi.weightInParameter)
+            ? 100
+            : kpi.weightInParameter || 100;
         let skorAkhirIndikator = 0;
         if (kpi.manualSkorAkhir !== undefined && kpi.manualSkorAkhir !== null) {
           skorAkhirIndikator = kpi.manualSkorAkhir;
         } else if (isFilled) {
-          skorAkhirIndikator = Math.round((score / 25) * kpiWeightPercent * (grp.weight / 100));
+          skorAkhirIndikator = parseFloat(
+            ((score / maxScore) * (kpiWeightPercent / 100) * grp.weight).toFixed(2)
+          );
         }
 
-        groupScoreSum += skorAkhirIndikator;
+        groupScoreSum = parseFloat((groupScoreSum + skorAkhirIndikator).toFixed(2));
 
         return {
           ...kpi,
@@ -698,7 +708,7 @@ export function KpiCollapsibleInput({
         paramStatus = "In Progress";
       }
 
-      grandOverallScore += groupScoreSum;
+      grandOverallScore = parseFloat((grandOverallScore + groupScoreSum).toFixed(2));
 
       return {
         ...grp,
@@ -711,12 +721,15 @@ export function KpiCollapsibleInput({
       };
     });
 
-    const overallPercentage = Math.min(100, Math.round(grandOverallScore));
+    // Jangan menormalisasi atau memangkas (cap) total bobot 115% menjadi 100%
+    const overallPercentage = parseFloat(grandOverallScore.toFixed(2));
 
-    let grade = "C";
-    if (overallPercentage >= 90) grade = "A (Sangat Baik)";
-    else if (overallPercentage >= 80) grade = "B (Baik)";
-    else if (overallPercentage < 70) grade = "D (Kurang)";
+    let grade = "C (Meets Expectations)";
+    if (overallPercentage >= 90) grade = "A (Outstanding)";
+    else if (overallPercentage >= 80) grade = "B (Exceeds Expectations)";
+    else if (overallPercentage >= 70) grade = "C (Meets Expectations)";
+    else if (overallPercentage >= 60) grade = "D (Needs Improvement)";
+    else grade = "E (Unsatisfactory)";
 
     return {
       groupSummaries,

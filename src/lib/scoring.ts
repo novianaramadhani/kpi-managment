@@ -741,7 +741,7 @@ export function bandLabelText(b: KpiBand): string {
 }
 
 /**
- * Scoring 1 parameter.
+ * Scoring 1 parameter (Delegated to Unified Engine `calculateKpiScore`).
  * weightedScore = (score / maxScore) × bobotParameter × bobotKategori
  */
 export function scoreItem(
@@ -751,23 +751,19 @@ export function scoreItem(
   input: ItemInput
 ): ItemResult {
   const maxScore = num(param.maxScore) ?? 25;
-  const pWeight = num(param.weight) ?? 0;
+  const pWeight = normalizeWeight(param.weight);
+  const cWeight = normalizeWeight(categoryWeight);
   const empty: ItemResult = { annualActual: null, achievement: null, bandLabel: null, score: 0, weightedScore: 0 };
 
-  let band: KpiBand | null = null;
   let annualActual: number | null = null;
   let achievement: number | null = null;
-
-  const isNumericUnit = (u?: string | null) => {
-    const s = (u || "").trim().toLowerCase();
-    return s === "%" || s === "persen" || s === "percentage" || s === "rp" || s === "idr" || s === "rupiah" || s.includes("rp/");
-  };
 
   const isQual =
     param.inputType === "QUALITATIVE" ||
     (param as any).measurementType === "TEXT" ||
     (param.unit || "").trim().toLowerCase() === "teks" ||
-    !isNumericUnit(param.unit);
+    (Boolean(input.qualitativeValue && input.qualitativeValue.trim() !== "") &&
+      (input.actual === null || input.actual === undefined));
 
   if (isQual) {
     const rawVal =
@@ -778,7 +774,7 @@ export function scoreItem(
     const numVal = Number(rawVal);
     const isNum = !isNaN(numVal);
 
-    band =
+    const matchedBand =
       bands.find((b) => {
         if (
           isNum &&
@@ -794,7 +790,19 @@ export function scoreItem(
         return bLabel === cleanQual || (bMin !== "" && bMin === cleanQual);
       }) ?? null;
 
-    annualActual = isNum ? numVal : (band ? (num(band.score) ?? null) : null);
+    annualActual = isNum ? numVal : (matchedBand ? (num(matchedBand.score) ?? null) : null);
+    if (matchedBand) {
+      const score = num(matchedBand.score) ?? 0;
+      const weightedScore = maxScore > 0 ? (score / maxScore) * pWeight * cWeight : 0;
+      return {
+        annualActual,
+        achievement: null,
+        bandLabel: matchedBand.label ?? null,
+        score,
+        weightedScore,
+      };
+    }
+    if (annualActual === null) return empty;
   } else {
     let target = input.target;
     const mActuals = input.monthlyActuals ?? [];
@@ -814,14 +822,47 @@ export function scoreItem(
     }
     if (annualActual === null) return empty;
     if (target !== null && target !== 0) achievement = (annualActual / target) * 100;
-    const basis = param.compareBasis === "ACHIEVEMENT" ? achievement : annualActual;
-    if (basis === null) return { ...empty, annualActual, achievement };
-    band = matchBand(bands, basis);
   }
 
-  const score = band ? num(band.score) ?? 0 : 0;
-  const weightedScore = maxScore > 0 ? (score / maxScore) * pWeight * categoryWeight : 0;
-  return { annualActual, achievement, bandLabel: band?.label ?? null, score, weightedScore };
+  const genericRules: GenericScoringRule[] = bands.map((b) => ({
+    id: b.id,
+    label: b.label,
+    operator: b.operator,
+    minValue: num(b.minValue),
+    maxValue: num(b.maxValue),
+    score: num(b.score) ?? 0,
+    sortOrder: b.sortOrder,
+  }));
+
+  const resolvedDirection = resolveKpiDirection(
+    genericRules,
+    (param as any).direction,
+    param.name,
+    (param as any).measurementType,
+    param.unit
+  );
+
+  const calcResult = calculateKpiScore(annualActual, genericRules, {
+    indicatorWeight: pWeight,
+    parameterWeight: cWeight,
+    maxScore,
+    compareBasis: param.compareBasis,
+    target: input.target ?? num(param.target ?? (param as any).targetValue),
+    direction: resolvedDirection,
+    measurementType: (param as any).measurementType,
+    unit: param.unit,
+    indicatorName: param.name,
+  });
+
+  const score = calcResult.score ?? 0;
+  const weightedScore = maxScore > 0 ? (score / maxScore) * pWeight * cWeight : 0;
+  return {
+    annualActual,
+    achievement: calcResult.realizationPct ?? achievement,
+    bandLabel: calcResult.bandLabel,
+    score,
+    weightedScore,
+  };
 }
 
 export function tenureMonths(dateOfHire: string | null | undefined, evaluationDate: string): number {
@@ -1042,3 +1083,247 @@ export function parseCurrencyIdr(str: string): number | null {
   const n = Number(clean);
   return isNaN(n) ? null : n;
 }
+
+// ============================================================================
+// 5. CENTRALIZED 115% WEIGHT GOVERNANCE & DYNAMIC EXCEL FORMULA BUILDERS
+// ============================================================================
+
+export const MANDATORY_TOTAL_WEIGHT_PCT = 115;
+export const MANDATORY_TOTAL_WEIGHT_FRAC = 1.15;
+export const MANDATORY_INDICATOR_SUM_PCT = 100;
+/** Toleransi floating-point ketat (0.01%) khusus untuk presisi desimal, bukan pelonggaran aturan 115% */
+export const WEIGHT_EPSILON_PCT = 0.01;
+
+export interface WeightGovernanceIndicatorInput {
+  name?: string | null;
+  weight?: number | string | null;
+}
+
+export interface WeightGovernanceCategoryInput {
+  name?: string | null;
+  weight?: number | string | null;
+  categoryType?: "SUB_ITEMS" | "SCORE_BAND" | string | null;
+  indicators?: WeightGovernanceIndicatorInput[];
+  parameters?: WeightGovernanceIndicatorInput[];
+}
+
+export interface InvalidCategoryWeightDetail {
+  categoryName: string;
+  categoryWeightPct: number;
+  indicatorWeightSumPct: number;
+  expectedIndicatorSumPct: number;
+  indicatorDiffPct: number;
+  reason: string;
+}
+
+export interface WeightGovernanceValidationResult {
+  isValid: boolean;
+  totalCategoryWeightPct: number;
+  totalCategoryWeightFrac: number;
+  expectedTotalWeightPct: number;
+  categoryDiffPct: number;
+  categoryBreakdown: Array<{ name: string; weightPct: number; indicatorCount: number; indicatorSumPct: number }>;
+  invalidCategories: InvalidCategoryWeightDetail[];
+  errors: string[];
+  errorMessage: string | null;
+}
+
+/**
+ * Validasi terpusat tata kelola bobot Form/Template KPI (Wajib Total Kategori = 115%
+ * dan Sub-Indikator dalam kategori = 100%).
+ * Tidak pernah mengubah atau mendistribusikan ulang bobot secara diam-diam.
+ */
+export function validateTemplateWeightGovernance(
+  categories: WeightGovernanceCategoryInput[],
+  options?: {
+    contextLabel?: string;
+    requireIndicators?: boolean;
+  }
+): WeightGovernanceValidationResult {
+  const errors: string[] = [];
+  const invalidCategories: InvalidCategoryWeightDetail[] = [];
+  const categoryBreakdown: Array<{
+    name: string;
+    weightPct: number;
+    indicatorCount: number;
+    indicatorSumPct: number;
+  }> = [];
+
+  const prefix = options?.contextLabel ? `[${options.contextLabel}] ` : "";
+
+  if (!Array.isArray(categories) || categories.length === 0) {
+    const msg = `${prefix}Template KPI wajib memiliki minimal 1 kategori dengan total bobot ${MANDATORY_TOTAL_WEIGHT_PCT}%.`;
+    return {
+      isValid: false,
+      totalCategoryWeightPct: 0,
+      totalCategoryWeightFrac: 0,
+      expectedTotalWeightPct: MANDATORY_TOTAL_WEIGHT_PCT,
+      categoryDiffPct: -MANDATORY_TOTAL_WEIGHT_PCT,
+      categoryBreakdown: [],
+      invalidCategories: [],
+      errors: [msg],
+      errorMessage: msg,
+    };
+  }
+
+  let totalCategoryWeightPct = 0;
+
+  for (let i = 0; i < categories.length; i++) {
+    const cat = categories[i];
+    const catName = (cat.name || `Kategori #${i + 1}`).trim();
+    const catWeightFrac = normalizeWeight(cat.weight);
+    const catWeightPct = Number((catWeightFrac * 100).toFixed(4));
+    totalCategoryWeightPct = Number((totalCategoryWeightPct + catWeightPct).toFixed(4));
+
+    const rawItems = cat.indicators ?? cat.parameters ?? [];
+    const indicatorCount = rawItems.length;
+
+    if (catWeightPct <= 0) {
+      const reason = `Kategori "${catName}" memiliki bobot ${catWeightPct}% (bobot kategori wajib lebih dari 0%).`;
+      errors.push(`${prefix}${reason}`);
+      invalidCategories.push({
+        categoryName: catName,
+        categoryWeightPct: catWeightPct,
+        indicatorWeightSumPct: 0,
+        expectedIndicatorSumPct: MANDATORY_INDICATOR_SUM_PCT,
+        indicatorDiffPct: 0,
+        reason,
+      });
+    }
+
+    if (options?.requireIndicators && indicatorCount === 0) {
+      const reason = `Kategori "${catName}" (${catWeightPct}%) belum memiliki indikator KPI.`;
+      errors.push(`${prefix}${reason}`);
+      invalidCategories.push({
+        categoryName: catName,
+        categoryWeightPct: catWeightPct,
+        indicatorWeightSumPct: 0,
+        expectedIndicatorSumPct: MANDATORY_INDICATOR_SUM_PCT,
+        indicatorDiffPct: -MANDATORY_INDICATOR_SUM_PCT,
+        reason,
+      });
+    }
+
+    let indSumPct = 0;
+    const isSubItems =
+      cat.categoryType === "SUB_ITEMS" || indicatorCount > 1;
+
+    if (indicatorCount > 0) {
+      for (let j = 0; j < rawItems.length; j++) {
+        const item = rawItems[j];
+        const indName = (item.name || `Indikator #${j + 1}`).trim();
+        const indWFrac = normalizeWeight(item.weight);
+        const indWPct = Number((indWFrac * 100).toFixed(4));
+        indSumPct = Number((indSumPct + indWPct).toFixed(4));
+
+        if (isSubItems && indWPct <= 0) {
+          const reason = `Indikator "${indName}" pada kategori "${catName}" memiliki bobot ${indWPct}% (wajib > 0%).`;
+          errors.push(`${prefix}${reason}`);
+        }
+      }
+
+      const indDiffPct = Number((indSumPct - MANDATORY_INDICATOR_SUM_PCT).toFixed(4));
+      if (isSubItems && Math.abs(indDiffPct) > WEIGHT_EPSILON_PCT) {
+        const diffSign = indDiffPct > 0 ? `+${Number(indDiffPct.toFixed(2))}%` : `${Number(indDiffPct.toFixed(2))}%`;
+        const reason = `Total bobot indikator dalam kategori "${catName}" adalah ${Number(indSumPct.toFixed(2))}%, wajib ${MANDATORY_INDICATOR_SUM_PCT}% (selisih ${diffSign}).`;
+        errors.push(`${prefix}${reason}`);
+        invalidCategories.push({
+          categoryName: catName,
+          categoryWeightPct: catWeightPct,
+          indicatorWeightSumPct: Number(indSumPct.toFixed(2)),
+          expectedIndicatorSumPct: MANDATORY_INDICATOR_SUM_PCT,
+          indicatorDiffPct: Number(indDiffPct.toFixed(2)),
+          reason,
+        });
+      } else if (!isSubItems && indicatorCount === 1) {
+        // Untuk indikator tunggal, jika bobot indikator diisi (tidak 0), pastikan bernilai 100% atau sama dengan bobot kategori (yang dinormalisasi menjadi 100% pada indikator tunggal)
+        const singleWFrac = normalizeWeight(rawItems[0].weight);
+        const singleWPct = Number((singleWFrac * 100).toFixed(4));
+        if (
+          singleWPct > 0 &&
+          Math.abs(singleWPct - MANDATORY_INDICATOR_SUM_PCT) > WEIGHT_EPSILON_PCT &&
+          Math.abs(singleWPct - catWeightPct) > WEIGHT_EPSILON_PCT
+        ) {
+          const indDiffSingle = Number((singleWPct - MANDATORY_INDICATOR_SUM_PCT).toFixed(2));
+          const diffSign = indDiffSingle > 0 ? `+${indDiffSingle}%` : `${indDiffSingle}%`;
+          const reason = `Bobot indikator tunggal pada kategori "${catName}" adalah ${Number(singleWPct.toFixed(2))}%, wajib 100% (selisih ${diffSign}).`;
+          errors.push(`${prefix}${reason}`);
+          invalidCategories.push({
+            categoryName: catName,
+            categoryWeightPct: catWeightPct,
+            indicatorWeightSumPct: Number(singleWPct.toFixed(2)),
+            expectedIndicatorSumPct: MANDATORY_INDICATOR_SUM_PCT,
+            indicatorDiffPct: indDiffSingle,
+            reason,
+          });
+        }
+      }
+    }
+
+    categoryBreakdown.push({
+      name: catName,
+      weightPct: Number(catWeightPct.toFixed(2)),
+      indicatorCount,
+      indicatorSumPct: Number(indSumPct.toFixed(2)),
+    });
+  }
+
+  const categoryDiffPct = Number((totalCategoryWeightPct - MANDATORY_TOTAL_WEIGHT_PCT).toFixed(4));
+  if (Math.abs(categoryDiffPct) > WEIGHT_EPSILON_PCT) {
+    const diffRounded = Number(categoryDiffPct.toFixed(2));
+    const diffSign = diffRounded > 0 ? `+${diffRounded}%` : `${diffRounded}%`;
+    const breakdownText = categoryBreakdown
+      .map((c) => `${c.name}: ${c.weightPct}%`)
+      .join(", ");
+    errors.unshift(
+      `${prefix}Total bobot kategori saat ini ${Number(totalCategoryWeightPct.toFixed(2))}%, wajib ${MANDATORY_TOTAL_WEIGHT_PCT}% (selisih ${diffSign}). Rincian kategori: [${breakdownText}].`
+    );
+  }
+
+  const isValid = errors.length === 0;
+  return {
+    isValid,
+    totalCategoryWeightPct: Number(totalCategoryWeightPct.toFixed(2)),
+    totalCategoryWeightFrac: Number((totalCategoryWeightPct / 100).toFixed(4)),
+    expectedTotalWeightPct: MANDATORY_TOTAL_WEIGHT_PCT,
+    categoryDiffPct: Number(categoryDiffPct.toFixed(2)),
+    categoryBreakdown,
+    invalidCategories,
+    errors,
+    errorMessage: isValid ? null : errors.join(" "),
+  };
+}
+
+/**
+ * Formula Excel Dinamis untuk Huruf Grade (A/B/C/D/E) berdasarkan sel Total Nilai (pecahan desimal 0..1.15).
+ * Mengikuti kebijakan resmi: A >= 90%, B >= 80%, C >= 70%, D >= 60%, E < 60%.
+ */
+export function buildExcelGradeFormula(totalCellRef: string, emptyFallback = '""'): string {
+  return `IF(OR(${totalCellRef}="",ISBLANK(${totalCellRef})),${emptyFallback},IF(ROUND(${totalCellRef},4)>=0.9,"A",IF(ROUND(${totalCellRef},4)>=0.8,"B",IF(ROUND(${totalCellRef},4)>=0.7,"C",IF(ROUND(${totalCellRef},4)>=0.6,"D","E")))))`;
+}
+
+/**
+ * Formula Excel Dinamis untuk Predikat Kinerja berdasarkan sel Total Nilai (pecahan desimal 0..1.15).
+ */
+export function buildExcelPredicateFormula(totalCellRef: string, emptyFallback = '""'): string {
+  return `IF(OR(${totalCellRef}="",ISBLANK(${totalCellRef})),${emptyFallback},IF(ROUND(${totalCellRef},4)>=0.9,"Outstanding",IF(ROUND(${totalCellRef},4)>=0.8,"Exceeds Expectations",IF(ROUND(${totalCellRef},4)>=0.7,"Meets Expectations",IF(ROUND(${totalCellRef},4)>=0.6,"Needs Improvement","Unsatisfactory")))))`;
+}
+
+/**
+ * Formula Excel Dinamis untuk gabungan "Grade X (Predikat)" pada baris Total / Rekap.
+ */
+export function buildExcelGradeWithPredicateFormula(totalCellRef: string, emptyFallback = '""'): string {
+  const gradeCore = `IF(ROUND(${totalCellRef},4)>=0.9,"A",IF(ROUND(${totalCellRef},4)>=0.8,"B",IF(ROUND(${totalCellRef},4)>=0.7,"C",IF(ROUND(${totalCellRef},4)>=0.6,"D","E"))))`;
+  const predCore = `IF(ROUND(${totalCellRef},4)>=0.9,"Outstanding",IF(ROUND(${totalCellRef},4)>=0.8,"Exceeds Expectations",IF(ROUND(${totalCellRef},4)>=0.7,"Meets Expectations",IF(ROUND(${totalCellRef},4)>=0.6,"Needs Improvement","Unsatisfactory"))))`;
+  return `IF(OR(${totalCellRef}="",ISBLANK(${totalCellRef})),${emptyFallback},"Grade "&${gradeCore}&" ("&${predCore}&")")`;
+}
+
+/**
+ * Formula Excel Dinamis untuk Header "Skor Akhir / Grade" (menampilkan "XX.X% (Grade Y - Predikat)").
+ */
+export function buildExcelScoreAndGradeHeaderFormula(totalCellRef: string, emptyFallback = '"-"'): string {
+  const gradeCore = `IF(ROUND(${totalCellRef},4)>=0.9,"A",IF(ROUND(${totalCellRef},4)>=0.8,"B",IF(ROUND(${totalCellRef},4)>=0.7,"C",IF(ROUND(${totalCellRef},4)>=0.6,"D","E"))))`;
+  const predCore = `IF(ROUND(${totalCellRef},4)>=0.9,"Outstanding",IF(ROUND(${totalCellRef},4)>=0.8,"Exceeds Expectations",IF(ROUND(${totalCellRef},4)>=0.7,"Meets Expectations",IF(ROUND(${totalCellRef},4)>=0.6,"Needs Improvement","Unsatisfactory"))))`;
+  return `IF(OR(${totalCellRef}="",ISBLANK(${totalCellRef})),${emptyFallback},TEXT(${totalCellRef},"0.0%")&" (Grade "&${gradeCore}&" - "&${predCore}&")")`;
+}
+

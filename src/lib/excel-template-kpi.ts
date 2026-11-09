@@ -2119,6 +2119,7 @@ export interface MasterParamItem {
   departmentId?: number | null;
   departmentName?: string | null;
   categoryName?: string | null;
+  parameterType?: "DIRECT" | "SUB_ITEMS" | string | null;
   scope?: "INDIVIDUAL" | "DEPARTMENT" | string | null;
   unit?: string | null;
   inputType?: string | null;
@@ -2133,6 +2134,65 @@ export interface MasterParamItem {
     maxValue?: number | null;
   }> | null;
   isActive?: boolean | null;
+}
+
+export function isDirectCorporateParameterName(raw?: string | null): boolean {
+  if (!raw) return false;
+  const s = raw.toLowerCase().trim();
+  if (!s || s.includes("target kerja")) return false;
+  return (
+    s.includes("kehadiran") ||
+    s.includes("disiplin") ||
+    s.includes("coaching") ||
+    s.includes("couching") ||
+    s.includes("counseling") ||
+    s.includes("conseling") ||
+    s.includes("inovasi") ||
+    s.includes("improvement") ||
+    s.includes("imporvement") ||
+    s.includes("keselamatan") ||
+    s.includes("kepatuhan") ||
+    s.includes("surat peringatan") ||
+    /\bsp\b/.test(s)
+  );
+}
+
+export function resolveDefaultParameterType(input?: {
+  name?: string | null;
+  categoryName?: string | null;
+  departmentId?: number | null;
+  code?: string | null;
+  parameterType?: string | null;
+}): "DIRECT" | "SUB_ITEMS" {
+  if (!input) return "SUB_ITEMS";
+  const explicit = String(input.parameterType || "").toUpperCase().trim();
+  if (explicit === "DIRECT") return "DIRECT";
+
+  const codeLower = String(input.code || "").toLowerCase().trim();
+  const catLower = String(input.categoryName || "").toLowerCase().trim();
+  const isTargetKerjaCat = catLower.includes("target kerja");
+
+  if (
+    isDirectCorporateParameterName(input.name) ||
+    (!isTargetKerjaCat && isDirectCorporateParameterName(input.categoryName)) ||
+    codeLower.startsWith("corp-") ||
+    codeLower.startsWith("gen-")
+  ) {
+    return "DIRECT";
+  }
+
+  if (explicit === "SUB_ITEMS") {
+    if ((input.departmentId === null || input.departmentId === undefined) && !isTargetKerjaCat) {
+      return "DIRECT";
+    }
+    return "SUB_ITEMS";
+  }
+
+  if ((input.departmentId === null || input.departmentId === undefined) && !isTargetKerjaCat) {
+    return "DIRECT";
+  }
+
+  return "SUB_ITEMS";
 }
 
 export function downloadMasterParameterTemplate(options: {
@@ -4952,19 +5012,16 @@ export async function parseMasterTemplateExcelSheet(
     );
   }
 
-  // Enforce: Hanya Indikator 1 (Target Kerja) yang bertipe SUB_ITEMS. Indikator 2-5 selalu DIRECT dengan bobot 1.0
-  catList.forEach((c, idx) => {
-    if (idx === 0) {
+  // Fleksibel per kategori: kategori dengan >1 indikator bertipe SUB_ITEMS, kategori 1 indikator bertipe DIRECT (bobot indikator 100%)
+  catList.forEach((c) => {
+    if (c.params.length > 1) {
       c.categoryType = "SUB_ITEMS";
     } else {
-      c.categoryType = "DIRECT";
-      if (c.params.length > 1) {
-        // Gabungkan seluruh bands ke param pertama
-        const allBands = c.params.flatMap((p) => p.bands);
-        c.params[0].bands = allBands;
-        c.params[0].weight = 1.0;
-        c.params = [c.params[0]];
-      } else if (c.params.length === 1) {
+      c.categoryType = c.categoryType || "DIRECT";
+      if (
+        c.params.length === 1 &&
+        (!c.params[0].weight || Math.abs(c.params[0].weight - c.weight) < 0.0001)
+      ) {
         c.params[0].weight = 1.0;
       }
     }
@@ -5440,30 +5497,37 @@ export function validateMasterTemplateParsedData(
       }
     }
 
-    if (cat.categoryType === "SUB_ITEMS") {
-      const sumPct = Math.round(sumInternalWeight * 100);
-      if (Math.abs(sumPct - 100) > 1) {
+    if (cat.categoryType === "SUB_ITEMS" || cat.params.length > 1) {
+      const sumPct = Number((sumInternalWeight * 100).toFixed(2));
+      const indDiff = Number((sumPct - 100).toFixed(2));
+      if (Math.abs(indDiff) > 0.01) {
         weightErrors++;
+        const diffSign = indDiff > 0 ? `+${indDiff}%` : `${indDiff}%`;
         errors.push({
           type: "ERROR",
           category: "WEIGHT",
           code: "VAL-06",
           paramIndex: catNo,
           paramName: cat.name,
-          message: `Indikator No. ${catNo} (${cat.name}): Total bobot internal sub-parameter adalah ${sumPct}%, wajib berjumlah tepat 100%.`,
+          message: `Indikator No. ${catNo} (${cat.name}): Total bobot internal sub-indikator adalah ${sumPct}%, wajib berjumlah tepat 100% (selisih ${diffSign}).`,
         });
       }
     }
   }
 
-  const totalWeightPct = Math.round(totalWeight * 100);
-  if (Math.abs(totalWeightPct - expectedTotalPct) > 1) {
+  const totalWeightPct = Number((totalWeight * 100).toFixed(2));
+  const totalWeightDiff = Number((totalWeightPct - expectedTotalPct).toFixed(2));
+  if (Math.abs(totalWeightDiff) > 0.01) {
     weightErrors++;
+    const diffSign = totalWeightDiff > 0 ? `+${totalWeightDiff}%` : `${totalWeightDiff}%`;
+    const catBreakdown = categories
+      .map((c) => `${c.name}: ${Number((c.weight * 100).toFixed(2))}%`)
+      .join(", ");
     errors.push({
       type: "ERROR",
       category: "WEIGHT",
       code: "VAL-05",
-      message: `Total bobot seluruh indikator utama adalah ${totalWeightPct}%, target standar template adalah tepat ${expectedTotalPct}%.`,
+      message: `Total bobot seluruh kategori adalah ${totalWeightPct}%, wajib tepat ${expectedTotalPct}% (selisih ${diffSign}). Rincian: [${catBreakdown}].`,
     });
   }
 

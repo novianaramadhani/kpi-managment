@@ -32,6 +32,8 @@ import { type BandDraftItem, cleanDisplayNum } from "./template-editor/scoring-b
 import {
   exportMasterParametersToExcel,
   parseMasterParametersFromExcel,
+  resolveDefaultParameterType,
+  isDirectCorporateParameterName,
   type MasterParamItem,
   type ParsedMasterParamImportItem,
 } from "@/lib/excel-template-kpi";
@@ -1032,7 +1034,22 @@ export function MasterParametersTableClient({
                               Duplikat
                             </span>
                           )}
-                          {p.categoryName && (
+                          {resolveDefaultParameterType(p) === "DIRECT" ? (
+                            <span
+                              className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal-50 text-teal-800 border border-teal-200"
+                              title="Parameter Langsung (Direct): berdiri sendiri sebagai kategori utama dengan 1 Indikator Utama"
+                            >
+                              Parameter Langsung
+                            </span>
+                          ) : (
+                            <span
+                              className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200"
+                              title="Sub-Indikator: menjadi bagian dari kategori Target Kerja"
+                            >
+                              Sub-Indikator
+                            </span>
+                          )}
+                          {p.categoryName && resolveDefaultParameterType(p) !== "DIRECT" && (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200">
                               {p.categoryName}
                             </span>
@@ -1901,6 +1918,15 @@ function MasterParameterFormModal({
       ? "DEPARTMENT"
       : "INDIVIDUAL";
   const [scope, setScope] = useState<"INDIVIDUAL" | "DEPARTMENT">(initialScope);
+  const [parameterType, setParameterType] = useState<"DIRECT" | "SUB_ITEMS">(() =>
+    resolveDefaultParameterType({
+      name: initialData?.name,
+      categoryName: initialData?.categoryName,
+      departmentId: initialDeptId === "GENERAL" ? null : Number(initialDeptId),
+      code: initialData?.code,
+      parameterType: initialData?.parameterType,
+    })
+  );
 
   const { prefix: unitPrefix, suffix: unitSuffix } = getUnitDisplay(unit, inputType);
 
@@ -1919,8 +1945,16 @@ function MasterParameterFormModal({
     setDepartmentId(newDeptId);
     if (newDeptId !== "GENERAL") {
       setScope("DEPARTMENT");
+      if (!isDirectCorporateParameterName(name)) {
+        setParameterType("SUB_ITEMS");
+        setCategoryName("Target Kerja");
+      }
     } else {
       setScope("INDIVIDUAL");
+      setParameterType("DIRECT");
+      if (name.trim()) {
+        setCategoryName(name.trim());
+      }
     }
     if (isEditing && initialData?.code && newDeptId === initialDeptId) {
       setCode(initialData.code);
@@ -2072,7 +2106,11 @@ function MasterParameterFormModal({
         fd.append("name", name.trim());
         fd.append("description", description.trim());
         fd.append("departmentId", departmentId === "GENERAL" ? "" : departmentId);
-        fd.append("categoryName", categoryName.trim());
+        fd.append(
+          "categoryName",
+          parameterType === "DIRECT" ? name.trim() : categoryName.trim() || "Target Kerja"
+        );
+        fd.append("parameterType", parameterType);
         fd.append("scope", scope);
         fd.append("unit", unit.trim() || "%");
         if (target.trim()) fd.append("target", target.trim());
@@ -2178,7 +2216,14 @@ function MasterParameterFormModal({
                       type="text"
                       required
                       value={name}
-                      onChange={(e) => setName(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setName(val);
+                        if (isDirectCorporateParameterName(val) || departmentId === "GENERAL") {
+                          setParameterType("DIRECT");
+                          setCategoryName(val.trim() || "Parameter Langsung");
+                        }
+                      }}
                       placeholder="Contoh: Inventory Value (SOH) atau Tingkat Kehadiran"
                       className={`w-full rounded-xl border px-3.5 py-2 font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none shadow-2xs ${
                         duplicateValidation?.isConflict
@@ -2265,6 +2310,30 @@ function MasterParameterFormModal({
                             </option>
                           ))}
                         </optgroup>
+                      </select>
+                    </div>
+
+                    {/* Tipe Penilaian (Parameter Langsung vs Sub-Indikator) */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-900 mb-1.5">
+                        Tipe Penilaian <span className="text-rose-600 font-bold">*</span>
+                      </label>
+                      <select
+                        value={parameterType}
+                        onChange={(e) => {
+                          const val = e.target.value as "DIRECT" | "SUB_ITEMS";
+                          setParameterType(val);
+                          if (val === "DIRECT" && name.trim()) {
+                            setCategoryName(name.trim());
+                          } else if (val === "SUB_ITEMS") {
+                            setCategoryName("Target Kerja");
+                          }
+                        }}
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 font-medium text-slate-900 focus:border-slate-900 focus:outline-none cursor-pointer shadow-2xs"
+                        title="Parameter Langsung dinilai langsung pada kategori tanpa sub-indikator; Sub-Indikator masuk ke dalam kategori Target Kerja"
+                      >
+                        <option value="DIRECT">Parameter Langsung / Direct (1 Indikator Utama)</option>
+                        <option value="SUB_ITEMS">Sub-Indikator (Bagian dari Target Kerja)</option>
                       </select>
                     </div>
                   </div>

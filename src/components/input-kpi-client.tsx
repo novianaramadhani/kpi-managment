@@ -805,7 +805,19 @@ export function InputKpiClient({
     const list = parameters.map((param) => {
       const actualVal = param.monthlyActuals[selectedMonth] ?? null;
       const rawScore = evaluateScore(actualVal, param.criteria);
-      const weightedScore = (rawScore / 25) * param.weight;
+      const maxScore =
+        param.criteria.length > 0
+          ? Math.max(...param.criteria.map((c) => c.score), 1)
+          : 25;
+      const sameCategoryCount = parameters.filter((p) => p.category === param.category).length;
+      const indWeightFrac =
+        sameCategoryCount === 1 && param.weight === param.categoryWeight
+          ? 1
+          : param.weight / 100;
+      const catWeightPct = param.categoryWeight;
+      const weightedScore = parseFloat(
+        ((rawScore / maxScore) * indWeightFrac * catWeightPct).toFixed(2)
+      );
 
       if (actualVal !== null) {
         filledParams += 1;
@@ -843,7 +855,16 @@ export function InputKpiClient({
         if (val !== null) {
           hasData = true;
           const s = evaluateScore(val, p.criteria);
-          mScore += (s / 25) * p.weight;
+          const maxScore =
+            p.criteria.length > 0
+              ? Math.max(...p.criteria.map((c) => c.score), 1)
+              : 25;
+          const sameCategoryCount = parameters.filter((item) => item.category === p.category).length;
+          const indWeightFrac =
+            sameCategoryCount === 1 && p.weight === p.categoryWeight
+              ? 1
+              : p.weight / 100;
+          mScore += (s / maxScore) * indWeightFrac * p.categoryWeight;
         }
       });
       if (hasData) {
@@ -875,7 +896,19 @@ export function InputKpiClient({
       }
 
       const finalRawScore = evaluateScore(annualActual, param.criteria);
-      const finalWeightedScore = parseFloat(((finalRawScore / 25) * param.weight).toFixed(2));
+      const maxScore =
+        param.criteria.length > 0
+          ? Math.max(...param.criteria.map((c) => c.score), 1)
+          : 25;
+      const sameCategoryCount = parameters.filter((p) => p.category === param.category).length;
+      const indWeightFrac =
+        sameCategoryCount === 1 && param.weight === param.categoryWeight
+          ? 1
+          : param.weight / 100;
+      const finalWeightedScore =
+        annualActual !== null
+          ? parseFloat(((finalRawScore / maxScore) * indWeightFrac * param.categoryWeight).toFixed(2))
+          : 0;
       totalAnnualFinalScore += finalWeightedScore;
 
       return {
@@ -889,16 +922,22 @@ export function InputKpiClient({
 
     const finalTotalScore = parseFloat(totalAnnualFinalScore.toFixed(2));
 
-    let gradeLabel = "C (Cukup)";
+    let gradeLabel = "C (Meets Expectations)";
     let gradeBadge = "bg-amber-50 text-amber-700 border-amber-200";
     if (finalTotalScore >= 90) {
-      gradeLabel = "A (Sangat Baik)";
+      gradeLabel = "A (Outstanding)";
       gradeBadge = "bg-emerald-50 text-emerald-800 border-emerald-300";
     } else if (finalTotalScore >= 80) {
-      gradeLabel = "B (Baik)";
+      gradeLabel = "B (Exceeds Expectations)";
       gradeBadge = "bg-blue-50 text-blue-800 border-blue-200";
-    } else if (finalTotalScore < 70) {
-      gradeLabel = "D (Kurang)";
+    } else if (finalTotalScore >= 70) {
+      gradeLabel = "C (Meets Expectations)";
+      gradeBadge = "bg-amber-50 text-amber-700 border-amber-200";
+    } else if (finalTotalScore >= 60) {
+      gradeLabel = "D (Needs Improvement)";
+      gradeBadge = "bg-orange-50 text-orange-800 border-orange-200";
+    } else {
+      gradeLabel = "E (Unsatisfactory)";
       gradeBadge = "bg-rose-50 text-rose-800 border-rose-200";
     }
 

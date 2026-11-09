@@ -16,6 +16,7 @@ import {
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { importTemplateStructure, syncTemplateToEmployeeAppraisalsAction } from "@/lib/actions";
+import { validateTemplateWeightGovernance } from "@/lib/scoring";
 
 export interface CreatePersonalTemplateInput {
   employeeId: number;
@@ -186,19 +187,32 @@ export async function createPersonalTemplateAction(
     // Hitung status kelengkapan awal (Published hanya jika memiliki parameter & indikator dengan total bobot 115%)
     let initialIsActive = false;
     if (hasExcelCategories && input.categories) {
-      const excelWeightPct = Math.round(
-        input.categories.reduce((sum: number, c: any) => sum + (Number(c.weight) || 0), 0) * 100
-      );
-      const excelParamCount = input.categories.reduce(
-        (sum: number, c: any) => sum + (Array.isArray(c.params) ? c.params.length : 0),
-        0
-      );
-      initialIsActive = input.categories.length > 0 && excelParamCount > 0 && excelWeightPct === 115;
+      const gov = validateTemplateWeightGovernance(input.categories);
+      if (!gov.isValid) {
+        return {
+          success: false,
+          error: gov.errorMessage || "Total bobot seluruh kategori wajib 115%.",
+        };
+      }
+      initialIsActive = true;
     } else if (srcTpl && srcCats.length > 0) {
-      const clonedWeightPct = Math.round(
-        srcCats.reduce((sum, c) => sum + (Number(c.weight) || 0), 0) * 100
+      const gov = validateTemplateWeightGovernance(
+        srcCats.map((c) => ({
+          name: c.name,
+          weight: c.weight,
+          categoryType: c.categoryType,
+          parameters: srcParams
+            .filter((p) => p.categoryId === c.id)
+            .map((p) => ({ name: p.name, weight: p.weight })),
+        }))
       );
-      initialIsActive = srcCats.length > 0 && srcParams.length > 0 && clonedWeightPct === 115;
+      if (!gov.isValid) {
+        return {
+          success: false,
+          error: `Template acuan "${srcTpl.name}" tidak valid:\n${gov.errorMessage}`,
+        };
+      }
+      initialIsActive = true;
     }
 
     // 5. Eksekusi pembuatan template transaksional
@@ -447,10 +461,42 @@ export async function togglePersonalTemplateStatusAction(
   isActive: boolean
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    if (isActive) {
+      const cats = await db
+        .select()
+        .from(kpiCategories)
+        .where(eq(kpiCategories.templateId, templateId))
+        .orderBy(asc(kpiCategories.sortOrder), asc(kpiCategories.id));
+      const catIds = cats.map((c) => c.id);
+      const params = catIds.length
+        ? await db
+            .select()
+            .from(kpiParameters)
+            .where(inArray(kpiParameters.categoryId, catIds))
+        : [];
+      const gov = validateTemplateWeightGovernance(
+        cats.map((c) => ({
+          name: c.name,
+          weight: c.weight,
+          categoryType: c.categoryType,
+          parameters: params
+            .filter((p) => p.categoryId === c.id)
+            .map((p) => ({ name: p.name, weight: p.weight })),
+        }))
+      );
+      if (!gov.isValid) {
+        return {
+          success: false,
+          error: gov.errorMessage || "Template tidak dapat diaktifkan karena total bobot tidak sama dengan 115%.",
+        };
+      }
+    }
+
     await db
       .update(kpiTemplates)
       .set({
         isActive,
+        totalWeight: "1.1500",
         updatedAt: new Date(),
       })
       .where(eq(kpiTemplates.id, templateId));
@@ -487,6 +533,14 @@ export async function savePersonalTemplateFromExcelAction(
   }
   if (!categories || categories.length === 0) {
     return { success: false, error: "Struktur KPI tidak boleh kosong." };
+  }
+
+  const gov = validateTemplateWeightGovernance(categories);
+  if (!gov.isValid) {
+    return {
+      success: false,
+      error: gov.errorMessage || "Total bobot seluruh kategori wajib 115%.",
+    };
   }
 
   try {

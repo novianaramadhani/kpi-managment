@@ -33,10 +33,10 @@ import type {
   KpiScoringMethod,
 } from "@/db/schema";
 import Swal from "sweetalert2";
-import { IndicatorModal } from "./indicator-modal";
+import { IndicatorModal, stripIndicatorPrefix } from "./indicator-modal";
 import { KpiModernSpreadsheet } from "./kpi-modern-spreadsheet";
 import { KpiExcelTable, renderBandCriteriaText, checkBandIntegrity } from "../kpi-excel-table";
-import type { MasterParamItem } from "@/lib/excel-template-kpi";
+import { resolveDefaultParameterType, type MasterParamItem } from "@/lib/excel-template-kpi";
 import { validateStructuredCriteria, type CriteriaItem } from "@/lib/kpi-criteria-helper";
 import { MasterParameterPickerModal } from "./master-parameter-picker-modal";
 
@@ -170,6 +170,97 @@ export function KpiStructureForm({
   };
 
   const handleAddSingleParamFromKamus = async (p: MasterParamItem) => {
+    const isDirect = resolveDefaultParameterType(p) === "DIRECT";
+
+    if (isDirect) {
+      const cleanParamName = p.name.toLowerCase().trim();
+      const existingDirectCat = categories.find(
+        (c) =>
+          c.name
+            .toLowerCase()
+            .replace(/^[0-9]+(?:\.[0-9]+)*\s*[-.)]?\s*/, "")
+            .trim() === cleanParamName
+      );
+
+      if (existingDirectCat) {
+        const existingCatParams = parameters.filter((pr) => pr.categoryId === existingDirectCat.id);
+        if (existingCatParams.length === 0) {
+          const fd = new FormData();
+          fd.append("categoryId", String(existingDirectCat.id));
+          fd.append("templateId", String(templateId));
+          fd.append("name", p.name);
+          fd.append("masterParameterId", String(p.id));
+          fd.append("description", p.description || "");
+          fd.append("unit", p.unit || "%");
+          fd.append("target", p.target || "100");
+          fd.append("weight", "100");
+          fd.append("picRole", p.picRole || "HEAD_DEPT");
+          fd.append("measurementType", p.inputType === "PERCENTAGE" ? "PERCENTAGE" : "NUMERIC");
+          fd.append("direction", "HIGHER_IS_BETTER");
+          fd.append("scoringMethod", "CRITERIA_BASED");
+
+          if (p.defaultBands && Array.isArray(p.defaultBands) && p.defaultBands.length > 0) {
+            fd.append("bands", JSON.stringify(p.defaultBands));
+          }
+
+          await addParameterAction(fd);
+          void Swal.fire({
+            icon: "success",
+            title: "Parameter Langsung Dilengkapi",
+            text: `Indikator utama dan kriteria "${p.name}" berhasil diterapkan ke kategori "${existingDirectCat.name}".`,
+            timer: 1500,
+            showConfirmButton: false,
+          });
+        } else {
+          void Swal.fire({
+            icon: "info",
+            title: "Sudah Terdaftar",
+            text: `Kategori Parameter Langsung "${existingDirectCat.name}" sudah memiliki indikator utama di template ini.`,
+            timer: 1800,
+            showConfirmButton: false,
+          });
+        }
+        return;
+      }
+
+      const nextSortOrder = categories.reduce((max, c) => Math.max(max, c.sortOrder ?? 0), 0) + 1;
+      const defaultWeight =
+        p.weight != null && !isNaN(Number(p.weight)) && Number(p.weight) > 0
+          ? String(Number(p.weight) <= 1 ? Math.round(Number(p.weight) * 100) : Number(p.weight))
+          : p.name.toLowerCase().includes("kehadiran")
+            ? "20"
+            : "10";
+
+      const fdCat = new FormData();
+      fdCat.append("templateId", String(templateId));
+      fdCat.append("name", p.name);
+      fdCat.append("masterParameterId", String(p.id));
+      fdCat.append("description", p.description || "");
+      fdCat.append("weight", defaultWeight);
+      fdCat.append("categoryType", "DIRECT");
+      fdCat.append("sortOrder", String(nextSortOrder));
+      fdCat.append("unit", p.unit || "%");
+      fdCat.append("target", p.target || "100");
+      fdCat.append("picRole", p.picRole || "HEAD_DEPT");
+      fdCat.append("measurementType", p.inputType === "PERCENTAGE" ? "PERCENTAGE" : "NUMERIC");
+      fdCat.append("direction", "HIGHER_IS_BETTER");
+      fdCat.append("scoringMethod", "CRITERIA_BASED");
+
+      if (p.defaultBands && Array.isArray(p.defaultBands) && p.defaultBands.length > 0) {
+        fdCat.append("bands", JSON.stringify(p.defaultBands));
+      }
+
+      await addCategoryAction(fdCat);
+      void Swal.fire({
+        icon: "success",
+        title: "Parameter Langsung Ditambahkan",
+        text: `Kategori Parameter Langsung "${p.name}" beserta kriteria penilaiannya berhasil ditambahkan.`,
+        timer: 1500,
+        showConfirmButton: false,
+      });
+      return;
+    }
+
     let targetCat = categories.find(
       (c) =>
         c.name.toLowerCase().includes("target") ||
@@ -620,7 +711,16 @@ export function KpiStructureForm({
     // 2. Per-Category & Per-Indicator Validation
     for (const cat of sortedCategories) {
       const inds = categoryParametersMap.get(cat.id) || [];
-      const isDirect = cat.categoryType === "DIRECT";
+      const isTargetKerja = cat.name.toLowerCase().includes("target kerja");
+      const hasDistinctSingleSub =
+        inds.length === 1 &&
+        stripIndicatorPrefix(inds[0].name).toLowerCase() !==
+          stripIndicatorPrefix(cat.name).toLowerCase();
+      const isDirect =
+        !isTargetKerja &&
+        !hasDistinctSingleSub &&
+        cat.categoryType === "DIRECT" &&
+        inds.length <= 1;
 
       if (isDirect) {
         const directParam = inds[0];
@@ -704,10 +804,12 @@ export function KpiStructureForm({
             categoryId: cat.id,
           });
         } else {
-          const sumIndWeights = inds.reduce(
-            (s, ind) => s + Math.round(Number(ind.weight) * 100),
-            0
-          );
+          const catWeightPct = Math.round(Number(cat.weight) * 100);
+          const sumIndWeights = inds.reduce((s, ind) => {
+            const rawW = Math.round(Number(ind.weight) * 100);
+            const effW = inds.length === 1 && rawW === catWeightPct ? 100 : rawW;
+            return s + effW;
+          }, 0);
           if (sumIndWeights !== 100) {
             issues.push({
               id: `weight-mismatch-cat-${cat.id}`,
@@ -2129,8 +2231,17 @@ export function KpiStructureForm({
         const categoryOrder = activeCategoryIndex >= 0 ? activeCategoryIndex + 1 : 1;
         const categoryName = activeCategory?.name || "";
         const catParams = categoryParametersMap.get(indicatorModalState.categoryId) || [];
-        const isDirectCategory = activeCategory?.categoryType === "DIRECT" || catParams.length <= 1;
-        const hasMultipleSubIndicators = activeCategory?.categoryType !== "DIRECT" && catParams.length > 1;
+        const isTargetKerjaCat = categoryName.toLowerCase().includes("target kerja");
+        const hasDistinctSingleSub =
+          catParams.length === 1 &&
+          stripIndicatorPrefix(catParams[0].name).toLowerCase() !==
+            stripIndicatorPrefix(categoryName).toLowerCase();
+        const isDirectCategory =
+          !isTargetKerjaCat &&
+          !hasDistinctSingleSub &&
+          activeCategory?.categoryType === "DIRECT" &&
+          catParams.length <= 1;
+        const hasMultipleSubIndicators = !isDirectCategory;
         const categoryWeight = activeCategory ? Math.round(Number(activeCategory.weight) * 100) : 20;
 
         let indicatorIndex = catParams.length + 1;

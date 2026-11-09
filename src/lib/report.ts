@@ -151,7 +151,13 @@ export async function getReport(periodId?: number) {
     });
   };
 
-  const grades = ["Outstanding", "Exceeds", "Meets", "Needs Improvement", "Below"];
+  const grades = [
+    "Outstanding",
+    "Exceeds Expectations",
+    "Meets Expectations",
+    "Needs Improvement",
+    "Unsatisfactory",
+  ];
   const distribution = grades.map((g) => ({
     grade: g,
     count: scored.filter((r) => gradeOf(Number(r.finalScore) * 100).label === g).length,

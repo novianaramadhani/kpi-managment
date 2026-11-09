@@ -24,7 +24,7 @@ import {
 } from "@/db/schema";
 import { and, eq, inArray, asc, desc, isNull, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { tenureMonths } from "./scoring";
+import { tenureMonths, validateTemplateWeightGovernance } from "./scoring";
 
 function safeRevalidate(path: string) {
   try {
@@ -717,7 +717,6 @@ export async function executeGenerateTemplateAction(
     }
 
     // Validasi setiap Parameter utama memiliki minimal 1 indikator aktif & total bobot = 115%
-    let defaultTotalWeightPct = 0;
     for (const c of categories) {
       if (!c.parameters || c.parameters.length === 0) {
         return {
@@ -725,13 +724,25 @@ export async function executeGenerateTemplateAction(
           error: `Parameter "${c.name}" belum memiliki indikator terpilih dari Kamus KPI.`,
         };
       }
-      defaultTotalWeightPct += Number(c.weight) || 0;
     }
-    if (Math.abs(defaultTotalWeightPct - 115) > 0.5) {
+    const defaultWeightGov = validateTemplateWeightGovernance(categories);
+    if (!defaultWeightGov.isValid) {
       return {
         success: false,
-        error: `Total bobot 5 Parameter KPI wajib 115% (saat ini: ${Math.round(defaultTotalWeightPct * 10) / 10}%).`,
+        error: defaultWeightGov.errorMessage || "Total bobot 5 Parameter KPI wajib 115%.",
       };
+    }
+
+    if (payload.employeeCategoriesOverride) {
+      for (const [empIdStr, overrideCats] of Object.entries(payload.employeeCategoriesOverride)) {
+        const empGov = validateTemplateWeightGovernance(overrideCats);
+        if (!empGov.isValid) {
+          return {
+            success: false,
+            error: `Konfigurasi bobot KPI karyawan (ID: ${empIdStr}) tidak valid:\n${empGov.errorMessage}`,
+          };
+        }
+      }
     }
 
     const [dept] = await db.select().from(departments).where(eq(departments.id, departmentId));

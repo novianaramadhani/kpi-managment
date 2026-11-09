@@ -16,6 +16,12 @@ import {
   getMonthlyCellNumberFormat,
   resolveIndicatorTargetAndUnit,
 } from "./excel-kpi-matrix";
+import {
+  performanceActionOf,
+  buildExcelGradeFormula,
+  buildExcelGradeWithPredicateFormula,
+  buildExcelScoreAndGradeHeaderFormula,
+} from "./scoring";
 
 // =============================================================================
 // STYLES DEFINITION (xlsx-js-style)
@@ -167,7 +173,11 @@ export interface CombinedBatchExportParams {
 // =============================================================================
 // SHEET 1: REKAPITULASI PROGRES & HASIL KPI SELURUH KARYAWAN TERPILIH
 // =============================================================================
-function buildRekapSheet(rekapList: EmployeeProgressItem[], currentYear: number) {
+export function buildRekapSheet(
+  rekapList: EmployeeProgressItem[],
+  currentYear: number,
+  sheetTotalRefMap?: Map<number, string>
+) {
   const ws: any = {};
   const merges: any[] = [];
   const rowsHeight: Record<number, { hpt: number }> = {};
@@ -276,15 +286,23 @@ function buildRekapSheet(rekapList: EmployeeProgressItem[], currentYear: number)
       s: styleCellBoldCenter,
     });
     setCell(r, 8, { t: "s", v: `${filledP}/${totalP}`, s: styleCellCenter });
+    const excelRow = r + 1;
+    const sheetTotalRef = sheetTotalRefMap?.get(emp.employeeId);
+    const scoreFracVal = scoreVal !== null ? parseFloat((scoreVal / 100).toFixed(4)) : null;
+
     setCell(r, 9, {
-      t: scoreVal !== null ? "n" : "s",
-      v: scoreVal !== null ? scoreVal / 100 : "-",
-      z: scoreVal !== null ? "0.0%" : undefined,
-      s: scoreVal !== null ? styleActualHighlightCenter : styleCellCenter,
+      t: scoreFracVal !== null ? "n" : "s",
+      ...(sheetTotalRef
+        ? { f: `IF(OR(${sheetTotalRef}="",ISBLANK(${sheetTotalRef})),"",${sheetTotalRef})` }
+        : {}),
+      v: scoreFracVal !== null ? scoreFracVal : "",
+      z: "0.0%",
+      s: scoreFracVal !== null || sheetTotalRef ? styleActualHighlightCenter : styleCellCenter,
     });
     setCell(r, 10, {
       t: "s",
-      v: emp.grade || "-",
+      f: buildExcelGradeFormula(`J${excelRow}`, '"-"'),
+      v: scoreVal !== null ? performanceActionOf(scoreVal).grade : emp.grade || "-",
       s: {
         ...styleCellBoldCenter,
         fill: { fgColor: { rgb: "F1F5F9" } },
@@ -673,12 +691,15 @@ export function buildIndividualEmployeeSheet(
   const categories: MonthlyCategoryGroup[] = detail?.categories || [];
   const nilaiAkhirCellRefs: string[] = [];
   const precalculatedNilaiAkhirList: number[] = [];
+  const catWeightCellRefs: string[] = [];
+  const catWeightFracs: number[] = [];
   const { targetRowMap, actualRowMap } = computeTable2RowMaps(categories);
 
   for (let catIdx = 0; catIdx < categories.length; catIdx++) {
     const cat = categories[catIdx];
     const catWeightFrac = cat.categoryWeight > 1 ? cat.categoryWeight / 100 : cat.categoryWeight;
     const catWeightPct = Math.round(catWeightFrac * 100);
+    catWeightFracs.push(catWeightFrac);
 
     // Category Separator Bar
     const catTitle = `${cat.categoryNumber || catIdx + 1}. ${cat.categoryName.toUpperCase()} (${catWeightPct}%)`;
@@ -690,6 +711,7 @@ export function buildIndividualEmployeeSheet(
 
     const indicators: MonthlyIndicatorItem[] = cat.indicators || [];
     const hasSubIndicators = indicators.length > 1;
+    let catFirstExcelR1 = currentR + 1;
 
     for (let indIdx = 0; indIdx < indicators.length; indIdx++) {
       const ind = indicators[indIdx];
@@ -701,10 +723,16 @@ export function buildIndividualEmployeeSheet(
         ? `${cat.categoryNumber || catIdx + 1}.${indIdx + 1}`
         : `${cat.categoryNumber || catIdx + 1}`;
 
-      const indWeightFrac =
+      const rawIndWeightFrac =
         (ind.indicatorWeight || 1) > 1
           ? (ind.indicatorWeight || 1) / 100
           : (ind.indicatorWeight || 1);
+      // Untuk indikator tunggal tanpa sub-indikator, bobot indikator di dalam kategori adalah 100% (1.0)
+      const indWeightFrac =
+        !hasSubIndicators &&
+        (rawIndWeightFrac === 0 || Math.abs(rawIndWeightFrac - catWeightFrac) < 0.0001)
+          ? 1
+          : rawIndWeightFrac || 1;
 
       const bands = [...(ind.scoringRules || [])].sort(
         (a, b) => (Number(b.score) || 0) - (Number(a.score) || 0)
@@ -733,6 +761,7 @@ export function buildIndividualEmployeeSheet(
       const targetVal = finalTargetVal;
       const normUnit = unitVal;
       const isTextInd = !isNumericUnit(normUnit);
+      const maxScoreVal = ind.maxScore || topBandScore;
 
       const scoreVal =
         ind.annualScore !== null && ind.annualScore !== undefined
@@ -747,6 +776,10 @@ export function buildIndividualEmployeeSheet(
       const bandCount = bands.length;
       const startIndRow = currentR;
       const excelR1 = currentR + 1; // 1-based index in Excel
+      if (indIdx === 0) {
+        catFirstExcelR1 = excelR1;
+        catWeightCellRefs.push(`C${excelR1}`);
+      }
 
       // Col F (Target Tahunan): link dinamis ke Realisasi Tahunan (Baris Target) Table 2
       const targetFormula = targetRowExcel
@@ -762,21 +795,18 @@ export function buildIndividualEmployeeSheet(
         ? `IF(OR(${actualCellRef}="",ISBLANK(${actualCellRef})),"",${rawScoreExpr})`
         : undefined;
 
-      // Col K (Nilai Akhir): (Skor Aktual / Skor Maksimal) * Bobot
-      // Jika memiliki subindikator -> pakai Bobot Indikator (Col E)
-      // Jika parameter tunggal -> pakai Bobot Parameter (Col C)
-      const weightCellRef = hasSubIndicators ? `E${excelR1}` : `C${excelR1}`;
-      const weightFrac = hasSubIndicators ? indWeightFrac : catWeightFrac;
+      // Col K (Nilai Akhir): (Skor Aktual / Skor Maksimal) * Bobot Indikator * Bobot Kategori
+      const combinedWeightFrac = indWeightFrac * catWeightFrac;
 
       nilaiAkhirCellRefs.push(`K${excelR1}`);
       const precalcNilaiAkhir =
         hasInitialScore && initialScoreNum !== null
-          ? parseFloat(((initialScoreNum / topBandScore) * weightFrac).toFixed(4))
+          ? parseFloat(((initialScoreNum / maxScoreVal) * combinedWeightFrac).toFixed(4))
           : null;
       if (precalcNilaiAkhir !== null) {
         precalculatedNilaiAkhirList.push(precalcNilaiAkhir);
       }
-      const nilaiAkhirFormula = `IF(OR(H${excelR1}="",ISBLANK(H${excelR1})),"",(H${excelR1}/${topBandScore})*${weightCellRef})`;
+      const nilaiAkhirFormula = `IF(OR(H${excelR1}="",ISBLANK(H${excelR1})),"",(H${excelR1}/${maxScoreVal})*E${excelR1}*$C$${catFirstExcelR1})`;
 
       // Band 1 (Main Row)
       const b1 = bands[0];
@@ -863,6 +893,8 @@ export function buildIndividualEmployeeSheet(
   }
 
   // 5. Total Row
+  const totalRowExcel = currentR + 1;
+  ws["!totalRowExcel"] = totalRowExcel;
   const totalNilaiAkhirSum =
     precalculatedNilaiAkhirList.length > 0
       ? parseFloat(precalculatedNilaiAkhirList.reduce((acc, v) => acc + v, 0).toFixed(4))
@@ -872,7 +904,19 @@ export function buildIndividualEmployeeSheet(
   merges.push({ s: { r: currentR, c: 0 }, e: { r: currentR, c: 1 } });
   fillEmptyRange(currentR, 0, 1, styleTotalBar);
 
-  setCell(currentR, 2, { t: "n", v: 1.0, z: "0%", s: styleTotalBar });
+  const computedTotalWeightFrac =
+    catWeightFracs.length > 0
+      ? parseFloat(catWeightFracs.reduce((acc, w) => acc + w, 0).toFixed(4))
+      : 1.15;
+  const totalWeightFormula =
+    catWeightCellRefs.length > 0 ? `SUM(${catWeightCellRefs.join(",")})` : undefined;
+  setCell(currentR, 2, {
+    t: "n",
+    ...(totalWeightFormula ? { f: totalWeightFormula } : {}),
+    v: computedTotalWeightFrac,
+    z: "0%",
+    s: styleTotalBar,
+  });
   setCell(currentR, 3, { t: "s", v: "", s: styleTotalBar });
   merges.push({ s: { r: currentR, c: 3 }, e: { r: currentR, c: 9 } });
   fillEmptyRange(currentR, 3, 9, styleTotalBar);
@@ -895,11 +939,37 @@ export function buildIndividualEmployeeSheet(
     });
   }
 
+  // Dynamic Grade & Predicate Formula in Total Row (Col L) & Header Row 3 (Cols J..L)
+  const totalCellRef = `K${totalRowExcel}`;
+  const precalcPerf =
+    totalNilaiAkhirSum !== null
+      ? performanceActionOf(Number((totalNilaiAkhirSum * 100).toFixed(2)))
+      : null;
+  const precalcTotalGradeLabel = precalcPerf
+    ? `Grade ${precalcPerf.grade} (${precalcPerf.label})`
+    : `Grade ${gradeDisplay}`;
+  const precalcHeaderGradeLabel = precalcPerf
+    ? `${(totalNilaiAkhirSum! * 100).toFixed(1)}% (Grade ${precalcPerf.grade} - ${precalcPerf.label})`
+    : `${finalScoreDisplay} (Grade ${gradeDisplay})`;
+
   setCell(currentR, 11, {
     t: "s",
-    v: `Grade ${gradeDisplay}`,
+    f: buildExcelGradeWithPredicateFormula(totalCellRef, '""'),
+    v: precalcTotalGradeLabel,
     s: styleTotalBar,
   });
+
+  // Update Header Row 3 Col 9 (J4:L4) to use Dynamic Excel Formula referencing K{totalRowExcel}
+  setCell(3, 9, {
+    t: "s",
+    f: buildExcelScoreAndGradeHeaderFormula(totalCellRef, '"-"'),
+    v: precalcHeaderGradeLabel,
+    s: {
+      ...styleActualHighlightCenter,
+      font: { name: "Calibri", sz: 10, bold: true, color: { rgb: "92400E" } },
+    },
+  });
+
   rowsHeight[currentR] = { hpt: 26 };
   currentR++;
 
@@ -1268,10 +1338,6 @@ export async function exportCombinedBatchKpiExcel(params: CombinedBatchExportPar
 
   const wb = XLSXStyle.utils.book_new();
 
-  // 1. Build Sheet 1: Rekapitulasi Progres KPI Seluruh Karyawan
-  const wsRekap = buildRekapSheet(rekapList, year);
-  XLSXStyle.utils.book_append_sheet(wb, wsRekap, "Rekap");
-
   // Track sheet names to ensure strict uniqueness within Excel limits
   const usedSheetNames = new Set<string>(["rekap"]);
 
@@ -1324,11 +1390,8 @@ export async function exportCombinedBatchKpiExcel(params: CombinedBatchExportPar
     }
   });
 
-  // 2. Build Sheet 2: Realisasi Departemen (jika ada parameter Department KPI)
   if (deptParamsList.length > 0) {
     usedSheetNames.add("realisasi departemen");
-    const wsDept = buildDepartmentRealizationSheet(deptParamsList, year);
-    XLSXStyle.utils.book_append_sheet(wb, wsDept, "Realisasi Departemen");
   }
 
   // Map detail by employeeId for instant lookup
@@ -1339,11 +1402,37 @@ export async function exportCombinedBatchKpiExcel(params: CombinedBatchExportPar
     }
   });
 
-  // 3. Build Subsequent Sheets: One Sheet per Selected Employee
+  // Pre-build Individual Employee Sheets so Rekap can dynamically reference each sheet's Total Nilai cell
+  const builtEmployeeSheets: Array<{ sheetName: string; wsEmp: any }> = [];
+  const sheetTotalRefMap = new Map<number, string>();
+
   rekapList.forEach((emp, idx) => {
     const detail = detailMap.get(emp.employeeId) || null;
     const sheetName = safeSheetName(emp.name, idx + 1, usedSheetNames);
     const wsEmp = buildIndividualEmployeeSheet(emp, detail, year, deptParamRowIndexMap);
+    const totalRowExcel = wsEmp["!totalRowExcel"];
+    if (totalRowExcel) {
+      const escapedSName = sheetName.includes(" ") || sheetName.includes("-")
+        ? `'${sheetName.replace(/'/g, "''")}'`
+        : sheetName;
+      sheetTotalRefMap.set(emp.employeeId, `${escapedSName}!K${totalRowExcel}`);
+      delete wsEmp["!totalRowExcel"];
+    }
+    builtEmployeeSheets.push({ sheetName, wsEmp });
+  });
+
+  // 1. Append Sheet 1: Rekapitulasi Progres KPI Seluruh Karyawan (with dynamic links to employee sheets)
+  const wsRekap = buildRekapSheet(rekapList, year, sheetTotalRefMap);
+  XLSXStyle.utils.book_append_sheet(wb, wsRekap, "Rekap");
+
+  // 2. Append Sheet 2: Realisasi Departemen (jika ada parameter Department KPI)
+  if (deptParamsList.length > 0) {
+    const wsDept = buildDepartmentRealizationSheet(deptParamsList, year);
+    XLSXStyle.utils.book_append_sheet(wb, wsDept, "Realisasi Departemen");
+  }
+
+  // 3. Append Subsequent Sheets: One Sheet per Selected Employee
+  builtEmployeeSheets.forEach(({ sheetName, wsEmp }) => {
     XLSXStyle.utils.book_append_sheet(wb, wsEmp, sheetName);
   });
 
@@ -1465,6 +1554,7 @@ export async function exportSingleEmployeeKpiExcel(
 
   const sheetName = safeSheetName(empName, 1, usedSet);
   const wsEmp = buildIndividualEmployeeSheet(empItem, detail, year, deptParamRowIndexMap);
+  delete wsEmp["!totalRowExcel"];
   XLSXStyle.utils.book_append_sheet(wb, wsEmp, sheetName);
 
   if (!wb.Workbook) wb.Workbook = {};

@@ -635,9 +635,18 @@ export function KpiModernSpreadsheet({
             </tr>
           ) : (
             sortedCategories.map((cat, catIdx) => {
-              const isDirect = cat.categoryType === "DIRECT";
               const catWeightPct = Math.round(Number(cat.weight) * 100);
               const catParams = categoryParametersMap.get(cat.id) || [];
+              const isTargetKerja = cat.name.toLowerCase().includes("target kerja");
+              const hasDistinctSingleSub =
+                catParams.length === 1 &&
+                stripIndicatorPrefix(catParams[0].name).toLowerCase() !==
+                  stripIndicatorPrefix(cat.name).toLowerCase();
+              const isDirect =
+                !isTargetKerja &&
+                !hasDistinctSingleSub &&
+                cat.categoryType === "DIRECT" &&
+                catParams.length <= 1;
               const isExpanded = expandedCategoryIds.has(cat.id);
               const isCatHighlighted = highlightedIds?.categoryId === cat.id;
 
@@ -663,12 +672,17 @@ export function KpiModernSpreadsheet({
                   ? issueEntry
                   : "Terdapat perhatian validasi pada parameter ini";
 
-              // List of indicators to render inside this category (for DIRECT, use directParam as 1 item)
+              // List of indicators to render inside this category (for DIRECT, use directParam as 1 item; for SUB_ITEMS, exclude any dummy item whose name matches the category header)
+              const cleanCatTitle = stripIndicatorPrefix(cat.name).toLowerCase();
+              const filteredSubParams = catParams.filter(
+                (p) => stripIndicatorPrefix(p.name).toLowerCase() !== cleanCatTitle
+              );
               const indicatorsToRender = isDirect
                 ? directParam
                   ? [directParam]
                   : []
-                : catParams;
+                : filteredSubParams;
+              const effectiveTotalIndikator = isDirect ? 1 : indicatorsToRender.length;
 
               return (
                 <React.Fragment key={cat.id}>
@@ -759,9 +773,27 @@ export function KpiModernSpreadsheet({
                       colSpan={2}
                       className="py-2.5 px-3 align-middle border-r border-[#E2E8F0] border-y border-[#E2E8F0] text-[#64748B] font-normal text-xs"
                     >
-                      {isDirect
-                        ? `1 Indikator Utama • ${totalKriteria} Kriteria`
-                        : `${totalIndikator} Indikator • ${totalKriteria} Kriteria`}
+                      <div className="flex items-center justify-between gap-2">
+                        <span>
+                          {isDirect
+                            ? `1 Indikator Utama • ${totalKriteria} Kriteria`
+                            : `${effectiveTotalIndikator} Indikator • ${totalKriteria} Kriteria`}
+                        </span>
+                        {!isDirect && onAddIndicator && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onAddIndicator(cat.id);
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold text-[#2563EB] bg-[#EFF6FF] hover:bg-blue-100/80 border border-blue-200 transition cursor-pointer shrink-0"
+                            title="Tambah Sub-Indikator pada parameter ini"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>Tambah Indikator</span>
+                          </button>
+                        )}
+                      </div>
                     </td>
 
                     {/* Kolom 4: Skor */}
@@ -922,9 +954,12 @@ export function KpiModernSpreadsheet({
                       </tr>
                     ) : (
                       indicatorsToRender.map((ind, indIdx) => {
+                        const rawIndWeightPct = Math.round(Number(ind.weight) * 100);
                         const indWeightPct = isDirect
                           ? catWeightPct
-                          : Math.round(Number(ind.weight) * 100);
+                          : catParams.length === 1 && rawIndWeightPct === catWeightPct
+                          ? 100
+                          : rawIndWeightPct;
                         const indBands = bands
                           .filter((b) => b.parameterId === ind.id)
                           .sort(
@@ -932,9 +967,14 @@ export function KpiModernSpreadsheet({
                               (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id
                           );
                         const isIndHighlighted = highlightedIds?.parameterId === ind.id;
-                        const hasSub = !isDirect && catParams.length > 1;
+                        const hasSub = !isDirect;
                         const indCode = hasSub ? `${catIdx + 1}.${indIdx + 1}` : "";
-                        const displayIndName = isDirect || !hasSub ? "" : ind.name;
+                        const displayIndName = isDirect ? "" : ind.name;
+                        const hasTargetInfo =
+                          hasSub &&
+                          ind.target !== null &&
+                          ind.target !== undefined &&
+                          String(ind.target).trim() !== "";
 
                         return (
                           <tr
@@ -956,15 +996,23 @@ export function KpiModernSpreadsheet({
                                 )}
                                 <div className="min-w-0 flex-1">
                                   {hasSub ? (
-                                    <span
-                                      onClick={() =>
-                                        onEditIndicator && onEditIndicator(cat.id, ind)
-                                      }
-                                      className="font-medium text-[#0F172A] text-xs leading-snug hover:text-[#2563EB] cursor-pointer block"
-                                      title="Klik untuk edit indikator"
-                                    >
-                                      {stripIndicatorPrefix(displayIndName)}
-                                    </span>
+                                    <div>
+                                      <span
+                                        onClick={() =>
+                                          onEditIndicator && onEditIndicator(cat.id, ind)
+                                        }
+                                        className="font-medium text-[#0F172A] text-xs leading-snug hover:text-[#2563EB] cursor-pointer block"
+                                        title="Klik untuk edit indikator"
+                                      >
+                                        {stripIndicatorPrefix(displayIndName) || `Indikator ${indCode}`}
+                                      </span>
+                                      {hasTargetInfo && (
+                                        <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded bg-[#F8FAFC] border border-[#E2E8F0] text-[10.5px] font-medium text-[#64748B]">
+                                          Target: {ind.target}{" "}
+                                          {ind.unit && ind.unit !== "Teks" ? ind.unit : ""}
+                                        </span>
+                                      )}
+                                    </div>
                                   ) : (
                                     <span className="text-[#CBD5E1] text-xs font-normal select-none block">
                                       -
@@ -1297,15 +1345,28 @@ export function KpiModernSpreadsheet({
           </div>
         ) : (
           sortedCategories.map((cat, catIdx) => {
-            const isDirect = cat.categoryType === "DIRECT";
             const catWeightPct = Math.round(Number(cat.weight) * 100);
             const catParams = categoryParametersMap.get(cat.id) || [];
+            const isTargetKerja = cat.name.toLowerCase().includes("target kerja");
+            const hasDistinctSingleSub =
+              catParams.length === 1 &&
+              stripIndicatorPrefix(catParams[0].name).toLowerCase() !==
+                stripIndicatorPrefix(cat.name).toLowerCase();
+            const isDirect =
+              !isTargetKerja &&
+              !hasDistinctSingleSub &&
+              cat.categoryType === "DIRECT" &&
+              catParams.length <= 1;
             const isExpanded = expandedCategoryIds.has(cat.id);
             const directParam = isDirect ? catParams[0] : null;
-            const totalIndikator = isDirect ? 1 : catParams.length;
-            const paramIds = isDirect ? (directParam ? [directParam.id] : []) : catParams.map((p) => p.id);
+            const cleanCatTitle = stripIndicatorPrefix(cat.name).toLowerCase();
+            const filteredSubParams = catParams.filter(
+              (p) => stripIndicatorPrefix(p.name).toLowerCase() !== cleanCatTitle
+            );
+            const indicatorsToRender = isDirect ? (directParam ? [directParam] : []) : filteredSubParams;
+            const totalIndikator = isDirect ? 1 : indicatorsToRender.length;
+            const paramIds = indicatorsToRender.map((p) => p.id);
             const totalKriteria = bands.filter((b) => paramIds.includes(b.parameterId)).length;
-            const indicatorsToRender = isDirect ? (directParam ? [directParam] : []) : catParams;
 
             return (
               <div
@@ -1438,11 +1499,16 @@ export function KpiModernSpreadsheet({
                       </div>
                     ) : (
                       indicatorsToRender.map((ind, indIdx) => {
-                        const indWeightPct = isDirect ? catWeightPct : Math.round(Number(ind.weight) * 100);
+                        const rawIndWeightPct = Math.round(Number(ind.weight) * 100);
+                        const indWeightPct = isDirect
+                          ? catWeightPct
+                          : catParams.length === 1 && rawIndWeightPct === catWeightPct
+                          ? 100
+                          : rawIndWeightPct;
                         const indBands = bands
                           .filter((b) => b.parameterId === ind.id)
                           .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
-                        const hasSub = !isDirect && catParams.length > 1;
+                        const hasSub = !isDirect;
                         const indCode = hasSub ? `${catIdx + 1}.${indIdx + 1}` : "";
                         const cleanName = stripIndicatorPrefix(ind.name);
 

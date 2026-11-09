@@ -31,7 +31,14 @@ import {
 import { and, eq, inArray, or, ilike, isNull, sql, asc, desc, ne } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { scoreItem, tenureMonths, resolveKpiDirection, type ItemInput } from "./scoring";
+import {
+  scoreItem,
+  tenureMonths,
+  resolveKpiDirection,
+  validateTemplateWeightGovernance,
+  MANDATORY_TOTAL_WEIGHT_FRAC,
+  type ItemInput,
+} from "./scoring";
 import { getCurrentUser } from "@/lib/auth";
 import {
   recalculateAppraisal as recalculateAppraisalUnified,
@@ -46,6 +53,8 @@ import {
   normalizeMasterParamAggregation,
   normalizeMasterParamCompareBasis,
   normalizeMasterParamPicRole,
+  resolveDefaultParameterType,
+  isDirectCorporateParameterName,
 } from "./excel-template-kpi";
 import bcrypt from "bcryptjs";
 import { requireAuth, requireRole, requireAdmin, requireAdminOrHr } from "@/lib/auth-guard";
@@ -1650,6 +1659,37 @@ export async function deletePeriod(fd: FormData) {
 }
 
 // ---------- TEMPLATES ----------
+async function validateDbTemplateWeights(templateId: number, client: any = db) {
+  const cats = await client
+    .select()
+    .from(kpiCategories)
+    .where(eq(kpiCategories.templateId, templateId))
+    .orderBy(asc(kpiCategories.sortOrder), asc(kpiCategories.id));
+
+  const catIds = cats.map((c: any) => c.id);
+  const allParams = catIds.length
+    ? await client
+        .select()
+        .from(kpiParameters)
+        .where(inArray(kpiParameters.categoryId, catIds))
+        .orderBy(asc(kpiParameters.sortOrder), asc(kpiParameters.id))
+    : [];
+
+  return validateTemplateWeightGovernance(
+    cats.map((c: any) => ({
+      name: c.name,
+      weight: c.weight,
+      categoryType: c.categoryType,
+      parameters: allParams
+        .filter((p: any) => p.categoryId === c.id)
+        .map((p: any) => ({
+          name: p.name,
+          weight: p.weight,
+        })),
+    }))
+  );
+}
+
 export async function createTemplate(fd: FormData) {
   const deptId = i(fd, "departmentId");
   const lvlId = i(fd, "jobLevelId");
@@ -1657,6 +1697,27 @@ export async function createTemplate(fd: FormData) {
   const periodIdRaw = fd.get("periodId");
   const effectiveDateRaw = fd.get("effectiveDate");
   const descriptionRaw = fd.get("description");
+
+  // Jika ada struktur kategori dari file Excel yang diupload saat pembuatan template, validasi bobot 115% terlebih dahulu
+  const categoriesJson = fd.get("categoriesJson");
+  let parsedExcelCats: any[] | null = null;
+  if (categoriesJson && typeof categoriesJson === "string") {
+    try {
+      const parsedCats = JSON.parse(categoriesJson);
+      if (Array.isArray(parsedCats) && parsedCats.length > 0) {
+        const gov = validateTemplateWeightGovernance(parsedCats);
+        if (!gov.isValid) {
+          throw new Error(gov.errorMessage || "Total bobot template wajib 115%.");
+        }
+        parsedExcelCats = parsedCats;
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message.includes("115%")) {
+        throw e;
+      }
+      console.warn("Failed to parse categoriesJson in createTemplate:", e);
+    }
+  }
 
   // Lookup department and job level codes for professional auto-generated template code
   const [dept] = await db.select({ code: departments.code }).from(departments).where(eq(departments.id, deptId)).limit(1);
@@ -1694,17 +1755,8 @@ export async function createTemplate(fd: FormData) {
     })
     .returning();
 
-  // Jika ada struktur kategori dari file Excel yang diupload saat pembuatan template
-  const categoriesJson = fd.get("categoriesJson");
-  if (categoriesJson && typeof categoriesJson === "string") {
-    try {
-      const parsedCats = JSON.parse(categoriesJson);
-      if (Array.isArray(parsedCats) && parsedCats.length > 0) {
-        await importTemplateStructure(row.id, parsedCats as any, "REPLACE", { skipRevalidate: true });
-      }
-    } catch (e) {
-      console.warn("Failed to parse categoriesJson in createTemplate:", e);
-    }
+  if (parsedExcelCats && parsedExcelCats.length > 0) {
+    await importTemplateStructure(row.id, parsedExcelCats as any, "REPLACE", { skipRevalidate: true });
   }
 
   await audit("template", row.id, "CREATE", {
@@ -1712,7 +1764,7 @@ export async function createTemplate(fd: FormData) {
     code: generatedCode,
     status: "Draft",
     version: "v1.0",
-    hasExcelUpload: Boolean(categoriesJson),
+    hasExcelUpload: Boolean(parsedExcelCats),
   });
   revalidateAll();
   redirect(`/setup/templates/${row.id}`);
@@ -1730,6 +1782,13 @@ export async function duplicateTemplate(fd: FormData) {
     );
   }
 
+  const gov = await validateDbTemplateWeights(srcId);
+  if (!gov.isValid) {
+    throw new Error(
+      `Template sumber "${src.name}" tidak dapat diduplikat karena konfigurasi bobot belum valid:\n${gov.errorMessage}`
+    );
+  }
+
   const [tpl] = await db
     .insert(kpiTemplates)
     .values({
@@ -1739,7 +1798,8 @@ export async function duplicateTemplate(fd: FormData) {
       site: src.site,
       pitId: src.pitId,
       departmentMappingId: src.departmentMappingId,
-      totalWeight: src.totalWeight,
+      totalWeight: "1.1500",
+      isActive: false,
     })
     .returning();
   const cats = await db.select().from(kpiCategories).where(eq(kpiCategories.templateId, srcId));
@@ -1778,11 +1838,7 @@ export async function updateTemplate(fd: FormData) {
   let isActive = t.isActive;
 
   if (isPublish) {
-    // ─── VALIDASI PUBLISH ────────────────────────────────────────────────────
-    // Ambil target bobot dari system config (default 115)
-    const maxWeightCfg = await getConfig("max_kpi_category_weight", "115");
-    const targetPct = Number(maxWeightCfg) || 115;
-
+    // ─── VALIDASI PUBLISH (115% WEIGHT GOVERNANCE & BANDS) ───────────────────
     const cats = await db
       .select()
       .from(kpiCategories)
@@ -1794,20 +1850,6 @@ export async function updateTemplate(fd: FormData) {
       throw new Error("Template belum memiliki Parameter. Tambahkan minimal 1 Parameter sebelum dipublish.");
     }
 
-    // 2. Total bobot parameter harus = target
-    const totalWeightPct = Math.round(
-      cats.reduce((sum, c) => sum + Math.round(Number(c.weight) * 100), 0)
-    );
-    if (totalWeightPct !== targetPct) {
-      const diff = targetPct - totalWeightPct;
-      throw new Error(
-        `Total bobot Parameter adalah ${totalWeightPct}%, harus tepat ${targetPct}%. ` +
-        (diff > 0 ? `Kurang ${diff}%.` : `Kelebihan ${Math.abs(diff)}%.`) +
-        ` Sesuaikan bobot Parameter sebelum publish.`
-      );
-    }
-
-    // 3. Validasi per parameter
     const catIds = cats.map((c) => c.id);
     const allParams = catIds.length
       ? await db.select().from(kpiParameters).where(inArray(kpiParameters.categoryId, catIds))
@@ -1817,13 +1859,32 @@ export async function updateTemplate(fd: FormData) {
       ? await db.select().from(kpiBands).where(inArray(kpiBands.parameterId, paramIds))
       : [];
 
+    // 2. Validasi Terpusat Bobot 115% dan Bobot Indikator 100%
+    const weightGov = validateTemplateWeightGovernance(
+      cats.map((cat) => ({
+        name: cat.name,
+        weight: cat.weight,
+        categoryType: cat.categoryType,
+        parameters: allParams
+          .filter((p) => p.categoryId === cat.id)
+          .map((p) => ({
+            name: p.name,
+            weight: p.weight,
+          })),
+      }))
+    );
+
+    if (!weightGov.isValid) {
+      throw new Error(weightGov.errorMessage || "Total bobot template wajib 115%.");
+    }
+
+    // 3. Validasi Kriteria Scoring (Bands) per parameter/indikator
     const errors: string[] = [];
 
     for (const cat of cats) {
       const catParams = allParams.filter((p) => p.categoryId === cat.id);
 
       if (cat.categoryType === "DIRECT") {
-        // Mode DIRECT: wajib punya setidaknya 1 band
         const directParam = catParams[0];
         if (!directParam) {
           errors.push(`Parameter "${cat.name}" (DIRECT) tidak memiliki data indikator internal.`);
@@ -1834,23 +1895,6 @@ export async function updateTemplate(fd: FormData) {
           errors.push(`Parameter "${cat.name}" belum memiliki Kriteria Scoring. Tambahkan minimal 1 kriteria.`);
         }
       } else {
-        // Mode SUB_ITEMS: wajib punya indikator, total bobot = 100%, tiap indikator punya band
-        if (catParams.length === 0) {
-          errors.push(`Parameter "${cat.name}" belum memiliki Indikator. Tambahkan setidaknya 1 Indikator.`);
-          continue;
-        }
-
-        const totalIndWeightPct = Math.round(
-          catParams.reduce((sum, p) => sum + Math.round(Number(p.weight) * 100), 0)
-        );
-        if (totalIndWeightPct !== 100) {
-          const diff = 100 - totalIndWeightPct;
-          errors.push(
-            `Parameter "${cat.name}": total bobot Indikator ${totalIndWeightPct}%, harus tepat 100%. ` +
-            (diff > 0 ? `Kurang ${diff}%.` : `Kelebihan ${Math.abs(diff)}%.`)
-          );
-        }
-
         for (const param of catParams) {
           const paramBands = allBands.filter((b) => b.parameterId === param.id);
           if (paramBands.length === 0) {
@@ -1873,12 +1917,19 @@ export async function updateTemplate(fd: FormData) {
     isActive = true;
     newVersion = !t.isActive ? 1 : Math.max(1, t.version + 1);
   } else if (fd.has("isActive")) {
-    isActive = s(fd, "isActive") !== "false";
+    const requestedActive = s(fd, "isActive") !== "false";
+    if (requestedActive && !t.isActive) {
+      const gov = await validateDbTemplateWeights(id);
+      if (!gov.isValid) {
+        throw new Error(gov.errorMessage || "Template tidak dapat diaktifkan karena total bobot tidak sama dengan 115%.");
+      }
+    }
+    isActive = requestedActive;
   }
 
   const data: Record<string, any> = {
     name: s(fd, "name") || t.name,
-    totalWeight: String(n(fd, "totalWeight") ?? t.totalWeight),
+    totalWeight: "1.1500",
     isActive,
     version: newVersion,
     updatedAt: new Date(),
@@ -1963,12 +2014,160 @@ export async function deleteTemplatesBulk(ids: number[]) {
   revalidateAll();
 }
 
+let _masterParamTypeColumnEnsured = false;
+
+async function ensureMasterParameterTypeColumn() {
+  if (_masterParamTypeColumnEnsured) return;
+  try {
+    await db.execute(sql`
+      ALTER TABLE "master_parameters"
+      ADD COLUMN IF NOT EXISTS "parameter_type" text NOT NULL DEFAULT 'SUB_ITEMS';
+    `);
+    await db.execute(sql`
+      UPDATE "master_parameters"
+      SET "parameter_type" = 'DIRECT'
+      WHERE "parameter_type" = 'SUB_ITEMS'
+        AND (
+          "department_id" IS NULL
+          OR LOWER(COALESCE("name", '')) ~ '(kehadiran|disiplin|coaching|couching|counseling|conseling|inovasi|improvement|imporvement|keselamatan|kepatuhan|surat peringatan|\\msp\\M)'
+          OR LOWER(COALESCE("code", '')) LIKE 'corp-%'
+          OR LOWER(COALESCE("code", '')) LIKE 'gen-%'
+        );
+    `);
+    _masterParamTypeColumnEnsured = true;
+  } catch (err) {
+    console.warn("ensureMasterParameterTypeColumn warning:", err);
+  }
+}
+
+function getDefaultDirectCorporateBands(categoryName: string): Array<{
+  score: number;
+  label: string;
+  operator: "GT" | "GTE" | "LT" | "LTE" | "EQ" | "BETWEEN" | "TEXT";
+  minValue: number | null;
+  maxValue: number | null;
+}> {
+  const lower = categoryName.toLowerCase();
+  if (lower.includes("keselamatan")) {
+    return [
+      { label: "0 Insiden (Zero Accident)", operator: "EQ", minValue: 0, maxValue: 0, score: 25 },
+      { label: "1 Insiden Ringan", operator: "EQ", minValue: 1, maxValue: 1, score: 15 },
+      { label: "> 1 Insiden", operator: "GT", minValue: 1, maxValue: null, score: 5 },
+    ];
+  }
+  if (lower.includes("kepatuhan") || /\bsp\b/.test(lower) || lower.includes("surat peringatan")) {
+    return [
+      { label: "Tidak Ada SP (0 SP)", operator: "EQ", minValue: 0, maxValue: 0, score: 25 },
+      { label: "Terdapat SP 1", operator: "EQ", minValue: 1, maxValue: 1, score: 15 },
+      { label: "Terdapat SP 2 atau lebih", operator: "GT", minValue: 1, maxValue: null, score: 0 },
+    ];
+  }
+  if (lower.includes("inovasi") || lower.includes("improvement") || lower.includes("imporvement")) {
+    return [
+      { label: ">= 2 Inisiatif Tervalidasi", operator: "GTE", minValue: 2, maxValue: null, score: 25 },
+      { label: "1 Inisiatif Tervalidasi", operator: "EQ", minValue: 1, maxValue: 1, score: 15 },
+      { label: "Tidak Ada Inisiatif", operator: "EQ", minValue: 0, maxValue: 0, score: 5 },
+    ];
+  }
+  return [
+    { label: ">= 98% (Sangat Baik)", operator: "GTE", minValue: 98, maxValue: null, score: 25 },
+    { label: "95% - 97% (Baik)", operator: "BETWEEN", minValue: 95, maxValue: 97, score: 15 },
+    { label: "< 95% (Kurang)", operator: "LT", minValue: null, maxValue: 95, score: 5 },
+  ];
+}
+
+function findMatchingDirectMasterParam(
+  catName: string,
+  allMasters: Array<typeof masterParameters.$inferSelect>,
+  templateDeptId?: number | null
+): (typeof masterParameters.$inferSelect) | undefined {
+  const cleanCat = catName
+    .toLowerCase()
+    .replace(/^[0-9]+(?:\.[0-9]+)*\s*[-.)]?\s*/, "")
+    .trim();
+  if (!cleanCat) return undefined;
+
+  const directMasters = allMasters.filter(
+    (m) =>
+      resolveDefaultParameterType({
+        name: m.name,
+        categoryName: m.categoryName,
+        departmentId: m.departmentId,
+        code: m.code,
+        parameterType: (m as any).parameterType,
+      }) === "DIRECT"
+  );
+
+  // 1. Exact name match (prioritize department-specific if any, then General)
+  const exactMatch =
+    directMasters.find(
+      (m) =>
+        m.departmentId === templateDeptId &&
+        m.name.toLowerCase().trim() === cleanCat
+    ) ||
+    directMasters.find((m) => m.name.toLowerCase().trim() === cleanCat) ||
+    allMasters.find(
+      (m) =>
+        m.departmentId === null &&
+        (m.name.toLowerCase().trim() === cleanCat ||
+          (m.categoryName || "").toLowerCase().trim() === cleanCat)
+    );
+  if (exactMatch) return exactMatch;
+
+  // 2. Keyword match for the 5 Corporate Direct parameters
+  const keywordGroups = [
+    ["kehadiran", "disiplin"],
+    ["coaching", "couching", "counseling", "conseling"],
+    ["inovasi", "improvement", "imporvement"],
+    ["keselamatan"],
+    ["kepatuhan", "surat peringatan"],
+  ];
+
+  for (const group of keywordGroups) {
+    if (group.some((kw) => cleanCat.includes(kw))) {
+      const kwMatch =
+        directMasters.find((m) => {
+          const mn = m.name.toLowerCase();
+          const mc = (m.categoryName || "").toLowerCase();
+          return group.some((kw) => mn.includes(kw) || mc.includes(kw));
+        }) ||
+        allMasters.find((m) => {
+          const mn = m.name.toLowerCase();
+          return m.departmentId === null && group.some((kw) => mn.includes(kw));
+        });
+      if (kwMatch) return kwMatch;
+    }
+  }
+
+  return undefined;
+}
+
 export async function normalizeTemplateSortOrders(templateId: number) {
+  await ensureMasterParameterTypeColumn();
+
+  const [tpl] = await db
+    .select({ id: kpiTemplates.id, departmentId: kpiTemplates.departmentId })
+    .from(kpiTemplates)
+    .where(eq(kpiTemplates.id, templateId))
+    .limit(1);
+
   const cats = await db
     .select()
     .from(kpiCategories)
     .where(eq(kpiCategories.templateId, templateId))
     .orderBy(asc(kpiCategories.sortOrder), asc(kpiCategories.id));
+
+  let cachedMasterParams: Array<typeof masterParameters.$inferSelect> | null = null;
+  const getCachedMasters = async () => {
+    if (!cachedMasterParams) {
+      cachedMasterParams = await db
+        .select()
+        .from(masterParameters)
+        .where(eq(masterParameters.isActive, true))
+        .orderBy(asc(masterParameters.code), asc(masterParameters.id));
+    }
+    return cachedMasterParams;
+  };
 
   for (let cIdx = 0; cIdx < cats.length; cIdx++) {
     const cat = cats[cIdx];
@@ -1980,19 +2179,152 @@ export async function normalizeTemplateSortOrders(templateId: number) {
         .where(eq(kpiCategories.id, cat.id));
     }
 
-    const params = await db
+    let params = await db
       .select()
       .from(kpiParameters)
       .where(eq(kpiParameters.categoryId, cat.id))
       .orderBy(asc(kpiParameters.sortOrder), asc(kpiParameters.id));
 
+    const isTargetKerjaCat = cat.name.toLowerCase().includes("target kerja");
+    const cleanCatTitle = cat.name
+      .replace(/^\s*\d+(\.\d+)*[\.\:\s\-]+\s*/, "")
+      .trim()
+      .toLowerCase();
+    const hasDistinctSubItem =
+      params.length > 1 ||
+      (params.length === 1 &&
+        !isDirectCorporateParameterName(cat.name) &&
+        params[0].name
+          .replace(/^\s*\d+(\.\d+)*[\.\:\s\-]+\s*/, "")
+          .trim()
+          .toLowerCase() !== cleanCatTitle);
+
+    const isDirectCorpCat =
+      !isTargetKerjaCat &&
+      !hasDistinctSubItem &&
+      (cat.categoryType === "DIRECT" || isDirectCorporateParameterName(cat.name));
+
+    // Pastikan Target Kerja atau kategori yang memiliki sub-indikator selalu bertipe SUB_ITEMS
+    if ((isTargetKerjaCat || hasDistinctSubItem) && cat.categoryType !== "SUB_ITEMS") {
+      await db
+        .update(kpiCategories)
+        .set({ categoryType: "SUB_ITEMS" })
+        .where(eq(kpiCategories.id, cat.id));
+      cat.categoryType = "SUB_ITEMS";
+    }
+
+    // Jika kategori bertipe SUB_ITEMS (seperti Target Kerja), bersihkan baris dummy yang namanya sama persis dengan nama kategori
+    // apabila sudah ada sub-indikator nyata yang dipilih (atau jika nama kategorinya adalah Target Kerja).
+    if (cat.categoryType === "SUB_ITEMS" && params.length > 0) {
+      const dummySameAsCat = params.filter(
+        (p) =>
+          p.name
+            .replace(/^\s*\d+(\.\d+)*[\.\:\s\-]+\s*/, "")
+            .trim()
+            .toLowerCase() === cleanCatTitle
+      );
+      const realSubItems = params.filter(
+        (p) =>
+          p.name
+            .replace(/^\s*\d+(\.\d+)*[\.\:\s\-]+\s*/, "")
+            .trim()
+            .toLowerCase() !== cleanCatTitle
+      );
+
+      if (dummySameAsCat.length > 0 && (realSubItems.length > 0 || isTargetKerjaCat)) {
+        for (const dummy of dummySameAsCat) {
+          await db.delete(kpiParameters).where(eq(kpiParameters.id, dummy.id));
+        }
+        params = realSubItems;
+      }
+    }
+
+    // Auto-heal kategori DIRECT yang belum memiliki indikator (0 Indikator • 0 Kriteria)
+    if (params.length === 0 && !isTargetKerjaCat) {
+      const masters = await getCachedMasters();
+      const matchedMaster = findMatchingDirectMasterParam(cat.name, masters, tpl?.departmentId);
+
+      if (isDirectCorpCat || matchedMaster) {
+        if (cat.categoryType !== "DIRECT") {
+          await db
+            .update(kpiCategories)
+            .set({ categoryType: "DIRECT" })
+            .where(eq(kpiCategories.id, cat.id));
+          cat.categoryType = "DIRECT";
+        }
+
+        const fallbackBands = getDefaultDirectCorporateBands(cat.name);
+        const sourceBands =
+          matchedMaster?.defaultBands && Array.isArray(matchedMaster.defaultBands) && matchedMaster.defaultBands.length > 0
+            ? matchedMaster.defaultBands
+            : fallbackBands;
+
+        const maxBandScore = sourceBands.reduce(
+          (mx, b) => Math.max(mx, Number(b.score) || 0),
+          0
+        ) || 25;
+
+        const [createdParam] = await db
+          .insert(kpiParameters)
+          .values({
+            categoryId: cat.id,
+            masterParameterId: matchedMaster?.id ?? null,
+            name: matchedMaster?.name || cat.name,
+            description: matchedMaster?.description || `Penilaian langsung ${cat.name}`,
+            weight: "1.0000",
+            maxScore: String(maxBandScore),
+            inputType: (matchedMaster?.inputType as any) || "PERCENTAGE",
+            aggregation: (matchedMaster?.aggregation as any) || "AVERAGE",
+            compareBasis: (matchedMaster?.compareBasis as any) || "ACTUAL",
+            unit: matchedMaster?.unit || "%",
+            target: matchedMaster?.target || null,
+            scope: matchedMaster?.scope || "INDIVIDUAL",
+            picRole: (matchedMaster?.picRole as any) || "HEAD_DEPT",
+            sortOrder: 1,
+          })
+          .returning();
+
+        if (createdParam) {
+          for (let bIdx = 0; bIdx < sourceBands.length; bIdx++) {
+            const b = sourceBands[bIdx];
+            await db.insert(kpiBands).values({
+              parameterId: createdParam.id,
+              label: b.label || `Kriteria ${bIdx + 1}`,
+              operator: ((b.operator as any) || "GTE") as "GT" | "GTE" | "LT" | "LTE" | "EQ" | "BETWEEN" | "TEXT",
+              minValue: b.minValue !== null && b.minValue !== undefined ? String(b.minValue) : null,
+              maxValue: b.maxValue !== null && b.maxValue !== undefined ? String(b.maxValue) : null,
+              score: String(b.score ?? 25),
+              sortOrder: bIdx,
+            });
+          }
+          params = [createdParam];
+        }
+      }
+    } else if (params.length === 1 && isDirectCorpCat && cat.categoryType !== "DIRECT") {
+      await db
+        .update(kpiCategories)
+        .set({ categoryType: "DIRECT" })
+        .where(eq(kpiCategories.id, cat.id));
+      cat.categoryType = "DIRECT";
+    }
+
     for (let pIdx = 0; pIdx < params.length; pIdx++) {
       const param = params[pIdx];
       const expectedParamSort = pIdx + 1;
-      if (param.sortOrder !== expectedParamSort) {
+      const shouldFixSingleItemWeight =
+        params.length === 1 &&
+        ((cat.categoryType === "DIRECT" || isDirectCorpCat) ||
+          (cat.categoryType === "SUB_ITEMS" &&
+            Math.abs(Number(param.weight || 0) - Number(cat.weight || 0)) < 0.005)) &&
+        Math.abs(Number(param.weight || 0) - 1) > 0.0001;
+
+      if (param.sortOrder !== expectedParamSort || shouldFixSingleItemWeight) {
         await db
           .update(kpiParameters)
-          .set({ sortOrder: expectedParamSort })
+          .set({
+            sortOrder: expectedParamSort,
+            ...(shouldFixSingleItemWeight ? { weight: "1.0000" } : {}),
+          })
           .where(eq(kpiParameters.id, param.id));
       }
 
@@ -2001,6 +2333,40 @@ export async function normalizeTemplateSortOrders(templateId: number) {
         .from(kpiBands)
         .where(eq(kpiBands.parameterId, param.id))
         .orderBy(asc(kpiBands.sortOrder), asc(kpiBands.id));
+
+      // Jika kategori DIRECT memiliki 1 indikator tetapi 0 kriteria penilaian, lengkapi otomatis dari Kamus Parameter
+      if (bands.length === 0 && (cat.categoryType === "DIRECT" || isDirectCorpCat) && params.length === 1) {
+        const masters = await getCachedMasters();
+        const matchedMaster =
+          (param.masterParameterId ? masters.find((m) => m.id === param.masterParameterId) : undefined) ||
+          findMatchingDirectMasterParam(cat.name, masters, tpl?.departmentId);
+
+        const sourceBands =
+          matchedMaster?.defaultBands && Array.isArray(matchedMaster.defaultBands) && matchedMaster.defaultBands.length > 0
+            ? matchedMaster.defaultBands
+            : getDefaultDirectCorporateBands(cat.name);
+
+        for (let bIdx = 0; bIdx < sourceBands.length; bIdx++) {
+          const b = sourceBands[bIdx];
+          await db.insert(kpiBands).values({
+            parameterId: param.id,
+            label: b.label || `Kriteria ${bIdx + 1}`,
+            operator: ((b.operator as any) || "GTE") as "GT" | "GTE" | "LT" | "LTE" | "EQ" | "BETWEEN" | "TEXT",
+            minValue: b.minValue !== null && b.minValue !== undefined ? String(b.minValue) : null,
+            maxValue: b.maxValue !== null && b.maxValue !== undefined ? String(b.maxValue) : null,
+            score: String(b.score ?? 25),
+            sortOrder: bIdx,
+          });
+        }
+
+        if (!param.masterParameterId && matchedMaster?.id) {
+          await db
+            .update(kpiParameters)
+            .set({ masterParameterId: matchedMaster.id })
+            .where(eq(kpiParameters.id, param.id));
+        }
+        continue;
+      }
 
       for (let bIdx = 0; bIdx < bands.length; bIdx++) {
         const band = bands[bIdx];
@@ -2068,11 +2434,19 @@ export async function addCategory(fd: FormData) {
       | "HSE"
       | "SUPERINTENDENT";
 
+    const masterParameterId =
+      fd.has("masterParameterId") && i(fd, "masterParameterId") > 0
+        ? i(fd, "masterParameterId")
+        : null;
+    const description = s(fd, "description") || null;
+
     const [p] = await db
       .insert(kpiParameters)
       .values({
         categoryId: c.id,
+        masterParameterId,
         name,
+        description,
         weight: "1.0000",
         maxScore: "25",
         inputType,
@@ -2134,7 +2508,25 @@ export async function updateCategory(fd: FormData) {
     .from(kpiParameters)
     .where(eq(kpiParameters.categoryId, id));
 
-  const categoryType = (s(fd, "categoryType") || (existingParams.length <= 1 ? "DIRECT" : "SUB_ITEMS")) as "DIRECT" | "SUB_ITEMS";
+  const isTargetKerjaCat = name.toLowerCase().includes("target kerja");
+  const hasDistinctSubItem =
+    existingParams.length > 1 ||
+    (existingParams.length === 1 &&
+      !isDirectCorporateParameterName(name) &&
+      existingParams[0].name
+        .replace(/^\s*\d+(\.\d+)*[\.\:\s\-]+\s*/, "")
+        .trim()
+        .toLowerCase() !==
+        name
+          .replace(/^\s*\d+(\.\d+)*[\.\:\s\-]+\s*/, "")
+          .trim()
+          .toLowerCase());
+
+  const categoryType = (
+    isTargetKerjaCat || hasDistinctSubItem
+      ? "SUB_ITEMS"
+      : s(fd, "categoryType") || (existingParams.length <= 1 ? "DIRECT" : "SUB_ITEMS")
+  ) as "DIRECT" | "SUB_ITEMS";
 
   const data: Partial<typeof kpiCategories.$inferInsert> = {
     name,
@@ -2634,6 +3026,60 @@ export async function batchUpdateTemplateStructure(
       }
     }
 
+    // Validasi 115% Weight Governance terlebih dahulu jika terdapat perubahan bobot kategori/indikator
+    const hasWeightChanges =
+      (payload.categories && payload.categories.some((c) => c.weight !== undefined)) ||
+      (payload.indicators && payload.indicators.some((ind) => ind.weight !== undefined));
+
+    if (hasWeightChanges) {
+      const existingCats = await db
+        .select()
+        .from(kpiCategories)
+        .where(eq(kpiCategories.templateId, templateId))
+        .orderBy(asc(kpiCategories.sortOrder), asc(kpiCategories.id));
+      const catIds = existingCats.map((c) => c.id);
+      const existingParams = catIds.length
+        ? await db
+            .select()
+            .from(kpiParameters)
+            .where(inArray(kpiParameters.categoryId, catIds))
+            .orderBy(asc(kpiParameters.sortOrder), asc(kpiParameters.id))
+        : [];
+
+      const catUpdateMap = new Map(
+        (payload.categories || []).map((c) => [c.id, c])
+      );
+      const indUpdateMap = new Map(
+        (payload.indicators || []).map((i) => [i.id, i])
+      );
+
+      const simulatedCats = existingCats.map((cat) => {
+        const catUpd = catUpdateMap.get(cat.id);
+        const catParams = existingParams.filter((p) => p.categoryId === cat.id);
+        return {
+          name: catUpd?.name !== undefined ? catUpd.name.trim() : cat.name,
+          weight: catUpd?.weight !== undefined ? catUpd.weight / 100 : cat.weight,
+          categoryType: cat.categoryType,
+          parameters: catParams.map((p) => {
+            const pUpd = indUpdateMap.get(p.id);
+            return {
+              name: pUpd?.name !== undefined ? pUpd.name.trim() : p.name,
+              weight: pUpd?.weight !== undefined ? pUpd.weight / 100 : p.weight,
+            };
+          }),
+        };
+      });
+
+      const gov = validateTemplateWeightGovernance(simulatedCats);
+      if (!gov.isValid) {
+        return {
+          success: false,
+          count: 0,
+          error: gov.errorMessage || "Total bobot seluruh kategori wajib 115%.",
+        };
+      }
+    }
+
     if (payload.categories && payload.categories.length > 0) {
       for (const cat of payload.categories) {
         const updateData: { name?: string; weight?: string } = {};
@@ -2643,6 +3089,10 @@ export async function batchUpdateTemplateStructure(
           await db.update(kpiCategories).set(updateData).where(eq(kpiCategories.id, cat.id));
         }
       }
+      await db
+        .update(kpiTemplates)
+        .set({ totalWeight: "1.1500", updatedAt: new Date() })
+        .where(eq(kpiTemplates.id, templateId));
     }
 
     if (payload.indicators && payload.indicators.length > 0) {
@@ -2726,6 +3176,13 @@ export async function importTemplateStructure(
   mode: "REPLACE" | "APPEND" = "REPLACE",
   options?: { skipRevalidate?: boolean; tx?: any }
 ) {
+  if (mode === "REPLACE") {
+    const gov = validateTemplateWeightGovernance(categories);
+    if (!gov.isValid) {
+      throw new Error(gov.errorMessage || "Total bobot seluruh kategori pada template wajib 115%.");
+    }
+  }
+
   const client: any = options?.tx ?? db;
   const [template] = await client.select().from(kpiTemplates).where(eq(kpiTemplates.id, templateId));
   const deptId = template?.departmentId;
@@ -3151,6 +3608,14 @@ export async function createTemplateFromExcel(
   autoPublish = true,
   options?: { tx?: any }
 ) {
+  if (!categories || categories.length === 0) {
+    throw new Error("Struktur kategori template Excel tidak boleh kosong.");
+  }
+  const gov = validateTemplateWeightGovernance(categories);
+  if (!gov.isValid) {
+    throw new Error(gov.errorMessage || "Total bobot seluruh kategori pada template Excel wajib 115%.");
+  }
+
   const client: any = options?.tx ?? db;
 
   let periodId: number | null = null;
@@ -3196,10 +3661,7 @@ export async function createTemplateFromExcel(
       jobPositionId: jobPositionId || null,
       periodId,
       description: typeof periodYearOrId === "string" ? `Periode ${periodYearOrId}` : undefined,
-      totalWeight:
-        categories && categories.length > 0
-          ? categories.reduce((sum, c) => sum + Number(c.weight || 0), 0).toFixed(4)
-          : "1.0000",
+      totalWeight: "1.1500",
       isActive: autoPublish ? true : false,
       version: 1,
     })
@@ -3282,6 +3744,15 @@ export async function saveImportedMasterTemplateAction(input: {
           return { success: false, error: `Indikator "${p.name}" wajib memiliki kriteria rentang nilai (bands).` };
         }
       }
+    }
+
+    // Validasi Terpusat 115% Weight Governance sebelum membuka transaksi DB
+    const weightGov = validateTemplateWeightGovernance(input.categories);
+    if (!weightGov.isValid) {
+      return {
+        success: false,
+        error: weightGov.errorMessage || "Total bobot seluruh kategori wajib 115%.",
+      };
     }
 
     const autoPublish = input.autoPublish !== false;
@@ -4954,8 +5425,53 @@ export async function getFiveMainParametersForWizard(
     sumRawDeptWeights += weightsMap.get(p.id) ?? (1 / (deptCount || 1));
   }
 
-  const targetKerjaWeight = 0.65;
-  const targetKerjaWeightPct = 65;
+  // Resolusi bobot Parameter General (2..5) terlebih dahulu agar bobot Target Kerja dinamis menjaga total 115%
+  const kdSourcePrelim =
+    generalParams.find((p) => p.code === "GEN-KD-01") ||
+    generalParams.find(
+      (p) =>
+        (p.categoryName && p.categoryName.toLowerCase().includes("kehadiran")) ||
+        (p.name && p.name.toLowerCase().includes("kehadiran"))
+    );
+  const k3SourcePrelim =
+    generalParams.find((p) => p.code === "GEN-K3-01") ||
+    generalParams.find(
+      (p) =>
+        (p.categoryName && p.categoryName.toLowerCase().includes("keselamatan")) ||
+        (p.name && p.name.toLowerCase().includes("keselamatan"))
+    );
+  const spSourcePrelim =
+    generalParams.find((p) => p.code === "GEN-SP-01") ||
+    generalParams.find(
+      (p) =>
+        (p.categoryName && p.categoryName.toLowerCase().includes("kepatuhan")) ||
+        (p.name && p.name.toLowerCase().includes("sp"))
+    );
+  const invSourcePrelim =
+    generalParams.find((p) => p.code === "GEN-INV-01") ||
+    generalParams.find(
+      (p) =>
+        (p.categoryName && p.categoryName.toLowerCase().includes("inovasi")) ||
+        (p.name && p.name.toLowerCase().includes("inovasi"))
+    );
+
+  const resolveGenWeight = (srcId: number | undefined, defaultW: number): number => {
+    const raw = srcId ? weightsMap.get(srcId) : undefined;
+    if (raw === undefined || raw <= 0) return defaultW;
+    return raw > 1 ? raw / 100 : raw;
+  };
+
+  const prelimGeneralSum =
+    resolveGenWeight(kdSourcePrelim?.id, 0.20) +
+    resolveGenWeight(k3SourcePrelim?.id, 0.10) +
+    resolveGenWeight(spSourcePrelim?.id, 0.10) +
+    resolveGenWeight(invSourcePrelim?.id, 0.10);
+
+  const computedTargetKerjaWeight = Number(
+    Math.max(0.05, MANDATORY_TOTAL_WEIGHT_FRAC - prelimGeneralSum).toFixed(4)
+  );
+  const targetKerjaWeight = computedTargetKerjaWeight;
+  const targetKerjaWeightPct = Math.round(targetKerjaWeight * 100);
 
   for (const p of deptParams) {
     const rawW = weightsMap.get(p.id) ?? (1 / (deptCount || 1));
@@ -5251,6 +5767,7 @@ function sanitizeScoringBands(rawBands: unknown): SanitizedBand[] | null {
 
 // ---------- MASTER PARAMETERS (KAMUS INDIKATOR KPI) ACTIONS ----------
 export async function getMasterParameters(deptId?: number | null, includeInactive = false) {
+  await ensureMasterParameterTypeColumn();
   const conditions = [];
   if (!includeInactive) {
     conditions.push(eq(masterParameters.isActive, true));
@@ -5268,6 +5785,7 @@ export async function getMasterParameters(deptId?: number | null, includeInactiv
       departmentId: masterParameters.departmentId,
       departmentName: departments.name,
       categoryName: masterParameters.categoryName,
+      parameterType: masterParameters.parameterType,
       scope: masterParameters.scope,
       unit: masterParameters.unit,
       target: masterParameters.target,
@@ -5284,12 +5802,24 @@ export async function getMasterParameters(deptId?: number | null, includeInactiv
     .from(masterParameters)
     .leftJoin(departments, eq(masterParameters.departmentId, departments.id));
 
-  return conditions.length > 0
+  const rows = conditions.length > 0
     ? await query.where(and(...conditions)).orderBy(asc(masterParameters.code), asc(masterParameters.name))
     : await query.orderBy(asc(masterParameters.code), asc(masterParameters.name));
+
+  return rows.map((r) => ({
+    ...r,
+    parameterType: resolveDefaultParameterType({
+      name: r.name,
+      categoryName: r.categoryName,
+      departmentId: r.departmentId,
+      code: r.code,
+      parameterType: r.parameterType,
+    }),
+  }));
 }
 
 export async function createMasterParameter(fd: FormData) {
+  await ensureMasterParameterTypeColumn();
   const name = s(fd, "name").trim();
   if (!name) throw new Error("Nama indikator parameter wajib diisi!");
 
@@ -5344,6 +5874,20 @@ export async function createMasterParameter(fd: FormData) {
     }
   }
 
+  const rawParamType = s(fd, "parameterType").toUpperCase().trim();
+  const resolvedParamType =
+    rawParamType === "DIRECT" || rawParamType === "SUB_ITEMS"
+      ? rawParamType
+      : resolveDefaultParameterType({
+          name,
+          categoryName: s(fd, "categoryName") || (isGeneral ? name : "Target Kerja"),
+          departmentId: deptId,
+          code,
+        });
+
+  const resolvedCategoryName =
+    s(fd, "categoryName") || (resolvedParamType === "DIRECT" ? name : "Target Kerja");
+
   const [created] = await db
     .insert(masterParameters)
     .values({
@@ -5351,7 +5895,8 @@ export async function createMasterParameter(fd: FormData) {
       name,
       description: s(fd, "description") || null,
       departmentId: deptId,
-      categoryName: s(fd, "categoryName") || null,
+      categoryName: resolvedCategoryName,
+      parameterType: resolvedParamType,
       scope: fd.has("scope") && s(fd, "scope")
         ? ((s(fd, "scope")).toUpperCase() === "DEPARTMENT" ? "DEPARTMENT" : "INDIVIDUAL")
         : (deptId ? "DEPARTMENT" : "INDIVIDUAL"),
@@ -5373,6 +5918,7 @@ export async function createMasterParameter(fd: FormData) {
 }
 
 export async function updateMasterParameter(fd: FormData) {
+  await ensureMasterParameterTypeColumn();
   const id = i(fd, "id");
   const name = s(fd, "name").trim();
   if (!name) throw new Error("Nama indikator parameter wajib diisi!");
@@ -5425,12 +5971,26 @@ export async function updateMasterParameter(fd: FormData) {
     }
   }
 
+  const rawParamType = s(fd, "parameterType").toUpperCase().trim();
+  const resolvedParamType =
+    rawParamType === "DIRECT" || rawParamType === "SUB_ITEMS"
+      ? rawParamType
+      : resolveDefaultParameterType({
+          name,
+          categoryName: s(fd, "categoryName") || (deptId === null ? name : "Target Kerja"),
+          departmentId: deptId,
+          code: s(fd, "code") || undefined,
+        });
+
   const data: Partial<typeof masterParameters.$inferInsert> = {
     name,
     code: s(fd, "code") || undefined,
     description: fd.has("description") ? (s(fd, "description") || null) : undefined,
     departmentId: deptId,
-    categoryName: fd.has("categoryName") ? (s(fd, "categoryName") || null) : undefined,
+    categoryName: fd.has("categoryName")
+      ? (s(fd, "categoryName") || (resolvedParamType === "DIRECT" ? name : "Target Kerja"))
+      : (resolvedParamType === "DIRECT" ? name : undefined),
+    parameterType: resolvedParamType,
     scope: fd.has("scope") ? ((s(fd, "scope") || "INDIVIDUAL").toUpperCase() === "DEPARTMENT" ? "DEPARTMENT" : "INDIVIDUAL") : undefined,
     unit: fd.has("unit") ? (s(fd, "unit") || "%") : undefined,
     target: fd.has("target") ? (s(fd, "target") || null) : undefined,
@@ -5561,12 +6121,19 @@ export async function importMasterParametersBulk(
       if (duplicateMode === "RENAME" && trimmedCode && existing.code === trimmedCode) {
         // Mode RENAME: Buat parameter baru dengan kode baru terpisah
         const newCode = await generateMasterParamCode(targetDeptId);
+        const paramType = resolveDefaultParameterType({
+          name: trimmedName,
+          categoryName: it.categoryName,
+          departmentId: targetDeptId,
+          code: newCode,
+        });
         await db.insert(masterParameters).values({
           code: newCode,
           name: trimmedName,
           description: it.description || null,
           departmentId: targetDeptId,
-          categoryName: it.categoryName || null,
+          categoryName: it.categoryName || (paramType === "DIRECT" ? trimmedName : "Target Kerja"),
+          parameterType: paramType,
           unit: it.unit || "%",
           inputType: normalizedInputType,
           aggregation: normalizedAggregation,
@@ -5580,6 +6147,13 @@ export async function importMasterParametersBulk(
       }
 
       // Mode UPDATE (default): Perbarui data master parameter eksisting
+      const updatedParamType = resolveDefaultParameterType({
+        name: trimmedName,
+        categoryName: it.categoryName ?? existing.categoryName,
+        departmentId: targetDeptId,
+        code: existing.code,
+        parameterType: (existing as any).parameterType,
+      });
       await db
         .update(masterParameters)
         .set({
@@ -5587,6 +6161,7 @@ export async function importMasterParametersBulk(
           departmentId: targetDeptId,
           description: it.description ?? existing.description,
           categoryName: it.categoryName ?? existing.categoryName,
+          parameterType: updatedParamType,
           unit: it.unit ?? existing.unit,
           inputType: normalizedInputType,
           aggregation: normalizedAggregation,
@@ -5630,12 +6205,20 @@ export async function importMasterParametersBulk(
         }
       }
 
+      const paramType = resolveDefaultParameterType({
+        name: trimmedName,
+        categoryName: it.categoryName,
+        departmentId: targetDeptId,
+        code: finalCode,
+      });
+
       await db.insert(masterParameters).values({
         code: finalCode,
         name: trimmedName,
         description: it.description || null,
         departmentId: targetDeptId,
-        categoryName: it.categoryName || null,
+        categoryName: it.categoryName || (paramType === "DIRECT" ? trimmedName : "Target Kerja"),
+        parameterType: paramType,
         scope: targetDeptId ? "DEPARTMENT" : "INDIVIDUAL",
         unit: it.unit || "%",
         inputType: normalizedInputType,
@@ -5786,6 +6369,12 @@ export async function resetAndSyncMasterParametersFromTemplatesAction() {
         description: item.description,
         departmentId: item.departmentId,
         categoryName: item.categoryName,
+        parameterType: resolveDefaultParameterType({
+          name: item.name,
+          categoryName: item.categoryName,
+          departmentId: item.departmentId,
+          code,
+        }),
         scope: item.departmentId ? "DEPARTMENT" : "INDIVIDUAL",
         unit: item.unit,
         inputType: item.inputType,
@@ -6141,6 +6730,14 @@ export async function setAppraisalStatus(fd: FormData) {
 export async function reassignTemplate(fd: FormData) {
   const id = i(fd, "id");
   const templateId = i(fd, "templateId") || null;
+  if (templateId) {
+    const gov = await validateDbTemplateWeights(templateId);
+    if (!gov.isValid) {
+      throw new Error(
+        `Template tidak dapat digunakan untuk Form KPI karena konfigurasi bobot tidak valid:\n${gov.errorMessage}`
+      );
+    }
+  }
   await db.update(appraisals).set({ templateId }).where(eq(appraisals.id, id));
   await db.delete(appraisalItems).where(eq(appraisalItems.appraisalId, id));
   if (templateId) {
@@ -6196,6 +6793,13 @@ export async function createSingleAppraisal(fd: FormData) {
   if (!employeeId) throw new Error("Karyawan wajib dipilih!");
   if (!periodId) throw new Error("Periode KPI wajib dipilih!");
   if (!templateId) throw new Error("Template KPI wajib dipilih!");
+
+  const gov = await validateDbTemplateWeights(templateId);
+  if (!gov.isValid) {
+    throw new Error(
+      `Form KPI tidak dapat dibuat karena total bobot template tidak valid:\n${gov.errorMessage}`
+    );
+  }
 
   const [e] = await db.select().from(employees).where(eq(employees.id, employeeId));
   const [period] = await db.select().from(kpiPeriods).where(eq(kpiPeriods.id, periodId));
@@ -6454,6 +7058,13 @@ export async function assignTemplateToEmployees(fd: FormData) {
   if (!templateId) throw new Error("Template KPI wajib dipilih!");
   if (!periodId) throw new Error("Periode KPI wajib dipilih!");
   if (employeeIds.length === 0) throw new Error("Pilih minimal satu karyawan untuk ditugaskan!");
+
+  const gov = await validateDbTemplateWeights(templateId);
+  if (!gov.isValid) {
+    throw new Error(
+      `Template tidak dapat ditugaskan ke karyawan karena total bobot tidak valid:\n${gov.errorMessage}`
+    );
+  }
 
   const [period] = await db.select().from(kpiPeriods).where(eq(kpiPeriods.id, periodId));
   if (!period) throw new Error("Periode KPI tidak ditemukan!");
@@ -6714,6 +7325,20 @@ export async function createCustomKpiAction(data: {
   const [baseTpl] = await db.select().from(kpiTemplates).where(eq(kpiTemplates.id, data.baseTemplateId));
   if (!baseTpl) throw new Error("Template Dasar tidak ditemukan!");
 
+  if (data.categories && data.categories.length > 0) {
+    const gov = validateTemplateWeightGovernance(data.categories);
+    if (!gov.isValid) {
+      throw new Error(gov.errorMessage || "Total bobot Custom KPI wajib 115%.");
+    }
+  } else {
+    const baseGov = await validateDbTemplateWeights(data.baseTemplateId);
+    if (!baseGov.isValid) {
+      throw new Error(
+        `Template Dasar "${baseTpl.name}" tidak valid:\n${baseGov.errorMessage}`
+      );
+    }
+  }
+
   // Insert custom template
   const [newTpl] = await db
     .insert(kpiTemplates)
@@ -6723,7 +7348,7 @@ export async function createCustomKpiAction(data: {
       jobLevelId: data.jobLevelId,
       baseTemplateId: data.baseTemplateId,
       isCustom: true,
-      totalWeight: data.totalWeight ? String(data.totalWeight) : baseTpl.totalWeight,
+      totalWeight: "1.1500",
       version: 1,
       isActive: true,
     })
@@ -6858,13 +7483,25 @@ export async function updateCustomKpiAction(data: {
   const [existing] = await db.select().from(kpiTemplates).where(eq(kpiTemplates.id, data.id));
   if (!existing) throw new Error("Custom KPI tidak ditemukan!");
 
+  if (data.categories && data.categories.length > 0) {
+    const gov = validateTemplateWeightGovernance(data.categories);
+    if (!gov.isValid) {
+      throw new Error(gov.errorMessage || "Total bobot Custom KPI wajib 115%.");
+    }
+  } else if (data.isActive) {
+    const existingGov = await validateDbTemplateWeights(data.id);
+    if (!existingGov.isValid) {
+      throw new Error(existingGov.errorMessage || "Total bobot Custom KPI wajib 115%.");
+    }
+  }
+
   await db
     .update(kpiTemplates)
     .set({
       name: data.name.trim(),
       departmentId: data.departmentId,
       jobLevelId: data.jobLevelId,
-      totalWeight: data.totalWeight ? String(data.totalWeight) : existing.totalWeight,
+      totalWeight: "1.1500",
       isActive: data.isActive !== undefined ? data.isActive : existing.isActive,
       updatedAt: new Date(),
     })
@@ -6940,7 +7577,13 @@ export async function toggleArchiveCustomKpiAction(id: number) {
   const [tpl] = await db.select().from(kpiTemplates).where(eq(kpiTemplates.id, id));
   if (!tpl) throw new Error("Template tidak ditemukan!");
   const newStatus = !tpl.isActive;
-  await db.update(kpiTemplates).set({ isActive: newStatus, updatedAt: new Date() }).where(eq(kpiTemplates.id, id));
+  if (newStatus) {
+    const gov = await validateDbTemplateWeights(id);
+    if (!gov.isValid) {
+      throw new Error(gov.errorMessage || "Template tidak dapat diaktifkan karena total bobot tidak sama dengan 115%.");
+    }
+  }
+  await db.update(kpiTemplates).set({ isActive: newStatus, totalWeight: "1.1500", updatedAt: new Date() }).where(eq(kpiTemplates.id, id));
   await audit("template", id, newStatus ? "ACTIVATE" : "ARCHIVE");
   safeRevalidate("/setup/custom-kpi");
   safeRevalidate("/setup/templates");
@@ -6952,6 +7595,12 @@ export async function toggleArchiveCustomKpiAction(id: number) {
 export async function duplicateCustomKpiAction(id: number) {
   const [src] = await db.select().from(kpiTemplates).where(eq(kpiTemplates.id, id));
   if (!src) throw new Error("Template tidak ditemukan!");
+  const gov = await validateDbTemplateWeights(id);
+  if (!gov.isValid) {
+    throw new Error(
+      `Template sumber "${src.name}" tidak dapat diduplikat karena total bobot belum valid:\n${gov.errorMessage}`
+    );
+  }
   const [newTpl] = await db
     .insert(kpiTemplates)
     .values({
@@ -6960,7 +7609,7 @@ export async function duplicateCustomKpiAction(id: number) {
       jobLevelId: src.jobLevelId,
       baseTemplateId: src.baseTemplateId || src.id,
       isCustom: true,
-      totalWeight: src.totalWeight,
+      totalWeight: "1.1500",
       version: 1,
       isActive: true,
     })
@@ -7119,9 +7768,15 @@ export async function toggleArchiveTemplateAction(id: number) {
   const [tpl] = await db.select().from(kpiTemplates).where(eq(kpiTemplates.id, id));
   if (!tpl) throw new Error("Template tidak ditemukan!");
   const newStatus = !tpl.isActive;
+  if (newStatus) {
+    const gov = await validateDbTemplateWeights(id);
+    if (!gov.isValid) {
+      throw new Error(gov.errorMessage || "Template tidak dapat diaktifkan karena total bobot tidak sama dengan 115%.");
+    }
+  }
   await db
     .update(kpiTemplates)
-    .set({ isActive: newStatus, updatedAt: new Date() })
+    .set({ isActive: newStatus, totalWeight: "1.1500", updatedAt: new Date() })
     .where(eq(kpiTemplates.id, id));
   await audit("template", id, newStatus ? "ACTIVATE" : "ARCHIVE");
   safeRevalidate("/setup/templates");
@@ -7139,6 +7794,14 @@ export async function syncTemplateToEmployeeAppraisalsAction(templateId: number)
     const [tpl] = await db.select().from(kpiTemplates).where(eq(kpiTemplates.id, templateId));
     if (!tpl) {
       return { success: false, error: "Master Template KPI tidak ditemukan." };
+    }
+
+    const gov = await validateDbTemplateWeights(templateId);
+    if (!gov.isValid) {
+      return {
+        success: false,
+        error: gov.errorMessage || "Total bobot Master Template wajib 115% sebelum dapat disinkronkan ke penilaian karyawan.",
+      };
     }
 
     // 1. Ambil kategori, parameter, dan kriteria band terbaru dari master template

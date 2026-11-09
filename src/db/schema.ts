@@ -413,6 +413,7 @@ export const masterParameters = pgTable("master_parameters", {
   description: text("description"),
   departmentId: integer("department_id").references(() => departments.id, { onDelete: "set null" }), // null = UMUM / CORPORATE
   categoryName: text("category_name"), // e.g. "Target Kerja", "Kehadiran & Disiplin"
+  parameterType: text("parameter_type").notNull().default("SUB_ITEMS"), // "DIRECT" | "SUB_ITEMS"
   scope: text("scope").notNull().default("INDIVIDUAL"), // "INDIVIDUAL" | "DEPARTMENT"
   unit: text("unit").default("%"),
   target: text("target"),

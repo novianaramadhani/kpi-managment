@@ -3,6 +3,12 @@ import * as XLSXStyle from "xlsx-js-style";
 import JSZip from "jszip";
 import { formatCriteriaExcel, createGuideRows, parseConditionString } from "./excel-template-kpi";
 import { cleanTemplateEmployeeName } from "./master-employee-matcher";
+import {
+  performanceActionOf,
+  buildExcelGradeFormula,
+  buildExcelPredicateFormula,
+  buildExcelGradeWithPredicateFormula,
+} from "./scoring";
 
 // =============================================================================
 // TYPES & DATA STRUCTURES FOR CORPORATE KPI (2-FORM FORMAT: Penilaian & Actual)
@@ -918,10 +924,11 @@ function renderEmployeeIdentityHeader(
 
   // Both sheets share identical column placement:
   // Col A: Left Label | Cols B..E: Left Value | Col F: Right Label | Cols G..End: Right Value
+  // On Form Penilaian (12 cols), Cols G..I hold Departemen/Job Position/Job Level and Cols J..L hold Total Nilai / Grade / Predikat
   const leftValEnd = 4; // Col E
   const rightLabelCol = 5; // Col F
   const rightValStart = 6; // Col G
-  const rightValEnd = totalCols - 1;
+  const rightValEnd = totalCols === 12 ? 8 : totalCols - 1; // Col I when 12 cols, else end
 
   // Row 2: Nama Karyawan & Departemen
   setCell(2, 0, { t: "s", v: "Nama Karyawan:", s: styleIdentityLabel });
@@ -1335,6 +1342,8 @@ export function buildFormPenilaianWorksheet(
 
   // 3. Data Rows (Starts Row 7, Excel 8)
   let currentR = 7;
+  const catWeightCellRefs: string[] = [];
+  const catWeightFracs: number[] = [];
   const sortedCategories = [...data.categories].sort(
     (a, b) => a.number - b.number || a.name.localeCompare(b.name)
   );
@@ -1342,6 +1351,7 @@ export function buildFormPenilaianWorksheet(
   sortedCategories.forEach((cat) => {
     const catWeightFrac = cat.weight > 1 ? cat.weight / 100 : cat.weight;
     const catWeightPct = Math.round(catWeightFrac * 100);
+    catWeightFracs.push(catWeightFrac);
 
     // Category Separator Bar
     const catTitle = `${cat.number}. ${cat.name.toUpperCase()} (${catWeightPct}%)`;
@@ -1352,11 +1362,18 @@ export function buildFormPenilaianWorksheet(
     currentR++;
 
     const hasSubIndicators = cat.indicators.length > 1;
+    let catFirstExcelR1 = currentR + 1;
 
     cat.indicators.forEach((ind, indIdx) => {
       const noStr = hasSubIndicators ? `${cat.number}.${indIdx + 1}` : `${cat.number}`;
       const indKey = ind.id ?? `${cat.number}_${indIdx}`;
-      const indWeightFrac = ind.weight > 1 ? ind.weight / 100 : ind.weight;
+      const rawIndWeightFrac = ind.weight > 1 ? ind.weight / 100 : ind.weight;
+      // Untuk indikator tunggal tanpa sub-indikator, bobot indikator di dalam kategori adalah 100% (1.0)
+      const indWeightFrac =
+        !hasSubIndicators &&
+        (rawIndWeightFrac === 0 || Math.abs(rawIndWeightFrac - catWeightFrac) < 0.0001)
+          ? 1
+          : rawIndWeightFrac || 1;
 
       // Find the row number of this indicator's Target & Actual row in Form Realisasi Actual
       const actRowExcel = indicatorActualRowMap.get(indKey) || currentR + 1;
@@ -1394,6 +1411,10 @@ export function buildFormPenilaianWorksheet(
       const hasInitialScore = typeof ind.score === "number" && !isNaN(ind.score);
 
       const excelR1 = currentR + 1; // 1-indexed row number
+      if (indIdx === 0) {
+        catFirstExcelR1 = excelR1;
+        catWeightCellRefs.push(`C${excelR1}`);
+      }
       const escapedSheetName = actualSheetName.includes(" ") ? `'${actualSheetName}'` : actualSheetName;
       const actualCellRef = `${escapedSheetName}!S${actRowExcel}`;
 
@@ -1456,16 +1477,13 @@ export function buildFormPenilaianWorksheet(
         s: styleScoreCell,
       });
 
-      // Col K (10): Nilai Akhir = (Skor Aktual / Skor Maksimal) * Bobot
-      // Jika memiliki subindikator -> pakai Bobot Indikator (Col E)
-      // Jika parameter tunggal -> pakai Bobot Parameter (Col C)
-      const weightCellRef = hasSubIndicators ? `E${excelR1}` : `C${excelR1}`;
-      const weightFrac = hasSubIndicators ? indWeightFrac : catWeightFrac;
+      // Col K (10): Nilai Akhir = (Skor Aktual / Skor Maksimal) * Bobot Indikator * Bobot Kategori
+      const combinedWeightFrac = indWeightFrac * catWeightFrac;
 
       nilaiAkhirCellRefs.push(`K${excelR1}`);
       const precalcNilaiAkhir =
         hasInitialScore
-          ? parseFloat(((Number(ind.score) / topBandScore) * weightFrac).toFixed(4))
+          ? parseFloat(((Number(ind.score) / maxScoreVal) * combinedWeightFrac).toFixed(4))
           : "";
       if (typeof precalcNilaiAkhir === "number") {
         precalculatedNilaiAkhirList.push(precalcNilaiAkhir);
@@ -1473,7 +1491,7 @@ export function buildFormPenilaianWorksheet(
 
       setCell(currentR, 10, {
         t: hasInitialScore && precalcNilaiAkhir !== "" ? "n" : "s",
-        f: `IF(OR(H${excelR1}="",ISBLANK(H${excelR1})),"",(H${excelR1}/${topBandScore})*${weightCellRef})`,
+        f: `IF(OR(H${excelR1}="",ISBLANK(H${excelR1})),"",(H${excelR1}/${maxScoreVal})*E${excelR1}*$C$${catFirstExcelR1})`,
         v: hasInitialScore ? precalcNilaiAkhir : "",
         z: "0.0%",
         s: styleCellBoldCenter,
@@ -1539,15 +1557,22 @@ export function buildFormPenilaianWorksheet(
   });
 
   // 4. TOTAL ROW AT BOTTOM
+  const totalRowExcel = currentR + 1;
   setCell(currentR, 0, { t: "s", v: "TOTAL", s: styleTableHeaderTotal });
   setCell(currentR, 1, { t: "s", v: "", s: styleTableHeaderTotal });
   merges.push({ s: { r: currentR, c: 0 }, e: { r: currentR, c: 1 } });
 
-  // Total Target Weight (e.g. 115%)
-  const totalTargetWeightFrac = data.totalTargetWeight || 1.15;
+  // Total Target Weight (Dynamic SUM of Category Weights, e.g. 115%)
+  const computedTotalWeightFrac =
+    catWeightFracs.length > 0
+      ? parseFloat(catWeightFracs.reduce((acc, w) => acc + w, 0).toFixed(4))
+      : data.totalTargetWeight || 1.15;
+  const totalWeightFormula =
+    catWeightCellRefs.length > 0 ? `SUM(${catWeightCellRefs.join(",")})` : undefined;
   setCell(currentR, 2, {
     t: "n",
-    v: totalTargetWeightFrac,
+    ...(totalWeightFormula ? { f: totalWeightFormula } : {}),
+    v: computedTotalWeightFrac,
     z: "0%",
     s: styleTableHeaderTotal,
   });
@@ -1572,7 +1597,53 @@ export function buildFormPenilaianWorksheet(
     s: styleTableHeaderTotal,
   });
 
-  setCell(currentR, 11, { t: "s", v: "", s: styleTableHeaderTotal });
+  // Dynamic Grade & Predicate Formula in Total Row (Col L)
+  const totalCellRef = `K${totalRowExcel}`;
+  const precalcPerf =
+    typeof totalMatrixScore === "number"
+      ? performanceActionOf(Number((totalMatrixScore * 100).toFixed(2)))
+      : null;
+  const precalcTotalGradeLabel = precalcPerf ? `Grade ${precalcPerf.grade} (${precalcPerf.label})` : "";
+
+  setCell(currentR, 11, {
+    t: "s",
+    f: buildExcelGradeWithPredicateFormula(totalCellRef, '""'),
+    v: precalcTotalGradeLabel,
+    s: styleTableHeaderTotal,
+  });
+
+  // Dynamic Total Nilai, Grade, and Predicate Formulas in Form KPI Header (Rows 2, 3, 4 Cols J..L)
+  setCell(2, 9, { t: "s", v: "Total Nilai KPI:", s: styleIdentityLabel });
+  setCell(2, 10, {
+    t: totalMatrixScore !== "" ? "n" : "s",
+    f: `IF(OR(${totalCellRef}="",ISBLANK(${totalCellRef})),"",${totalCellRef})`,
+    v: totalMatrixScore,
+    z: "0.0%",
+    s: styleIdentityValue,
+  });
+  merges.push({ s: { r: 2, c: 10 }, e: { r: 2, c: 11 } });
+  fillEmptyRange(2, 10, 11, styleIdentityValue);
+
+  setCell(3, 9, { t: "s", v: "Grade:", s: styleIdentityLabel });
+  setCell(3, 10, {
+    t: "s",
+    f: buildExcelGradeFormula(totalCellRef, '"-"'),
+    v: precalcPerf ? precalcPerf.grade : "-",
+    s: styleIdentityValue,
+  });
+  merges.push({ s: { r: 3, c: 10 }, e: { r: 3, c: 11 } });
+  fillEmptyRange(3, 10, 11, styleIdentityValue);
+
+  setCell(4, 9, { t: "s", v: "Predikat:", s: styleIdentityLabel });
+  setCell(4, 10, {
+    t: "s",
+    f: buildExcelPredicateFormula(totalCellRef, '"-"'),
+    v: precalcPerf ? precalcPerf.label : "-",
+    s: styleIdentityValue,
+  });
+  merges.push({ s: { r: 4, c: 10 }, e: { r: 4, c: 11 } });
+  fillEmptyRange(4, 10, 11, styleIdentityValue);
+
   rowsHeight[currentR] = { hpt: 24 };
   currentR++;
 

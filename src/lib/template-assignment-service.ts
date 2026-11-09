@@ -16,7 +16,7 @@ import {
   auditLogs,
 } from "@/db/schema";
 import { and, eq, inArray, sql, asc, desc, lte, gte, isNotNull, isNull, or } from "drizzle-orm";
-import { tenureMonths } from "./scoring";
+import { tenureMonths, validateTemplateWeightGovernance } from "./scoring";
 import { revalidatePath } from "next/cache";
 import { resolveTemplateMasterEmployee } from "./master-employee-resolver";
 
@@ -610,6 +610,25 @@ export async function saveTemplateAssignmentDrawerData(params: {
     ? await db.select().from(kpiParameters).where(inArray(kpiParameters.categoryId, catIds)).orderBy(asc(kpiParameters.sortOrder))
     : [];
   const paramIds = paramsList.map((p) => p.id);
+
+  // Validasi 115% Weight Governance sebelum membuat/memperbarui Form KPI karyawan
+  if (scope === "ALL" || scope === "EMPLOYEES") {
+    const gov = validateTemplateWeightGovernance(
+      cats.map((c) => ({
+        name: c.name,
+        weight: c.weight,
+        categoryType: c.categoryType,
+        parameters: paramsList
+          .filter((p) => p.categoryId === c.id)
+          .map((p) => ({ name: p.name, weight: p.weight })),
+      }))
+    );
+    if (!gov.isValid) {
+      throw new Error(
+        `Template "${tpl.name}" tidak dapat ditugaskan karena konfigurasi bobot tidak valid:\n${gov.errorMessage}`
+      );
+    }
+  }
 
   const bandsList = paramIds.length > 0
     ? await db.select().from(kpiBands).where(inArray(kpiBands.parameterId, paramIds)).orderBy(asc(kpiBands.sortOrder), asc(kpiBands.id))

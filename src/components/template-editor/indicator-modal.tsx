@@ -180,22 +180,45 @@ export function IndicatorModal({
   const [isSaving, setIsSaving] = useState(false);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
 
-  // Kamus Master Parameters per Department
+  // Kamus Master Parameters per Department (Filter agar di dalam modal sub-indikator hanya menampilkan item sub-indikator, bukan nama kelompok/Target Kerja atau Parameter Langsung)
   const currentDeptId = department?.id ?? null;
+  const cleanCategoryTitle = stripIndicatorPrefix(categoryName || "").toLowerCase();
+  const isSelectableSubIndicator = React.useCallback(
+    (p: MasterParamItem) => {
+      if (!isDirectCategory) {
+        const cleanParamName = stripIndicatorPrefix(p.name).toLowerCase();
+        if (cleanParamName === cleanCategoryTitle || cleanParamName === "target kerja") {
+          return false;
+        }
+        if ((p as any).parameterType === "DIRECT") {
+          return false;
+        }
+      }
+      return true;
+    },
+    [isDirectCategory, cleanCategoryTitle]
+  );
+
   const deptMasterParams = React.useMemo(() => {
     if (!currentDeptId) return [];
-    return masterParams.filter((p) => p.departmentId === currentDeptId);
-  }, [masterParams, currentDeptId]);
+    return masterParams.filter(
+      (p) => p.departmentId === currentDeptId && isSelectableSubIndicator(p)
+    );
+  }, [masterParams, currentDeptId, isSelectableSubIndicator]);
 
   const generalMasterParams = React.useMemo(() => {
-    return masterParams.filter((p) => !p.departmentId);
-  }, [masterParams]);
+    return masterParams.filter(
+      (p) => !p.departmentId && isSelectableSubIndicator(p)
+    );
+  }, [masterParams, isSelectableSubIndicator]);
 
   const allRelevantMasterParams = React.useMemo(() => {
     return masterParams.filter(
-      (p) => !p.departmentId || (currentDeptId && p.departmentId === currentDeptId)
+      (p) =>
+        (!p.departmentId || (currentDeptId && p.departmentId === currentDeptId)) &&
+        isSelectableSubIndicator(p)
     );
-  }, [masterParams, currentDeptId]);
+  }, [masterParams, currentDeptId, isSelectableSubIndicator]);
 
   // Master KPI Configuration from API
   const [configMeasurementTypes, setConfigMeasurementTypes] = useState<KpiMeasurementType[]>([]);
@@ -376,7 +399,15 @@ export function IndicatorModal({
       if (editingIndicator) {
         setName(stripIndicatorPrefix(editingIndicator.name || ""));
         setDescription(editingIndicator.description || "");
-        setWeight(String(Math.round(Number(editingIndicator.weight) * 100) || 20));
+        const rawWeightPct = Math.round(Number(editingIndicator.weight) * 100) || 20;
+        const effectiveWeightPct =
+          hasMultipleSubIndicators &&
+          categoryWeight !== undefined &&
+          rawWeightPct === Number(categoryWeight) &&
+          indicatorCode?.endsWith(".1")
+            ? 100
+            : rawWeightPct;
+        setWeight(String(effectiveWeightPct));
 
         const mt =
           editingIndicator.measurementType ||
@@ -451,7 +482,15 @@ export function IndicatorModal({
       } else {
         setName("");
         setDescription("");
-        setWeight(categoryWeight !== undefined && categoryWeight !== null ? String(categoryWeight) : "20");
+        setWeight(
+          hasMultipleSubIndicators
+            ? indicatorCode?.endsWith(".1")
+              ? "100"
+              : "20"
+            : categoryWeight !== undefined && categoryWeight !== null
+            ? String(categoryWeight)
+            : "20"
+        );
         const defaultMt = configMeasurementTypes[0]?.code || "PERCENTAGE";
         const isInitText = defaultMt === "TEXT";
         const defaultUnit = isInitText

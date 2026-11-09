@@ -260,9 +260,16 @@ export async function GET(req: Request) {
       v: row.statusLabel || "Final",
       s: styleStatusCell(row.statusLabel || "Final", isEven),
     });
+    const hasNumericScore =
+      row.finalScore !== null &&
+      row.finalScore !== undefined &&
+      !isNaN(Number(row.finalScore));
+    const scoreFracVal = hasNumericScore ? parseFloat(Number(row.finalScore).toFixed(4)) : null;
+
     setCell(rIdx, 11, {
-      t: "s",
-      v: row.scoreFormatted || "-",
+      t: scoreFracVal !== null ? "n" : "s",
+      v: scoreFracVal !== null ? scoreFracVal : "-",
+      z: scoreFracVal !== null ? "0.0%" : undefined,
       s: styleScoreCell(isEven),
     });
     setCell(rIdx, 12, { t: "s", v: "", s: styleCellCenter(isEven) });
@@ -276,8 +283,13 @@ export async function GET(req: Request) {
   const summaryRowIdx = 4 + filteredRows.length;
   rowsHeight[summaryRowIdx] = { hpt: 24 };
 
-  const avgScoreFormatted =
-    scoredCount > 0 ? `${(scoreSum / scoredCount).toFixed(1)}%` : "-";
+  const avgScoreFrac =
+    scoredCount > 0 ? parseFloat((scoreSum / scoredCount / 100).toFixed(4)) : null;
+  const lastDataRowExcel = 4 + filteredRows.length;
+  const avgFormula =
+    filteredRows.length > 0
+      ? `IF(COUNT(L5:L${lastDataRowExcel})=0,"",AVERAGE(L5:L${lastDataRowExcel}))`
+      : undefined;
 
   setCell(summaryRowIdx, 0, {
     t: "s",
@@ -288,12 +300,22 @@ export async function GET(req: Request) {
   fillRowRange(summaryRowIdx, 0, 10, styleSummaryLabel);
 
   setCell(summaryRowIdx, 11, {
-    t: "s",
-    v: avgScoreFormatted,
+    t: avgScoreFrac !== null ? "n" : "s",
+    ...(avgFormula ? { f: avgFormula } : {}),
+    v: avgScoreFrac !== null ? avgScoreFrac : "-",
+    z: "0.0%",
     s: styleSummaryScore,
   });
 
-  fillRowRange(summaryRowIdx, 12, TOTAL_COLS - 1, styleSummaryEmpty);
+  const summaryScoreCellRef = `L${summaryRowIdx + 1}`;
+  setCell(summaryRowIdx, 12, {
+    t: "s",
+    f: `IF(OR(${summaryScoreCellRef}="",ISBLANK(${summaryScoreCellRef}),${summaryScoreCellRef}="-"),"",IF(ROUND(${summaryScoreCellRef},4)>=0.9,"Grade A (Outstanding)",IF(ROUND(${summaryScoreCellRef},4)>=0.8,"Grade B (Exceeds Expectations)",IF(ROUND(${summaryScoreCellRef},4)>=0.7,"Grade C (Meets Expectations)",IF(ROUND(${summaryScoreCellRef},4)>=0.6,"Grade D (Needs Improvement)","Grade E (Unsatisfactory)")))))`,
+    v: "",
+    s: styleSummaryScore,
+  });
+
+  fillRowRange(summaryRowIdx, 13, TOTAL_COLS - 1, styleSummaryEmpty);
 
   // Pasang metadata spreadsheet
   ws["!ref"] = XLSXStyle.utils.encode_range({

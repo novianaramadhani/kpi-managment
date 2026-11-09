@@ -9,7 +9,7 @@ import {
   BookOpen,
   Plus,
 } from "lucide-react";
-import type { MasterParamItem } from "@/lib/excel-template-kpi";
+import { resolveDefaultParameterType, type MasterParamItem } from "@/lib/excel-template-kpi";
 
 interface MasterParameterPickerModalProps {
   isOpen: boolean;
@@ -206,7 +206,17 @@ export function MasterParameterPickerModal({
                         </span>
                       )}
 
-                      {p.categoryName && (
+                      {resolveDefaultParameterType(p) === "DIRECT" ? (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal-50 text-teal-800 border border-teal-200">
+                          Parameter Langsung
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                          Sub-Indikator
+                        </span>
+                      )}
+
+                      {p.categoryName && resolveDefaultParameterType(p) !== "DIRECT" && (
                         <span className="text-[10px] text-slate-400 font-medium">
                           • {p.categoryName}
                         </span>

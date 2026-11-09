@@ -997,17 +997,23 @@ export function generateBatchPreview(
     let finalWeightedScorePct = scoreResult?.finalScorePercentage ?? 0;
     let finalWeightedScoreDisplay = scoreResult?.finalScoreDisplay ?? "0.0%";
 
-    if (block.excelWeightedScore !== null && block.excelWeightedScore !== undefined) {
-      finalWeightedScorePct = block.excelWeightedScore;
-      finalWeightedScoreFraction = block.excelWeightedScore / 100;
-      finalWeightedScoreDisplay = `${block.excelWeightedScore.toFixed(2)}%`;
-    } else if (finalWeightedScoreFraction === 0 && newScore !== null && ind) {
+    if (scoreResult === null && newScore !== null && ind) {
       const maxScore = ind.maxScore || 25;
       const indW = normalizeWeight(ind.indicatorWeight);
       const catW = normalizeWeight(ind.parameterWeight);
-      finalWeightedScoreFraction = maxScore > 0 ? (newScore / maxScore) * indW * catW : 0;
+      finalWeightedScoreFraction =
+        maxScore > 0 ? parseFloat(((newScore / maxScore) * indW * catW).toFixed(4)) : 0;
       finalWeightedScorePct = parseFloat((finalWeightedScoreFraction * 100).toFixed(2));
-      finalWeightedScoreDisplay = `${finalWeightedScorePct}%`;
+      finalWeightedScoreDisplay = `${finalWeightedScorePct.toFixed(1)}%`;
+    } else if (
+      scoreResult === null &&
+      !ind &&
+      block.excelWeightedScore !== null &&
+      block.excelWeightedScore !== undefined
+    ) {
+      finalWeightedScorePct = block.excelWeightedScore;
+      finalWeightedScoreFraction = block.excelWeightedScore / 100;
+      finalWeightedScoreDisplay = `${block.excelWeightedScore.toFixed(2)}%`;
     }
 
     let realizationPct = scoreResult?.realizationPct ?? null;
@@ -1214,17 +1220,14 @@ export function recalculatePreviewItemMapping(
   let finalWeightedScorePct = scoreResult?.finalScorePercentage ?? 0;
   let finalWeightedScoreDisplay = scoreResult?.finalScoreDisplay ?? "0.0%";
 
-  if (item.excelWeightedScore !== null && item.excelWeightedScore !== undefined) {
-    finalWeightedScorePct = item.excelWeightedScore;
-    finalWeightedScoreFraction = item.excelWeightedScore / 100;
-    finalWeightedScoreDisplay = `${item.excelWeightedScore.toFixed(2)}%`;
-  } else if (finalWeightedScoreFraction === 0 && newScore !== null && newInd) {
+  if (scoreResult === null && newScore !== null && newInd) {
     const maxScore = newInd.maxScore || 25;
     const indW = normalizeWeight(newInd.indicatorWeight);
     const catW = normalizeWeight(newInd.parameterWeight);
-    finalWeightedScoreFraction = maxScore > 0 ? (newScore / maxScore) * indW * catW : 0;
+    finalWeightedScoreFraction =
+      maxScore > 0 ? parseFloat(((newScore / maxScore) * indW * catW).toFixed(4)) : 0;
     finalWeightedScorePct = parseFloat((finalWeightedScoreFraction * 100).toFixed(2));
-    finalWeightedScoreDisplay = `${finalWeightedScorePct}%`;
+    finalWeightedScoreDisplay = `${finalWeightedScorePct.toFixed(1)}%`;
   }
 
   let realizationPct = scoreResult?.realizationPct ?? null;
