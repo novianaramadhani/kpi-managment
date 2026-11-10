@@ -13,7 +13,6 @@ import {
   Check,
   X,
   Loader2,
-  Settings,
   Upload,
   FileSpreadsheet,
 } from "lucide-react";
@@ -302,19 +301,6 @@ export function KpiModernSpreadsheet({
     Record<number, { operatorSymbol: string; criteriaValue: string; score: string }>
   >({});
   const [isSavingBands, setIsSavingBands] = useState(false);
-  const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!openActionMenuId) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest(".action-menu-container")) {
-        setOpenActionMenuId(null);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [openActionMenuId]);
 
   useEffect(() => {
     if (isEditTemplateMode) {
@@ -847,89 +833,31 @@ export function KpiModernSpreadsheet({
 
                     {/* Kolom 6: Aksi Parameter */}
                     <td
-                      className="py-2.5 px-2.5 text-center align-middle border-y border-[#E2E8F0] relative action-menu-container"
+                      className="py-2.5 px-2.5 text-center align-middle border-y border-[#E2E8F0]"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <div className="inline-flex items-center justify-center gap-1.5">
+                      <div className="inline-flex items-center justify-center gap-1">
                         <button
                           type="button"
-                          onClick={() => onToggleCategory(cat.id)}
-                          className="inline-flex items-center gap-1 text-[11px] font-medium text-[#64748B] hover:text-[#0F172A] transition-colors cursor-pointer"
+                          onClick={(e) => handleStartEditCategory(cat, e)}
+                          className="p-1.5 rounded-md text-[#64748B] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors cursor-pointer"
+                          title={`Ubah nama parameter ${cat.name}`}
+                          aria-label={`Ubah nama parameter ${cat.name}`}
                         >
-                          <span>{isExpanded ? "Tutup" : "Buka"}</span>
+                          <Pencil className="w-3.5 h-3.5" />
                         </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setOpenActionMenuId(
-                              openActionMenuId === `cat-${cat.id}` ? null : `cat-${cat.id}`
-                            );
-                          }}
-                          className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-slate-200/70 transition cursor-pointer inline-flex items-center justify-center"
-                          title="Menu Aksi Parameter"
-                        >
-                          <Settings className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-
-                      {openActionMenuId === `cat-${cat.id}` && (
-                        <div
-                          onClick={(e) => e.stopPropagation()}
-                          className="absolute right-1 top-full mt-1 z-30 w-44 bg-[#FFFFFF] border border-[#E2E8F0] rounded-lg shadow-lg py-1 text-left text-xs text-[#0F172A]"
-                        >
-                          {!isDirect && onAddIndicator && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setOpenActionMenuId(null);
-                                onAddIndicator(cat.id);
-                              }}
-                              className="w-full px-3 py-1.5 text-left hover:bg-[#F8FAFC] flex items-center gap-2 cursor-pointer transition-colors text-[#0F172A] font-medium"
-                            >
-                              <Plus className="w-3.5 h-3.5 text-[#2563EB]" />
-                              <span>Tambah Indikator</span>
-                            </button>
-                          )}
-                          {isDirect && directParam && onAddCriteriaBand && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setOpenActionMenuId(null);
-                                onAddCriteriaBand(directParam.id);
-                              }}
-                              className="w-full px-3 py-1.5 text-left hover:bg-[#F8FAFC] flex items-center gap-2 cursor-pointer transition-colors text-[#0F172A] font-medium"
-                            >
-                              <Plus className="w-3.5 h-3.5 text-[#2563EB]" />
-                              <span>Tambah Kriteria</span>
-                            </button>
-                          )}
+                        {onDeleteCategory && (
                           <button
                             type="button"
-                            onClick={(e) => {
-                              setOpenActionMenuId(null);
-                              handleStartEditCategory(cat, e);
-                            }}
-                            className="w-full px-3 py-1.5 text-left hover:bg-[#F8FAFC] flex items-center gap-2 cursor-pointer transition-colors text-[#0F172A] font-medium"
+                            onClick={() => handleDeleteCategoryConfirm(cat)}
+                            className="p-1.5 rounded-md text-[#64748B] hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                            title={`Hapus parameter ${cat.name}`}
+                            aria-label={`Hapus parameter ${cat.name}`}
                           >
-                            <Pencil className="w-3.5 h-3.5 text-[#64748B]" />
-                            <span>Ubah Nama</span>
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
-                          {onDeleteCategory && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setOpenActionMenuId(null);
-                                handleDeleteCategoryConfirm(cat);
-                              }}
-                              className="w-full px-3 py-1.5 text-left hover:bg-rose-50 flex items-center gap-2 cursor-pointer transition-colors text-rose-600 font-medium"
-                            >
-                              <Trash2 className="w-3.5 h-3.5 text-rose-500" />
-                              <span>Hapus Parameter</span>
-                            </button>
-                          )}
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </td>
                   </tr>
 
@@ -1196,7 +1124,7 @@ export function KpiModernSpreadsheet({
 
                             {/* 6. Aksi Indikator */}
                             <td
-                              className="py-2.5 px-2.5 border-b border-[#E2E8F0] text-center align-middle relative action-menu-container"
+                              className="py-2.5 px-2.5 border-b border-[#E2E8F0] text-center align-middle"
                               onClick={(e) => e.stopPropagation()}
                             >
                               <div className="inline-flex items-center justify-center gap-1">
@@ -1205,75 +1133,13 @@ export function KpiModernSpreadsheet({
                                     type="button"
                                     onClick={() => onEditIndicator(cat.id, ind)}
                                     className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold text-[#2563EB] hover:bg-blue-100/80 bg-[#EFF6FF] border border-blue-200/80 shadow-2xs transition cursor-pointer whitespace-nowrap"
-                                    title={`Edit indikator ${displayIndName}`}
+                                    title={`Edit indikator ${displayIndName || cat.name}`}
                                   >
                                     <Pencil className="h-3 w-3 shrink-0 text-[#2563EB]" />
                                     <span>Edit</span>
                                   </button>
                                 )}
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setOpenActionMenuId(
-                                      openActionMenuId === `ind-${ind.id}`
-                                        ? null
-                                        : `ind-${ind.id}`
-                                    );
-                                  }}
-                                  className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC] transition cursor-pointer"
-                                  title="Menu Aksi Indikator"
-                                >
-                                  <Settings className="w-3.5 h-3.5" />
-                                </button>
                               </div>
-
-                              {openActionMenuId === `ind-${ind.id}` && (
-                                <div
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="absolute right-1 top-full mt-1 z-30 w-44 bg-[#FFFFFF] border border-[#E2E8F0] rounded-lg shadow-lg py-1 text-left text-xs text-[#0F172A]"
-                                >
-                                  {onAddCriteriaBand && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setOpenActionMenuId(null);
-                                        onAddCriteriaBand(ind.id);
-                                      }}
-                                      className="w-full px-3 py-1.5 text-left hover:bg-[#F8FAFC] flex items-center gap-2 cursor-pointer transition-colors text-[#0F172A] font-medium"
-                                    >
-                                      <Plus className="w-3.5 h-3.5 text-[#2563EB]" />
-                                      <span>Tambah Kriteria</span>
-                                    </button>
-                                  )}
-                                  {onEditIndicator && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setOpenActionMenuId(null);
-                                        onEditIndicator(cat.id, ind);
-                                      }}
-                                      className="w-full px-3 py-1.5 text-left hover:bg-[#F8FAFC] flex items-center gap-2 cursor-pointer transition-colors text-[#0F172A] font-medium"
-                                    >
-                                      <Pencil className="w-3.5 h-3.5 text-[#64748B]" />
-                                      <span>Ubah Indikator</span>
-                                    </button>
-                                  )}
-                                  {!isDirect && onDeleteIndicator && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setOpenActionMenuId(null);
-                                        handleDeleteIndicatorConfirm(ind);
-                                      }}
-                                      className="w-full px-3 py-1.5 text-left hover:bg-rose-50 flex items-center gap-2 cursor-pointer transition-colors text-rose-600 font-medium"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5 text-rose-500" />
-                                      <span>Hapus Indikator</span>
-                                    </button>
-                                  )}
-                                </div>
-                              )}
                             </td>
                           </tr>
                         );
@@ -1392,80 +1258,43 @@ export function KpiModernSpreadsheet({
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                     <span className="px-2 py-0.5 rounded-md bg-[#FFFFFF] border border-[#E2E8F0] text-xs font-bold text-[#0F172A] shadow-2xs">
                       {catWeightPct}%
                     </span>
 
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setOpenActionMenuId(openActionMenuId === `mobile-cat-${cat.id}` ? null : `mobile-cat-${cat.id}`);
-                      }}
-                      className="p-1.5 rounded-lg border border-[#E2E8F0] bg-[#FFFFFF] text-[#64748B] hover:text-[#0F172A] transition cursor-pointer"
-                      title="Menu Aksi Parameter"
-                    >
-                      <Settings className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Dropdown Menu for Mobile Category */}
-                {openActionMenuId === `mobile-cat-${cat.id}` && (
-                  <div className="bg-[#F8FAFC] border-b border-[#E2E8F0] p-2 space-y-1 text-xs">
                     {!isDirect && onAddIndicator && (
                       <button
                         type="button"
-                        onClick={() => {
-                          setOpenActionMenuId(null);
-                          onAddIndicator(cat.id);
-                        }}
-                        className="w-full px-3 py-2 text-left rounded-lg bg-[#FFFFFF] border border-[#E2E8F0] text-[#0F172A] hover:bg-[#EFF6FF] font-medium flex items-center gap-2 cursor-pointer"
+                        onClick={() => onAddIndicator(cat.id)}
+                        className="p-1.5 rounded-lg border border-blue-200 bg-[#EFF6FF] text-[#2563EB] hover:bg-blue-100 transition cursor-pointer"
+                        title="Tambah Indikator"
                       >
-                        <Plus className="w-3.5 h-3.5 text-[#2563EB]" />
-                        <span>Tambah Indikator</span>
+                        <Plus className="w-3.5 h-3.5" />
                       </button>
                     )}
-                    {isDirect && directParam && onAddCriteriaBand && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setOpenActionMenuId(null);
-                          onAddCriteriaBand(directParam.id);
-                        }}
-                        className="w-full px-3 py-2 text-left rounded-lg bg-[#FFFFFF] border border-[#E2E8F0] text-[#0F172A] hover:bg-[#EFF6FF] font-medium flex items-center gap-2 cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5 text-[#2563EB]" />
-                        <span>Tambah Kriteria</span>
-                      </button>
-                    )}
+
                     <button
                       type="button"
-                      onClick={(e) => {
-                        setOpenActionMenuId(null);
-                        handleStartEditCategory(cat, e);
-                      }}
-                      className="w-full px-3 py-2 text-left rounded-lg bg-[#FFFFFF] border border-[#E2E8F0] text-[#0F172A] hover:bg-[#F8FAFC] font-medium flex items-center gap-2 cursor-pointer"
+                      onClick={(e) => handleStartEditCategory(cat, e)}
+                      className="p-1.5 rounded-lg border border-[#E2E8F0] bg-[#FFFFFF] text-[#64748B] hover:text-[#2563EB] transition cursor-pointer"
+                      title="Ubah Nama Parameter"
                     >
-                      <Pencil className="w-3.5 h-3.5 text-[#64748B]" />
-                      <span>Ubah Nama Parameter</span>
+                      <Pencil className="w-3.5 h-3.5" />
                     </button>
+
                     {onDeleteCategory && (
                       <button
                         type="button"
-                        onClick={() => {
-                          setOpenActionMenuId(null);
-                          handleDeleteCategoryConfirm(cat);
-                        }}
-                        className="w-full px-3 py-2 text-left rounded-lg bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 font-medium flex items-center gap-2 cursor-pointer"
+                        onClick={() => handleDeleteCategoryConfirm(cat)}
+                        className="p-1.5 rounded-lg border border-[#E2E8F0] bg-[#FFFFFF] text-[#64748B] hover:text-rose-600 transition cursor-pointer"
+                        title="Hapus Parameter"
                       >
-                        <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-                        <span>Hapus Parameter</span>
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     )}
                   </div>
-                )}
+                </div>
 
                 {/* Sub-line summary */}
                 <div className="px-3.5 py-1.5 bg-[#F8FAFC] border-b border-[#E2E8F0] flex items-center justify-between text-[11px] text-[#64748B]">

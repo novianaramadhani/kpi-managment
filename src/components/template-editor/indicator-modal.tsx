@@ -106,6 +106,10 @@ export interface IndicatorModalProps {
   hasMultipleSubIndicators?: boolean;
   indicatorCode?: string;
   editingIndicator?: KpiParameter | null;
+  siblingIndicators?: KpiParameter[];
+  onSwitchIndicator?: (ind: KpiParameter) => void;
+  onStartAddSibling?: () => void;
+  onDeleteCurrentIndicator?: (ind: KpiParameter) => Promise<void>;
   existingBands?: KpiBand[];
   calculationRules?: KpiCalculationRule[];
   initialTab?: "info" | "scoring";
@@ -169,6 +173,10 @@ export function IndicatorModal({
   hasMultipleSubIndicators = false,
   indicatorCode,
   editingIndicator,
+  siblingIndicators = [],
+  onSwitchIndicator,
+  onStartAddSibling,
+  onDeleteCurrentIndicator,
   existingBands = [],
   calculationRules = [],
   initialTab = "info",
@@ -482,10 +490,17 @@ export function IndicatorModal({
       } else {
         setName("");
         setDescription("");
+        const otherUsedPct = siblingIndicators.reduce(
+          (sum, p) => sum + Math.round(Number(p.weight) * 100),
+          0
+        );
+        const remainingPct = Math.max(0, 100 - otherUsedPct);
         setWeight(
           hasMultipleSubIndicators
-            ? indicatorCode?.endsWith(".1")
+            ? siblingIndicators.length === 0
               ? "100"
+              : remainingPct > 0
+              ? String(remainingPct)
               : "20"
             : categoryWeight !== undefined && categoryWeight !== null
             ? String(categoryWeight)
@@ -674,8 +689,7 @@ export function IndicatorModal({
     });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const saveIndicatorData = async (keepOpenForNext: boolean) => {
     const cleanName = stripIndicatorPrefix(name).trim();
     if (!cleanName) {
       setActiveTab("info");
@@ -829,7 +843,21 @@ export function IndicatorModal({
         bands: bandsPayload,
       });
 
-      onClose();
+      if (keepOpenForNext && onStartAddSibling) {
+        onStartAddSibling();
+        setName("");
+        setDescription("");
+        setTarget("");
+        const usedAfterSave =
+          siblingIndicators
+            .filter((p) => p.id !== editingIndicator?.id)
+            .reduce((sum, p) => sum + Math.round(Number(p.weight) * 100), 0) + weightNum;
+        const nextRem = Math.max(0, 100 - usedAfterSave);
+        setWeight(nextRem > 0 ? String(nextRem) : "20");
+        setActiveTab("info");
+      } else {
+        onClose();
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Terjadi kesalahan saat menyimpan data indikator.";
       void Swal.fire({
@@ -841,6 +869,11 @@ export function IndicatorModal({
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await saveIndicatorData(false);
   };
 
   const applyPreset = (
@@ -912,19 +945,25 @@ export function IndicatorModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl overflow-hidden flex flex-col max-h-[92vh]">
         {/* Modal Header */}
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+        <div className="px-6 py-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
           <div>
-            <h3 className="text-base font-bold text-slate-900">
-              {editingIndicator ? "Edit Indikator Penilaian" : "Tambah Indikator Penilaian"}
+            <h3 className="text-sm sm:text-base font-bold text-slate-900">
+              {editingIndicator
+                ? `Edit Indikator ${indicatorCode}`
+                : `Tambah Indikator (${indicatorCode})`}
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Kelola informasi indikator dan kriteria penilaian untuk kalkulasi skor otomatis.
+              Kelompok: <span className="font-semibold text-slate-700">{categoryOrder ? `${categoryOrder}. ` : ""}{categoryName || "Parameter"}</span>
+              {hasMultipleSubIndicators && (
+                <span className="text-slate-500"> • Bobot Kelompok: <span className="font-semibold text-slate-700">{catWeight || categoryWeight}%</span></span>
+              )}
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+            aria-label="Tutup modal"
           >
             <X className="w-5 h-5" />
           </button>
@@ -973,49 +1012,11 @@ export function IndicatorModal({
         <form onSubmit={handleSubmit} className="p-6 overflow-y-auto flex-1 space-y-4">
           {activeTab === "info" ? (
             /* TAB 1: INFORMASI INDIKATOR */
-            <div className="space-y-4">
-              {/* Header Info Kelompok Parameter & No. Indikator */}
-              <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
-                    Kelompok:
-                  </span>
-                  <span className="text-xs font-bold text-slate-800">
-                    {categoryOrder ? `${categoryOrder}. ` : ""}{categoryName || "Parameter"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] font-medium text-slate-500">Nomor Indikator:</span>
-                  <span className="px-2 py-0.5 bg-blue-50 border border-blue-200 text-blue-700 font-mono font-bold text-xs rounded-md">
-                    {indicatorCode || "1.1"}
-                  </span>
-                </div>
-              </div>
-
-              {/* Status KPI Config Loading/Error */}
-              {isConfigLoading && (
-                <div className="p-2.5 bg-blue-50/70 border border-blue-200 rounded-lg flex items-center gap-2 text-xs text-blue-700">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Memuat konfigurasi master KPI dari sistem...</span>
-                </div>
-              )}
-              {configError && (
-                <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg flex items-center justify-between text-xs text-rose-700">
-                  <span>{configError}</span>
-                  <button
-                    type="button"
-                    onClick={fetchKpiConfig}
-                    className="underline font-bold cursor-pointer"
-                  >
-                    Coba Lagi
-                  </button>
-                </div>
-              )}
-
+            <div className="space-y-3.5">
               {/* Selector Kamus Master Parameter (Opsional) */}
               {allRelevantMasterParams.length > 0 && (
                 <div>
-                  <label className="text-[11px] font-semibold text-slate-600 flex items-center gap-1.5 mb-1">
+                  <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5 mb-1">
                     <BookOpen className="w-3.5 h-3.5 text-slate-400" />
                     <span>Pilih dari Kamus Parameter (Opsional)</span>
                   </label>
@@ -1066,16 +1067,14 @@ export function IndicatorModal({
                     className="flex-1 min-w-0 block w-full px-3 py-2 text-xs border border-slate-200 rounded-r-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition font-medium text-slate-800"
                   />
                 </div>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Nomor indikator diatur otomatis oleh sistem. Cukup masukkan nama aktivitas atau sasaran kerja tanpa nomor.
-                </p>
               </div>
 
-              {/* 2. Target Pencapaian & Satuan Pengukuran */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* 2. Target, Satuan, & Bobot (Grid 3 Kolom Bersih) */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* Target Pencapaian */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Target Pencapaian (Opsional)
+                    Target (Opsional)
                   </label>
                   <div className="relative flex items-center">
                     {isCurrency && (
@@ -1087,31 +1086,23 @@ export function IndicatorModal({
                       type="text"
                       value={target}
                       onChange={(e) => setTarget(e.target.value)}
-                      placeholder={
-                        isTextType
-                          ? "Contoh: Memenuhi"
-                          : "Kosongkan jika tidak ada target"
-                      }
+                      placeholder={isTextType ? "Memenuhi" : "Contoh: 100"}
                       className={`w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition ${
                         isCurrency ? "pl-9" : ""
-                      } ${!isTextType && unit ? "pr-12" : ""}`}
+                      } ${!isTextType && unit ? "pr-10" : ""}`}
                     />
                     {!isTextType && unit && (
-                      <span className="absolute right-3 text-xs text-slate-400 font-medium select-none">
+                      <span className="absolute right-2.5 text-xs text-slate-400 font-medium select-none truncate max-w-[40px]">
                         {unit}
                       </span>
                     )}
                   </div>
-                  {isCurrency && target && !isNaN(Number(target.replace(/[^\d.-]/g, ""))) && (
-                    <p className="text-[10px] text-slate-500 mt-1 font-mono">
-                      Rp {Number(target.replace(/[^\d.-]/g, "")).toLocaleString("id-ID")}
-                    </p>
-                  )}
                 </div>
 
+                {/* Satuan Pengukuran */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Satuan Pengukuran <span className="text-rose-500">*</span>
+                    Satuan <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -1119,103 +1110,64 @@ export function IndicatorModal({
                     disabled={isTextType}
                     value={isTextType ? "Teks" : unit}
                     onChange={(e) => setUnit(e.target.value)}
-                    placeholder="Contoh: %, Hari, Kasus, IDR, Dokumen"
+                    placeholder="%, Hari, IDR, Dokumen"
                     className={`w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition ${
                       isTextType ? "bg-slate-100 text-slate-500 cursor-not-allowed select-none" : ""
                     }`}
                   />
                 </div>
-              </div>
 
-              {/* 3. Bobot Parameter & Indikator */}
-              {hasMultipleSubIndicators ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Bobot Parameter KPI (%) <span className="text-rose-500">*</span>
-                    </label>
-                    <div className="relative">
-                      <input
-                        type="number"
-                        required
-                        min="1"
-                        max="100"
-                        value={catWeight}
-                        onChange={(e) => setCatWeight(e.target.value)}
-                        placeholder="20"
-                        className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition pr-8 font-medium text-slate-800"
-                      />
-                      <span className="absolute right-3 top-2 text-xs text-slate-400 font-semibold">%</span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 mt-1">
-                      Bobot kelompok parameter {categoryName ? `"${categoryName}"` : ""} terhadap total KPI (100%).
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Bobot Indikator (%) <span className="text-rose-500">*</span>
-                    </label>
-                    <div className="relative">
-                      <input
-                        type="number"
-                        required
-                        min="1"
-                        max="100"
-                        value={weight}
-                        onChange={(e) => setWeight(e.target.value)}
-                        placeholder="50"
-                        className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition pr-8 font-medium text-slate-800"
-                      />
-                      <span className="absolute right-3 top-2 text-xs text-slate-400 font-semibold">%</span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 mt-1">
-                      Porsi pembagian bobot indikator {indicatorCode || ""} di dalam parameter ini.
-                    </p>
-                  </div>
-                </div>
-              ) : (
+                {/* Bobot Indikator / Parameter */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Bobot Parameter (%) <span className="text-rose-500">*</span>
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-semibold text-slate-700 truncate">
+                      {hasMultipleSubIndicators ? "Bobot Indikator (%)" : "Bobot Parameter (%)"} <span className="text-rose-500">*</span>
+                    </label>
+                    {hasMultipleSubIndicators && (() => {
+                      const otherSum = siblingIndicators
+                        .filter((p) => p.id !== editingIndicator?.id)
+                        .reduce((s, p) => s + Math.round(Number(p.weight) * 100), 0);
+                      const rem = Math.max(0, 100 - otherSum);
+                      if (rem > 0 && Number(weight) !== rem) {
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => setWeight(String(rem))}
+                            className="text-[10px] text-blue-600 hover:text-blue-800 font-semibold cursor-pointer"
+                            title={`Gunakan sisa bobot ${rem}%`}
+                          >
+                            Isi sisa ({rem}%)
+                          </button>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </div>
+
                   <div className="relative">
                     <input
                       type="number"
                       required
                       min="1"
                       max="100"
-                      value={catWeight}
+                      value={hasMultipleSubIndicators ? weight : catWeight}
                       onChange={(e) => {
-                        setCatWeight(e.target.value);
-                        setWeight(e.target.value);
+                        if (hasMultipleSubIndicators) {
+                          setWeight(e.target.value);
+                        } else {
+                          setCatWeight(e.target.value);
+                          setWeight(e.target.value);
+                        }
                       }}
-                      placeholder="20"
-                      className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition pr-8 font-medium text-slate-800"
+                      placeholder="25"
+                      className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition pr-7 font-bold text-slate-900"
                     />
-                    <span className="absolute right-3 top-2 text-xs text-slate-400 font-semibold">%</span>
+                    <span className="absolute right-2.5 top-2 text-xs text-slate-400 font-semibold">%</span>
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    Bobot parameter {categoryName ? `"${categoryName}"` : ""} terhadap total keseluruhan KPI (100%).
-                  </p>
                 </div>
-              )}
-
-              {/* 4. Keterangan (Opsional) */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Keterangan / Petunjuk Pengukuran (Opsional)
-                </label>
-                <textarea
-                  rows={2}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Opsional: tambahkan catatan petunjuk pengukuran atau sumber data verifikasi..."
-                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
-                />
               </div>
 
-              {/* 5. Pengaturan Lanjutan (Collapsible) */}
+              {/* Pengaturan Lanjutan (Collapsible) */}
               <div className="pt-2 border-t border-slate-100">
                 <button
                   type="button"
@@ -1852,21 +1804,62 @@ export function IndicatorModal({
           )}
 
           {/* Modal Footer */}
-          <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-            >
-              Batal
-            </button>
-            <button
-              type="submit"
-              disabled={isSaving}
-              className="px-4 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg shadow-xs transition cursor-pointer"
-            >
-              {isSaving ? "Menyimpan..." : "Simpan Indikator"}
-            </button>
+          <div className="pt-3.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              {editingIndicator && onDeleteCurrentIndicator && !isDirectCategory && (
+                <button
+                  type="button"
+                  disabled={isSaving}
+                  onClick={async () => {
+                    const res = await Swal.fire({
+                      title: `Hapus Indikator "${stripIndicatorPrefix(editingIndicator.name)}"?`,
+                      text: "Seluruh kriteria penilaian pada indikator ini akan ikut dihapus.",
+                      icon: "warning",
+                      showCancelButton: true,
+                      confirmButtonColor: "#e11d48",
+                      cancelButtonColor: "#64748b",
+                      confirmButtonText: "Ya, Hapus",
+                      cancelButtonText: "Batal",
+                    });
+                    if (res.isConfirmed) {
+                      await onDeleteCurrentIndicator(editingIndicator);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 rounded-lg transition cursor-pointer disabled:opacity-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Hapus</span>
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+              >
+                Batal
+              </button>
+              {hasMultipleSubIndicators && onStartAddSibling && !editingIndicator && (
+                <button
+                  type="button"
+                  disabled={isSaving}
+                  onClick={() => void saveIndicatorData(true)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 disabled:opacity-50 rounded-lg transition cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Simpan & Tambah Lagi</span>
+                </button>
+              )}
+              <button
+                type="submit"
+                disabled={isSaving}
+                className="px-4 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg shadow-xs transition cursor-pointer"
+              >
+                {isSaving ? "Menyimpan..." : "Simpan"}
+              </button>
+            </div>
           </div>
         </form>
       </div>

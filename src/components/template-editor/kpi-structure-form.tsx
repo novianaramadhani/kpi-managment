@@ -2243,10 +2243,18 @@ export function KpiStructureForm({
           catParams.length <= 1;
         const hasMultipleSubIndicators = !isDirectCategory;
         const categoryWeight = activeCategory ? Math.round(Number(activeCategory.weight) * 100) : 20;
+        const cleanCatTitle = stripIndicatorPrefix(categoryName).toLowerCase();
+        const siblingIndicators = isDirectCategory
+          ? catParams
+          : catParams.filter(
+              (p) => stripIndicatorPrefix(p.name).toLowerCase() !== cleanCatTitle
+            );
 
-        let indicatorIndex = catParams.length + 1;
+        let indicatorIndex = siblingIndicators.length + 1;
         if (indicatorModalState.editingIndicator) {
-          const foundIdx = catParams.findIndex((p) => p.id === indicatorModalState.editingIndicator?.id);
+          const foundIdx = siblingIndicators.findIndex(
+            (p) => p.id === indicatorModalState.editingIndicator?.id
+          );
           if (foundIdx >= 0) {
             indicatorIndex = foundIdx + 1;
           }
@@ -2267,6 +2275,29 @@ export function KpiStructureForm({
             indicatorCode={indicatorCode}
             templateId={templateId}
             editingIndicator={indicatorModalState.editingIndicator}
+            siblingIndicators={siblingIndicators}
+            onSwitchIndicator={(ind) =>
+              setIndicatorModalState((prev) => ({
+                ...prev,
+                editingIndicator: ind,
+                initialTab: "info",
+              }))
+            }
+            onStartAddSibling={() =>
+              setIndicatorModalState((prev) => ({
+                ...prev,
+                editingIndicator: null,
+                initialTab: "info",
+              }))
+            }
+            onDeleteCurrentIndicator={
+              !isDirectCategory && indicatorModalState.editingIndicator
+                ? async (ind) => {
+                    await handleDeleteIndicator(ind);
+                    setIndicatorModalState((prev) => ({ ...prev, isOpen: false }));
+                  }
+                : undefined
+            }
             existingBands={bands}
             calculationRules={calculationRules}
             initialTab={indicatorModalState.initialTab || "info"}
