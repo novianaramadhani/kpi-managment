@@ -27,6 +27,20 @@ interface Props {
   initialData?: KpiMeasurementType[];
 }
 
+const MEASUREMENT_PRESETS = [
+  { code: "PERCENTAGE", name: "Percentage (Persentase)", defaultUnit: "%", isNumeric: true, formatPattern: "0.0%", description: "Nilai rasio atau tingkat ketercapaian dalam format persen (%)." },
+  { code: "CURRENCY", name: "Currency (Mata Uang)", defaultUnit: "IDR", isNumeric: true, formatPattern: "#,##0", description: "Nilai moneter atau biaya finansial dalam satuan rupiah." },
+  { code: "DAYS", name: "Days (Hari / Durasi)", defaultUnit: "Hari", isNumeric: true, formatPattern: "#,##0", description: "Durasi waktu penyelesaian tugas dalam satuan hari kalender/kerja." },
+  { code: "COUNT", name: "Count (Jumlah / Frekuensi)", defaultUnit: "Item", isNumeric: true, formatPattern: "#,##0", description: "Jumlah item fisik, transaksi, atau kuantitas kejadian diskret." },
+  { code: "NUMBER", name: "Number (Angka / Kuantitatif)", defaultUnit: "Angka", isNumeric: true, formatPattern: "#,##0.00", description: "Nilai kuantitatif umum berbentuk bilangan bulat atau desimal." },
+  { code: "RATIO", name: "Ratio (Perbandingan)", defaultUnit: "Rasio", isNumeric: true, formatPattern: "0.00", description: "Rasio perbandingan dua variabel (pembilang dibagi penyebut)." },
+  { code: "BOOLEAN", name: "Boolean (Ya / Tidak)", defaultUnit: "Status", isNumeric: false, formatPattern: "@", description: "Nilai biner ya/tidak untuk pemenuhan syarat mutlak." },
+  { code: "RATING", name: "Rating (Skala Nilai)", defaultUnit: "Skor", isNumeric: true, formatPattern: "0", description: "Penilaian berbasis tingkatan mutu atau skala likert." },
+  { code: "TEXT", name: "Text (Kualitatif Deskriptif)", defaultUnit: "-", isNumeric: false, formatPattern: "@", description: "Evaluasi berbasis uraian deskriptif kualitatif." },
+];
+
+const UNIT_PRESETS = ["%", "IDR", "Hari", "Item", "Angka", "Rasio", "Status", "Skor", "Dokumen", "Orang", "-"];
+
 export function MeasurementTypeManager({ initialData = [] }: Props) {
   const [data, setData] = useState<KpiMeasurementType[]>(initialData);
   const [loading, setLoading] = useState<boolean>(initialData.length === 0);
@@ -196,6 +210,20 @@ export function MeasurementTypeManager({ initialData = [] }: Props) {
     });
   }, [data, filterActive, filterNumeric, search]);
 
+  const parseMeasurementName = (name: string) => {
+    const match = name.match(/^(.*?)\s*\((.*?)\)$/);
+    if (match) {
+      return {
+        primary: match[1].trim(),
+        secondary: match[2].trim(),
+      };
+    }
+    return {
+      primary: name,
+      secondary: null,
+    };
+  };
+
   const getTypeIcon = (code: string) => {
     switch (code) {
       case "PERCENTAGE":
@@ -269,62 +297,73 @@ export function MeasurementTypeManager({ initialData = [] }: Props) {
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-600">
-                  <th className="py-2.5 px-3.5 w-64">Tipe &amp; Kode</th>
+                <tr className="border-b border-slate-200 bg-slate-50/75 text-[11px] font-semibold text-slate-600">
+                  <th className="py-2.5 px-3.5 w-64">Tipe Pengukuran</th>
                   <th className="py-2.5 px-3 w-28">Satuan</th>
                   <th className="py-2.5 px-3">Deskripsi</th>
                   <th className="py-2.5 px-3.5 text-right w-20">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredData.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
-                    {/* Tipe & Kode */}
-                    <td className="py-2.5 px-3.5">
-                      <div className="flex items-center gap-2.5">
-                        <div className="rounded-lg bg-slate-100 p-2 shrink-0">{getTypeIcon(item.code)}</div>
-                        <div>
-                          <div className="font-semibold text-slate-900 text-xs">{item.name}</div>
-                          <div className="text-[10px] font-mono text-slate-400 uppercase">{item.code}</div>
+                {filteredData.map((item) => {
+                  const parsed = parseMeasurementName(item.name);
+                  return (
+                    <tr key={item.id} className="hover:bg-slate-50/70 transition-colors">
+                      {/* Tipe & Kode */}
+                      <td className="py-2.5 px-3.5">
+                        <div className="min-w-0">
+                          <div className="font-semibold text-slate-900 text-xs flex items-center gap-1.5 flex-wrap">
+                            <span>{parsed.primary}</span>
+                            {parsed.secondary && (
+                              <span className="text-[11px] font-normal text-slate-500">
+                                • {parsed.secondary}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] font-mono text-slate-400 uppercase mt-0.5">
+                            {item.code}
+                          </div>
                         </div>
-                      </div>
-                    </td>
+                      </td>
 
-                    {/* Satuan */}
-                    <td className="py-2.5 px-3">
-                      <span className="font-medium text-slate-700">{item.defaultUnit || "-"}</span>
-                    </td>
+                      {/* Satuan */}
+                      <td className="py-2.5 px-3">
+                        <span className="inline-flex items-center rounded-md bg-slate-50 px-2 py-0.5 text-xs font-mono font-medium text-slate-700 border border-slate-200/70">
+                          {item.defaultUnit || "-"}
+                        </span>
+                      </td>
 
-                    {/* Deskripsi */}
-                    <td className="py-2.5 px-3">
-                      <p className="text-xs text-slate-600 leading-relaxed max-w-xl">
-                        {item.description || "-"}
-                      </p>
-                    </td>
+                      {/* Deskripsi */}
+                      <td className="py-2.5 px-3">
+                        <p className="text-xs text-slate-600 leading-relaxed max-w-xl">
+                          {item.description || "-"}
+                        </p>
+                      </td>
 
-                    {/* Aksi */}
-                    <td className="py-2.5 px-3.5 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          onClick={() => openEditModal(item)}
-                          className="rounded-md border border-slate-200 bg-white p-1 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition"
-                          title="Edit"
-                        >
-                          <Edit2 className="h-3.5 w-3.5" />
-                        </button>
-                        {item.isActive && (
+                      {/* Aksi */}
+                      <td className="py-2.5 px-3.5 text-right">
+                        <div className="flex items-center justify-end gap-1">
                           <button
-                            onClick={() => handleDelete(item)}
-                            className="rounded-md border border-rose-200 bg-rose-50 p-1 text-rose-600 hover:bg-rose-100 transition"
-                            title="Hapus"
+                            onClick={() => openEditModal(item)}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+                            title="Edit"
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            <Edit2 className="h-3.5 w-3.5" />
                           </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                          {item.isActive && (
+                            <button
+                              onClick={() => handleDelete(item)}
+                              className="inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                              title="Hapus"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -353,6 +392,38 @@ export function MeasurementTypeManager({ initialData = [] }: Props) {
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-3.5 text-xs">
+              {/* Dropdown Preset Cepat */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Pilih Preset Tipe Pengukuran
+                </label>
+                <select
+                  value={MEASUREMENT_PRESETS.some((p) => p.code === formCode) ? formCode : formCode ? "CUSTOM" : ""}
+                  onChange={(e) => {
+                    const selected = e.target.value;
+                    if (selected === "CUSTOM") return;
+                    const found = MEASUREMENT_PRESETS.find((p) => p.code === selected);
+                    if (found) {
+                      setFormCode(found.code);
+                      setFormName(found.name);
+                      setFormDefaultUnit(found.defaultUnit);
+                      setFormIsNumeric(found.isNumeric);
+                      setFormFormatPattern(found.formatPattern);
+                      setFormDescription(found.description);
+                    }
+                  }}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:outline-hidden"
+                >
+                  <option value="">-- Pilih dari Template Standar --</option>
+                  {MEASUREMENT_PRESETS.map((p) => (
+                    <option key={p.code} value={p.code}>
+                      {p.name} ({p.defaultUnit})
+                    </option>
+                  ))}
+                  <option value="CUSTOM">Custom (Ketik Manual)</option>
+                </select>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -364,7 +435,7 @@ export function MeasurementTypeManager({ initialData = [] }: Props) {
                     value={formCode}
                     onChange={(e) => setFormCode(e.target.value)}
                     required
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-mono uppercase text-slate-900 focus:border-blue-500 focus:outline-hidden"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-mono uppercase text-slate-900 focus:border-slate-900 focus:outline-hidden"
                   />
                 </div>
 
@@ -378,7 +449,7 @@ export function MeasurementTypeManager({ initialData = [] }: Props) {
                     value={formName}
                     onChange={(e) => setFormName(e.target.value)}
                     required
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:outline-hidden"
                   />
                 </div>
               </div>
@@ -391,19 +462,37 @@ export function MeasurementTypeManager({ initialData = [] }: Props) {
                     placeholder="misal: #,##0.00 atau 0.0%"
                     value={formFormatPattern}
                     onChange={(e) => setFormFormatPattern(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-mono text-slate-900 focus:border-blue-500 focus:outline-hidden"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-mono text-slate-900 focus:border-slate-900 focus:outline-hidden"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Satuan Bawaan (Default Unit)</label>
-                  <input
-                    type="text"
-                    placeholder="misal: %, IDR, Hari, Unit"
-                    value={formDefaultUnit}
-                    onChange={(e) => setFormDefaultUnit(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
-                  />
+                  <div className="flex gap-1.5">
+                    <select
+                      value={UNIT_PRESETS.includes(formDefaultUnit) ? formDefaultUnit : "CUSTOM"}
+                      onChange={(e) => {
+                        if (e.target.value !== "CUSTOM") {
+                          setFormDefaultUnit(e.target.value);
+                        }
+                      }}
+                      className="w-28 rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 focus:border-slate-900 focus:outline-hidden shrink-0"
+                    >
+                      {UNIT_PRESETS.map((u) => (
+                        <option key={u} value={u}>
+                          {u}
+                        </option>
+                      ))}
+                      <option value="CUSTOM">Lainnya...</option>
+                    </select>
+                    <input
+                      type="text"
+                      placeholder="Satuan manual"
+                      value={formDefaultUnit}
+                      onChange={(e) => setFormDefaultUnit(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 focus:border-slate-900 focus:outline-hidden"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -414,7 +503,7 @@ export function MeasurementTypeManager({ initialData = [] }: Props) {
                   placeholder="Penjelasan fungsi tipe pengukuran ini dalam evaluasi KPI..."
                   value={formDescription}
                   onChange={(e) => setFormDescription(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:outline-hidden"
                 />
               </div>
 

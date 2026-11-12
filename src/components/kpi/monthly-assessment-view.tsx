@@ -591,6 +591,8 @@ export function MonthlyAssessmentView({
     indicator: MonthlyIndicatorItem;
     categoryName: string;
     categoryWeight?: number;
+    subWeightPct?: number;
+    hasSubIndicators?: boolean;
     rect: { top: number; bottom: number; left: number; right: number; width: number; height: number };
   } | null>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -603,7 +605,9 @@ export function MonthlyAssessmentView({
     indicator: MonthlyIndicatorItem,
     categoryName: string,
     categoryWeight: number | undefined,
-    target: HTMLElement
+    target: HTMLElement,
+    subWeightPct?: number,
+    hasSubIndicators?: boolean
   ) => {
     if (closeTimeoutRef.current) {
       clearTimeout(closeTimeoutRef.current);
@@ -619,6 +623,8 @@ export function MonthlyAssessmentView({
         indicator,
         categoryName,
         categoryWeight,
+        subWeightPct,
+        hasSubIndicators,
         rect: {
           top: rect.top,
           bottom: rect.bottom,
@@ -646,7 +652,9 @@ export function MonthlyAssessmentView({
     type: "realization" | "weight" | "final_score",
     indicator: MonthlyIndicatorItem,
     categoryName: string,
-    categoryWeight: number | undefined
+    categoryWeight: number | undefined,
+    subWeightPct?: number,
+    hasSubIndicators?: boolean
   ) => {
     e.stopPropagation();
     if (hoverTimeoutRef.current) {
@@ -669,6 +677,8 @@ export function MonthlyAssessmentView({
         indicator,
         categoryName,
         categoryWeight,
+        subWeightPct,
+        hasSubIndicators,
         rect: {
           top: rect.top,
           bottom: rect.bottom,
@@ -912,7 +922,16 @@ export function MonthlyAssessmentView({
     if (!initialDetail) return [];
 
     return initialDetail.categories.map((cat, catIdx) => {
+      const totalCatIndWeight = cat.indicators.reduce((sum, i) => sum + (Number(i.indicatorWeight) || 0), 0);
+      const isMultipleInd = cat.indicators.length > 1;
+
       const liveIndicators = cat.indicators.map((ind, indIdx) => {
+        const effectiveIndWeight = isMultipleInd
+          ? totalCatIndWeight > 1.05
+            ? (Number(ind.indicatorWeight) || 1) / totalCatIndWeight
+            : Number(ind.indicatorWeight) || 1 / cat.indicators.length
+          : 1.0;
+
         const resolvedDirection = resolveKpiDirection(
           ind.scoringRules,
           ind.direction,
@@ -951,7 +970,7 @@ export function MonthlyAssessmentView({
               : null;
 
           const mScoreRes = calculateKpiScore(actual, ind.scoringRules, {
-            indicatorWeight: ind.indicatorWeight,
+            indicatorWeight: effectiveIndWeight,
             parameterWeight: ind.parameterWeight,
             maxScore: ind.maxScore,
             compareBasis: ind.compareBasis,
@@ -1016,7 +1035,7 @@ export function MonthlyAssessmentView({
             : ind.target;
 
         const annualScoreRes = calculateKpiScore(annualActual, ind.scoringRules, {
-          indicatorWeight: ind.indicatorWeight,
+          indicatorWeight: effectiveIndWeight,
           parameterWeight: ind.parameterWeight,
           maxScore: ind.maxScore,
           compareBasis: ind.compareBasis,
@@ -1037,7 +1056,7 @@ export function MonthlyAssessmentView({
         const curMonthVal = liveMonthly[targetMonth - 1]?.actual ?? null;
         const curMonthTarget = liveMonthly[targetMonth - 1]?.target ?? currentTarget;
         const curScoreRes = calculateKpiScore(curMonthVal, ind.scoringRules, {
-          indicatorWeight: ind.indicatorWeight,
+          indicatorWeight: effectiveIndWeight,
           parameterWeight: ind.parameterWeight,
           maxScore: ind.maxScore,
           compareBasis: ind.compareBasis,
@@ -1053,6 +1072,7 @@ export function MonthlyAssessmentView({
 
         return {
           ...ind,
+          indicatorWeight: effectiveIndWeight,
           direction: resolvedDirection,
           indicatorCode: ind.indicatorCode || `${catIdx + 1}.${indIdx + 1}`,
           target: currentTarget,
@@ -2246,12 +2266,39 @@ export function MonthlyAssessmentView({
         description: "Penilaian telah dikirim oleh penilai dan terkunci.",
       };
     }
+
+    // 6. Tahap Draft / Progress Pengisian (Belum diajukan ke atasan)
+    const totalPoints = allIndicatorPoints.length;
+    const filledPointsCount = allIndicatorPoints.filter((p) => p.isFilled).length;
+    const isFullyFilled = totalPoints > 0 && unfilledPoints.length === 0;
+    const isPartiallyFilled = filledPointsCount > 0;
+
+    if (isFullyFilled) {
+      return {
+        key: "READY_TO_SUBMIT" as const,
+        label: "Siap Diajukan",
+        badgeClass: "bg-emerald-50 text-emerald-800 border-emerald-300",
+        dotClass: "bg-emerald-600",
+        description: `Seluruh parameter telah terisi lengkap (${totalPoints} poin / 100%). Siap untuk dikirim/diajukan.`,
+      };
+    }
+
+    if (isPartiallyFilled) {
+      return {
+        key: "IN_PROGRESS" as const,
+        label: "Sedang Dinilai",
+        badgeClass: "bg-blue-50 text-blue-700 border-blue-200",
+        dotClass: "bg-blue-500 animate-pulse",
+        description: `Penilaian sedang dalam pengisian (${filledPointsCount} dari ${totalPoints} poin terisi).`,
+      };
+    }
+
     return {
       key: "DRAFT" as const,
       label: "Draft",
       badgeClass: "bg-slate-100 text-slate-700 border-slate-200",
       dotClass: "bg-slate-400",
-      description: "Penilaian masih dalam tahap pengisian (draft).",
+      description: "Penilaian masih dalam tahap awal (draft) dan belum ada nilai yang diinput.",
     };
   }, [
     currentAppraisalStatus,
@@ -2261,6 +2308,8 @@ export function MonthlyAssessmentView({
     workflowResolved?.activeStageLabel,
     initialDetail?.myAssessmentStatus,
     initialDetail?.assessorProgress,
+    allIndicatorPoints,
+    unfilledPoints,
   ]);
 
   // Handler: Kirim Penilaian Saya (Validasi Kelengkapan, Kunci, dan Teruskan jika Lengkap)
@@ -3043,14 +3092,14 @@ export function MonthlyAssessmentView({
       {/* 2. EMPLOYEE & ASSESSMENT SUMMARY (HORIZONTAL)      */}
       {/* ================================================== */}
       <section className="mb-4 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-2xs">
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-12 gap-x-5 gap-y-3 items-center">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-12 gap-x-5 gap-y-3.5 items-start">
           {/* 1. Nama Karyawan */}
-          <div className="min-w-0 col-span-2 sm:col-span-2 lg:col-span-3">
-            <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+          <div className="min-w-0 col-span-2 sm:col-span-2 lg:col-span-2">
+            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
               Nama Karyawan
             </span>
             <span
-              className="mt-0.5 block text-xs sm:text-sm font-semibold text-slate-800 break-words leading-snug"
+              className="mt-1 block text-xs sm:text-sm font-bold text-slate-900 truncate"
               title={initialDetail?.employee.name || currentEmp?.name || "-"}
             >
               {initialDetail?.employee.name || currentEmp?.name || "-"}
@@ -3058,12 +3107,13 @@ export function MonthlyAssessmentView({
           </div>
 
           {/* 2. Departemen */}
-          <div className="min-w-0 col-span-1 lg:col-span-1">
-            <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+          <div className="min-w-0 col-span-2 sm:col-span-2 lg:col-span-2">
+            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
               Departemen
             </span>
             <span
-              className="mt-0.5 block text-xs sm:text-sm font-medium text-slate-700 break-words leading-snug"
+              className="mt-1 block text-xs sm:text-sm font-semibold text-slate-700 truncate"
+              style={{ wordBreak: "keep-all", overflowWrap: "normal" }}
               title={initialDetail?.employee.departmentName || currentEmp?.departmentName || "-"}
             >
               {initialDetail?.employee.departmentName || currentEmp?.departmentName || "-"}
@@ -3071,12 +3121,12 @@ export function MonthlyAssessmentView({
           </div>
 
           {/* 3. Jabatan */}
-          <div className="min-w-0 col-span-1 lg:col-span-2">
-            <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+          <div className="min-w-0 col-span-2 sm:col-span-2 lg:col-span-2">
+            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
               Jabatan
             </span>
             <span
-              className="mt-0.5 block text-xs sm:text-sm font-medium text-slate-700 break-words leading-snug"
+              className="mt-1 block text-xs sm:text-sm font-medium text-slate-700 leading-snug break-normal"
               title={initialDetail?.employee.jobPosition || currentEmp?.jobPosition || "-"}
             >
               {initialDetail?.employee.jobPosition || currentEmp?.jobPosition || "-"}
@@ -3085,11 +3135,11 @@ export function MonthlyAssessmentView({
 
           {/* 4. Penilai */}
           <div className="min-w-0 col-span-2 sm:col-span-2 lg:col-span-2">
-            <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
               Penilai
             </span>
             <span
-              className="mt-0.5 block text-xs sm:text-sm font-medium text-slate-700 break-words leading-snug"
+              className="mt-1 block text-xs sm:text-sm font-medium text-slate-700 truncate"
               title={appraiserName}
             >
               {appraiserName}
@@ -3097,11 +3147,11 @@ export function MonthlyAssessmentView({
           </div>
 
           {/* 5. Total Skor */}
-          <div className="min-w-0 col-span-1 lg:col-span-1">
-            <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+          <div className="min-w-0 col-span-1 sm:col-span-1 lg:col-span-1">
+            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 whitespace-nowrap">
               Total Skor
             </span>
-            <div className="mt-0.5 flex items-baseline gap-1">
+            <div className="mt-1 flex items-baseline gap-1 whitespace-nowrap">
               <span className="text-xs sm:text-sm font-bold text-blue-600">
                 {liveAnnualOverall.overallScoreDisplay}
               </span>
@@ -3112,26 +3162,26 @@ export function MonthlyAssessmentView({
           </div>
 
           {/* 6. Progress */}
-          <div className="min-w-0 col-span-1 lg:col-span-2">
-            <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+          <div className="min-w-0 col-span-1 sm:col-span-1 lg:col-span-1">
+            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 whitespace-nowrap">
               Progress
             </span>
-            <div className="mt-0.5 text-xs sm:text-sm font-semibold text-slate-800 whitespace-nowrap">
+            <div className="mt-1 text-xs sm:text-sm font-semibold text-slate-800 whitespace-nowrap">
               {overallProgressParameters} Parameter
             </div>
           </div>
 
           {/* 7. Status */}
-          <div className="min-w-0 col-span-2 sm:col-span-1 lg:col-span-1">
-            <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+          <div className="min-w-0 col-span-2 sm:col-span-2 lg:col-span-2">
+            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 whitespace-nowrap">
               Status
             </span>
-            <div className="mt-0.5">
+            <div className="mt-1">
               <span
-                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border ${lifecycleStatus.badgeClass}`}
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border whitespace-nowrap ${lifecycleStatus.badgeClass}`}
                 title={lifecycleStatus.description}
               >
-                <span className={`h-1.5 w-1.5 rounded-full ${lifecycleStatus.dotClass}`} />
+                <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${lifecycleStatus.dotClass}`} />
                 <span className="truncate">{lifecycleStatus.label}</span>
               </span>
             </div>
@@ -3581,9 +3631,7 @@ export function MonthlyAssessmentView({
                 </tr>
               ) : (
                 liveCategories.map((cat) => {
-                  const isTargetKerja =
-                    cat.categoryNumber === 1 ||
-                    cat.categoryName.toLowerCase().includes("target kerja");
+                  const isTargetKerja = cat.categoryName.toLowerCase().includes("target kerja");
                   const isExpanded = expandedCatIds.has(cat.categoryId);
 
                   const isAppraisalFinal = currentAppraisalStatus === "FINAL" || initialDetail?.appraisalStatus === "FINAL";
@@ -3732,12 +3780,31 @@ export function MonthlyAssessmentView({
                               popoverAnchor?.type === "realization" &&
                               popoverAnchor.indicator.appraisalItemId === ind.appraisalItemId;
 
+                            const cleanCatName = cat.categoryName.toLowerCase().replace(/^\d+[\.\s\-:]*/, "").trim();
+                            const hasSubIndicators =
+                              cat.indicators.length > 1 ||
+                              (cat.indicators.length === 1 &&
+                                cleanCatName !== "" &&
+                                cat.indicators[0].indicatorName.toLowerCase().replace(/^\d+[\.\s\-:]*/, "").trim() !== "" &&
+                                cat.indicators[0].indicatorName.toLowerCase().replace(/^\d+[\.\s\-:]*/, "").trim() !== "-" &&
+                                cat.indicators[0].indicatorName.toLowerCase().replace(/^\d+[\.\s\-:]*/, "").trim() !== cleanCatName);
+
+                            const indCode = hasSubIndicators
+                              ? `${cat.categoryNumber}.${indIdx + 1}`
+                              : "";
+
+                            const totalCatIndWeight = cat.indicators.reduce((sum, i) => sum + (Number(i.indicatorWeight) || 0), 0);
+                            const normSubWeight = totalCatIndWeight > 1.05
+                              ? (Number(ind.indicatorWeight) || 1) / totalCatIndWeight
+                              : (Number(ind.indicatorWeight) || (1 / cat.indicators.length));
+                            const subWeightPctVal = Math.round(normSubWeight * 100);
+
                             // Calculate finalScoreStr accurately
                             let finalScoreStr = ind.annualFinalScoreDisplay || ind.finalScoreDisplay;
                             if (!finalScoreStr || finalScoreStr === "-" || finalScoreStr === "0.0%") {
                               if (effectiveScore !== null) {
                                 const maxS = ind.maxScore || 25;
-                                const iW = ind.indicatorWeight || 1;
+                                const iW = hasSubIndicators ? normSubWeight : 1;
                                 const cW = cat.categoryWeight || 1;
                                 const calcPct = (effectiveScore / maxS) * iW * cW * 100;
                                 finalScoreStr = `${calcPct.toFixed(1)}%`;
@@ -3749,20 +3816,6 @@ export function MonthlyAssessmentView({
                             const isFinalPopoverOpen =
                               popoverAnchor?.type === "final_score" &&
                               popoverAnchor.indicator.appraisalItemId === ind.appraisalItemId;
-
-                            const hasSubIndicators =
-                              cat.indicators.length > 1 ||
-                              (cat.indicators.length === 1 &&
-                                isTargetKerja &&
-                                cat.indicators[0].indicatorName.toLowerCase().replace(/^\d+[\.\s\-:]*/, "").trim() !==
-                                  cat.categoryName.toLowerCase().replace(/^\d+[\.\s\-:]*/, "").trim());
-
-                            const indCode = isTargetKerja
-                              ? `1.${indIdx + 1}`
-                              : hasSubIndicators
-                              ? `${cat.categoryNumber}.${indIdx + 1}`
-                              : "";
-                            const weightPctVal = Math.round((ind.indicatorWeight || 1) * 100);
 
                             return (
                               <tr
@@ -3802,7 +3855,7 @@ export function MonthlyAssessmentView({
                                           )}
                                         </div>
                                       ) : (
-                                        /* Parameter tunggal tanpa sub-indikator: Kosongkan nama indikator agar tidak menduplikasi header parameter */
+                                        /* Parameter tunggal tanpa sub-indikator */
                                         <div className="flex items-center gap-2 flex-wrap">
                                           {isIndUnfilled && validationAttempted ? (
                                             <span className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-700">
@@ -3810,11 +3863,13 @@ export function MonthlyAssessmentView({
                                               <span>Belum Diisi</span>
                                             </span>
                                           ) : (
-                                            <span className="text-slate-300 text-xs font-normal select-none">-</span>
+                                            <span className="text-slate-400 text-[11px] font-normal select-none">
+                                              {ind.target ? `Target: ${formatTargetNumber(ind.target, ind.unit)}` : "Penilaian Langsung"}
+                                            </span>
                                           )}
                                         </div>
                                       )}
-                                      {(() => {
+                                      {hasSubIndicators && (() => {
                                         const tStr = ind.target !== null && ind.target !== undefined ? String(ind.target).trim() : "";
                                         if (!tStr || tStr === "-" || tStr === "null" || tStr === "undefined") return null;
                                         const displayVal = formatTargetNumber(ind.target, ind.unit);
@@ -3854,24 +3909,34 @@ export function MonthlyAssessmentView({
                                 {/* 2. Kriteria Penilaian Acuan (Flat sub-rows dengan border tipis) */}
                                 <td className="p-0 border-r border-slate-200 border-b-2 border-slate-300 align-middle">
                                   {ind.scoringRules && ind.scoringRules.length > 0 ? (
-                                    <div className="divide-y divide-slate-100">
+                                    <div className="divide-y divide-slate-200">
                                       {ind.scoringRules.slice(0, 3).map((r, rIdx) => {
                                         const matchedLabel = ind.annualBandLabel || ind.bandLabel;
+                                        const numScore = effectiveScore !== null && effectiveScore !== undefined ? Number(effectiveScore) : null;
                                         const isRuleMatched =
                                           hasActual &&
-                                          (matchedLabel === (r.label || `${r.score}`) ||
-                                            effectiveScore === Number(r.score));
+                                          numScore !== null &&
+                                          !isNaN(numScore) &&
+                                          (
+                                            (matchedLabel ? matchedLabel === (r.label || `${r.score}`) : false) ||
+                                            Number(r.score) === numScore
+                                          );
                                         return (
                                           <div
                                             key={rIdx}
-                                            className={`h-7 flex items-center px-3 text-[11px] font-normal truncate transition-colors ${
+                                            className={`h-7 flex items-center justify-between px-3 text-[11px] truncate transition-colors ${
                                               isRuleMatched
-                                                ? "bg-slate-100 text-slate-900 font-medium"
+                                                ? "bg-emerald-50 text-emerald-900 font-semibold border-l-2 border-emerald-500"
                                                 : "text-slate-600"
                                             }`}
                                             title={cleanRuleNumeric(r, ind.unit)}
                                           >
-                                            {cleanRuleNumeric(r, ind.unit)}
+                                            <span className="truncate">{cleanRuleNumeric(r, ind.unit)}</span>
+                                            {isRuleMatched && (
+                                              <span className="text-[10px] text-emerald-600 font-bold shrink-0 ml-1.5" title="Kriteria Tercapai">
+                                                ✓
+                                              </span>
+                                            )}
                                           </div>
                                         );
                                       })}
@@ -3893,15 +3958,16 @@ export function MonthlyAssessmentView({
                                 {/* 3. Skor Nilai Acuan (Flat sub-rows dengan border tipis) */}
                                 <td className="p-0 border-r border-slate-200 border-b-2 border-slate-300 align-middle text-center">
                                   {ind.scoringRules && ind.scoringRules.length > 0 ? (
-                                    <div className="divide-y divide-slate-100">
+                                    <div className="divide-y divide-slate-200">
                                       {ind.scoringRules.slice(0, 3).map((r, rIdx) => {
-                                        const isRuleMatched = hasActual && effectiveScore === Number(r.score);
+                                        const numScore = effectiveScore !== null && effectiveScore !== undefined ? Number(effectiveScore) : null;
+                                        const isRuleMatched = hasActual && numScore !== null && !isNaN(numScore) && Number(r.score) === numScore;
                                         return (
                                           <div
                                             key={rIdx}
-                                            className={`h-7 flex items-center justify-center px-2 text-[11px] font-normal ${
+                                            className={`h-7 flex items-center justify-center px-2 text-[11px] font-mono transition-colors ${
                                               isRuleMatched
-                                                ? "bg-slate-100 text-slate-900 font-medium"
+                                                ? "bg-emerald-50 text-emerald-800 font-bold"
                                                 : "text-slate-600"
                                             }`}
                                           >
@@ -3928,12 +3994,12 @@ export function MonthlyAssessmentView({
                                       aria-expanded={isPopoverOpen}
                                       aria-haspopup="dialog"
                                       aria-label={`Rincian perhitungan realisasi ${ind.indicatorName}, skor ${displayScore}`}
-                                      onClick={(e) => handleTriggerClick(e, "realization", ind, cat.categoryName, cat.categoryWeight)}
-                                      onMouseEnter={(e) => handleTriggerMouseEnter("realization", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
+                                      onClick={(e) => handleTriggerClick(e, "realization", ind, cat.categoryName, cat.categoryWeight, subWeightPctVal, hasSubIndicators)}
+                                      onMouseEnter={(e) => handleTriggerMouseEnter("realization", ind, cat.categoryName, cat.categoryWeight, e.currentTarget, subWeightPctVal, hasSubIndicators)}
                                       onMouseLeave={handleTriggerMouseLeave}
-                                      className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-slate-400 whitespace-nowrap"
+                                      className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs font-medium text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-slate-400 whitespace-nowrap"
                                     >
-                                      <span className="text-xs font-normal text-slate-800">
+                                      <span className="text-xs font-medium text-slate-800">
                                         {displayScore}
                                       </span>
                                       <Info
@@ -3944,40 +4010,47 @@ export function MonthlyAssessmentView({
                                   )}
                                 </td>
 
-                                {/* 5. Bobot */}
+                                {/* 5. Bobot: Hanya tampil pada sub-indikator (pada parameter tunggal sudah tertera di baris utama parameter) */}
                                 <td className="py-2.5 px-2 border-r border-slate-200 border-b-2 border-slate-300 text-center align-middle font-sans">
-                                  <span className="font-normal text-xs text-slate-700 select-none">
-                                    {hasSubIndicators || isTargetKerja
-                                      ? `${weightPctVal}%`
-                                      : `${Math.round((cat.categoryWeight || 0) * 100)}%`}
-                                  </span>
-                                </td>
-
-                                {/* 6. Skor Akhir */}
-                                <td className="py-2.5 px-2 border-r border-slate-200 border-b-2 border-slate-300 text-center align-middle font-sans">
-                                  {!finalScoreStr || finalScoreStr === "-" ? (
-                                    <span className="font-normal text-xs text-slate-800">
-                                      {(cat.annualScorePercentage ?? cat.scorePercentage ?? 0).toFixed(1)}%
+                                  {hasSubIndicators ? (
+                                    <span
+                                      className="font-normal text-xs text-slate-700 select-none"
+                                      title={`Bobot sub-indikator: ${subWeightPctVal}% dari parameter (${Math.round(subWeightPctVal * cat.categoryWeight)}% total KPI)`}
+                                    >
+                                      {subWeightPctVal}%
                                     </span>
                                   ) : (
-                                    <button
-                                      type="button"
-                                      aria-expanded={isFinalPopoverOpen}
-                                      aria-haspopup="dialog"
-                                      aria-label={`Rincian perhitungan skor akhir ${ind.indicatorName}, hasil ${finalScoreStr}`}
-                                      onClick={(e) => handleTriggerClick(e, "final_score", ind, cat.categoryName, cat.categoryWeight)}
-                                      onMouseEnter={(e) => handleTriggerMouseEnter("final_score", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
-                                      onMouseLeave={handleTriggerMouseLeave}
-                                      className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs font-medium text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-slate-400 whitespace-nowrap"
-                                    >
-                                      <span className="font-medium text-slate-800 text-xs">
-                                        {finalScoreStr}
-                                      </span>
-                                      <Info
-                                        className="w-[11px] h-[11px] stroke-[1.75] text-slate-400 group-hover:text-slate-600 transition-colors shrink-0"
-                                        aria-hidden="true"
-                                      />
-                                    </button>
+                                    <span className="text-slate-300 text-xs select-none" title="Bobot parameter tertera pada baris utama parameter">-</span>
+                                  )}
+                                </td>
+
+                                {/* 6. Skor Akhir: Hanya tampil pada sub-indikator (pada parameter tunggal sudah terakumulasi di baris utama parameter) */}
+                                <td className="py-2.5 px-2 border-r border-slate-200 border-b-2 border-slate-300 text-center align-middle font-sans">
+                                  {hasSubIndicators ? (
+                                    !finalScoreStr || finalScoreStr === "-" ? (
+                                      <span className="font-normal text-xs text-slate-400 select-none cursor-default">-</span>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        aria-expanded={isFinalPopoverOpen}
+                                        aria-haspopup="dialog"
+                                        aria-label={`Rincian perhitungan skor akhir ${ind.indicatorName}, hasil ${finalScoreStr}`}
+                                        onClick={(e) => handleTriggerClick(e, "final_score", ind, cat.categoryName, cat.categoryWeight, subWeightPctVal, hasSubIndicators)}
+                                        onMouseEnter={(e) => handleTriggerMouseEnter("final_score", ind, cat.categoryName, cat.categoryWeight, e.currentTarget, subWeightPctVal, hasSubIndicators)}
+                                        onMouseLeave={handleTriggerMouseLeave}
+                                        className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs font-medium text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-slate-400 whitespace-nowrap"
+                                      >
+                                        <span className="font-medium text-slate-800 text-xs">
+                                          {finalScoreStr}
+                                        </span>
+                                        <Info
+                                          className="w-[11px] h-[11px] stroke-[1.75] text-slate-400 group-hover:text-slate-600 transition-colors shrink-0"
+                                          aria-hidden="true"
+                                        />
+                                      </button>
+                                    )
+                                  ) : (
+                                    <span className="text-slate-300 text-xs select-none" title="Skor akhir terakumulasi pada baris utama parameter">-</span>
                                   )}
                                 </td>
 
@@ -5202,22 +5275,20 @@ export function MonthlyAssessmentView({
         // Weights
         const pParamWeightRaw = popoverAnchor.categoryWeight ?? pInd.parameterWeight ?? 0;
         const pParamWeightPct = Math.round(pParamWeightRaw > 1 ? pParamWeightRaw : pParamWeightRaw * 100);
-        const isSingleIndicator = Math.round((pInd.indicatorWeight || 0) * 100) === 100 && pParamWeightPct > 0;
-        const pIndicatorWeightPct = isSingleIndicator
-          ? pParamWeightPct
-          : Math.round((pInd.indicatorWeight || 0) * 100);
+        const hasSubInd = popoverAnchor.hasSubIndicators ?? false;
+        const pIndicatorWeightPct = popoverAnchor.subWeightPct ?? Math.round((pInd.indicatorWeight || 0) * 100);
 
         // Bobot: Efektivitas & Rumus
-        const pEfektivitasVal = pMaxScore > 0 ? (pEffectiveScore / pMaxScore) * pIndicatorWeightPct : 0;
+        const pEfektivitasVal = pMaxScore > 0 ? (pEffectiveScore / pMaxScore) * (hasSubInd ? pIndicatorWeightPct : pParamWeightPct) : 0;
         const pEfektivitasDisplay = `${pEfektivitasVal.toFixed(1).replace(/\.0$/, "").replace(".", ",")}%`;
-        const pWeightFormula = `${pEffectiveScore} / ${pMaxScore} × ${pIndicatorWeightPct}% = ${pEfektivitasDisplay}`;
+        const pWeightFormula = `${pEffectiveScore} / ${pMaxScore} × ${hasSubInd ? pIndicatorWeightPct : pParamWeightPct}% = ${pEfektivitasDisplay}`;
 
         // Skor Akhir: Nilai & Rumus
         const pFinalScoreDisplay = pInd.annualFinalScoreDisplay || pInd.finalScoreDisplay || "0.0%";
         const pFinalScoreFormula =
-          !isSingleIndicator && pParamWeightPct > 0 && pParamWeightPct < 100
-            ? `(${pEffectiveScore} / ${pMaxScore}) × ${pIndicatorWeightPct}% × ${pParamWeightPct}% = ${pFinalScoreDisplay}`
-            : `(${pEffectiveScore} / ${pMaxScore}) × ${pIndicatorWeightPct}% = ${pFinalScoreDisplay}`;
+          hasSubInd && pParamWeightPct > 0
+            ? `(${pEffectiveScore} / ${pMaxScore}) × ${pIndicatorWeightPct}% (Porsi) × ${pParamWeightPct}% (Param) = ${pFinalScoreDisplay}`
+            : `(${pEffectiveScore} / ${pMaxScore}) × ${pParamWeightPct}% = ${pFinalScoreDisplay}`;
 
         const popoverWidth = 295;
         let popoverLeft = popoverAnchor.rect.left + popoverAnchor.rect.width / 2 - popoverWidth / 2;
@@ -5921,25 +5992,35 @@ export function MonthlyAssessmentView({
                                 {/* 2. Kriteria Penilaian (Flat sub-rows dengan border tipis) */}
                                 <td className="p-0 border-r border-slate-200 border-b-2 border-slate-300 align-middle">
                                   {ind.scoringRules && ind.scoringRules.length > 0 ? (
-                                    <div className="divide-y divide-slate-200/80">
+                                    <div className="divide-y divide-slate-200">
                                       {ind.scoringRules.slice(0, 3).map((r, rIdx) => {
                                         const matchedLabel = ind.annualBandLabel || ind.bandLabel;
+                                        const numScore = effectiveScore !== null && effectiveScore !== undefined ? Number(effectiveScore) : null;
                                         const isMatched =
                                           hasActual &&
-                                          (matchedLabel === (r.label || `${r.score}`) ||
-                                            effectiveScore === Number(r.score));
+                                          numScore !== null &&
+                                          !isNaN(numScore) &&
+                                          (
+                                            (matchedLabel ? matchedLabel === (r.label || `${r.score}`) : false) ||
+                                            Number(r.score) === numScore
+                                          );
 
                                         return (
                                           <div
                                             key={rIdx}
-                                            className={`h-7 flex items-center px-3 text-[11px] font-normal truncate ${
+                                            className={`h-7 flex items-center justify-between px-3 text-[11px] truncate transition-colors ${
                                               isMatched
-                                                ? "bg-slate-100 text-slate-900 font-medium"
+                                                ? "bg-emerald-50 text-emerald-900 font-semibold border-l-2 border-emerald-500"
                                                 : "text-slate-600"
                                             }`}
                                             title={cleanRuleNumeric(r, ind.unit)}
                                           >
-                                            {cleanRuleNumeric(r, ind.unit)}
+                                            <span className="truncate">{cleanRuleNumeric(r, ind.unit)}</span>
+                                            {isMatched && (
+                                              <span className="text-[10px] text-emerald-600 font-bold shrink-0 ml-1.5" title="Kriteria Tercapai">
+                                                ✓
+                                              </span>
+                                            )}
                                           </div>
                                         );
                                       })}
@@ -5961,15 +6042,16 @@ export function MonthlyAssessmentView({
                                 {/* 3. Skor (Flat sub-rows dengan border tipis) */}
                                 <td className="p-0 border-r border-slate-200 border-b-2 border-slate-300 align-middle text-center">
                                   {ind.scoringRules && ind.scoringRules.length > 0 ? (
-                                    <div className="divide-y divide-slate-200/80">
+                                    <div className="divide-y divide-slate-200">
                                       {ind.scoringRules.slice(0, 3).map((r, rIdx) => {
-                                        const isMatched = hasActual && effectiveScore === Number(r.score);
+                                        const numScore = effectiveScore !== null && effectiveScore !== undefined ? Number(effectiveScore) : null;
+                                        const isMatched = hasActual && numScore !== null && !isNaN(numScore) && Number(r.score) === numScore;
                                         return (
                                           <div
                                             key={rIdx}
-                                            className={`h-7 flex items-center justify-center px-2 text-[11px] font-normal ${
+                                            className={`h-7 flex items-center justify-center px-2 text-[11px] font-mono transition-colors ${
                                               isMatched
-                                                ? "bg-slate-100 text-slate-900 font-medium"
+                                                ? "bg-emerald-50 text-emerald-800 font-bold"
                                                 : "text-slate-600"
                                             }`}
                                           >
@@ -6002,9 +6084,9 @@ export function MonthlyAssessmentView({
                                       onClick={(e) => handleTriggerClick(e, "realization", ind, cat.categoryName, cat.categoryWeight)}
                                       onMouseEnter={(e) => handleTriggerMouseEnter("realization", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
                                       onMouseLeave={handleTriggerMouseLeave}
-                                      className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs font-normal text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-slate-400 whitespace-nowrap"
+                                      className="group inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-xs font-medium text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-slate-400 whitespace-nowrap"
                                     >
-                                      <span className="font-normal text-slate-800 text-xs">
+                                      <span className="font-medium text-slate-800 text-xs">
                                         {effectiveScore} pt
                                       </span>
                                       <Info
@@ -6018,12 +6100,20 @@ export function MonthlyAssessmentView({
                                 {/* 5. Bobot */}
                                 <td className="py-2.5 px-2 border-r border-slate-200 border-b-2 border-slate-300 text-center align-middle font-sans">
                                   {(() => {
-                                    const isSingleIndicator = cat.indicators.length === 1;
-                                    const weightPctVal = isSingleIndicator
-                                      ? Math.round((cat.categoryWeight || 0) * 100)
-                                      : Math.round((ind.indicatorWeight || 0) * 100);
+                                    const hasSub = cat.indicators.length > 1;
+                                    if (!hasSub) {
+                                      return <span className="text-slate-300 text-xs select-none" title="Bobot parameter tertera pada baris utama parameter">-</span>;
+                                    }
+                                    const totalCatIndW = cat.indicators.reduce((sum, i) => sum + (Number(i.indicatorWeight) || 0), 0);
+                                    const normW = totalCatIndW > 1.05
+                                      ? (Number(ind.indicatorWeight) || 1) / totalCatIndW
+                                      : (Number(ind.indicatorWeight) || (1 / cat.indicators.length));
+                                    const weightPctVal = Math.round(normW * 100);
                                     return (
-                                      <span className="font-normal text-xs text-slate-700 select-none">
+                                      <span
+                                        className="font-normal text-xs text-slate-700 select-none"
+                                        title={`Bobot sub-indikator: ${weightPctVal}% dari parameter (${Math.round(weightPctVal * cat.categoryWeight)}% total KPI)`}
+                                      >
                                         {weightPctVal}%
                                       </span>
                                     );
@@ -6033,6 +6123,16 @@ export function MonthlyAssessmentView({
                                 {/* 6. Skor Akhir (Nilai Skor Akhir + Ikon Info) */}
                                 <td className="py-2.5 px-3 border-b-2 border-slate-300 text-right align-middle font-sans">
                                   {(() => {
+                                    const hasSub = cat.indicators.length > 1;
+                                    if (!hasSub) {
+                                      return <span className="text-slate-300 text-xs select-none" title="Skor akhir terakumulasi pada baris utama parameter">-</span>;
+                                    }
+                                    const totalCatIndW = cat.indicators.reduce((sum, i) => sum + (Number(i.indicatorWeight) || 0), 0);
+                                    const normW = totalCatIndW > 1.05
+                                      ? (Number(ind.indicatorWeight) || 1) / totalCatIndW
+                                      : (Number(ind.indicatorWeight) || (1 / cat.indicators.length));
+                                    const subWPct = Math.round(normW * 100);
+
                                     const finalScoreStr = ind.annualFinalScoreDisplay || ind.finalScoreDisplay;
                                     if (!finalScoreStr || finalScoreStr === "-") {
                                       return <span className="text-slate-300 text-xs font-normal select-none cursor-default">-</span>;
@@ -6048,8 +6148,8 @@ export function MonthlyAssessmentView({
                                         aria-expanded={isFinalPopoverOpen}
                                         aria-haspopup="dialog"
                                         aria-label={`Rincian perhitungan skor akhir ${ind.indicatorName}, hasil ${finalScoreStr}`}
-                                        onClick={(e) => handleTriggerClick(e, "final_score", ind, cat.categoryName, cat.categoryWeight)}
-                                        onMouseEnter={(e) => handleTriggerMouseEnter("final_score", ind, cat.categoryName, cat.categoryWeight, e.currentTarget)}
+                                        onClick={(e) => handleTriggerClick(e, "final_score", ind, cat.categoryName, cat.categoryWeight, subWPct, true)}
+                                        onMouseEnter={(e) => handleTriggerMouseEnter("final_score", ind, cat.categoryName, cat.categoryWeight, e.currentTarget, subWPct, true)}
                                         onMouseLeave={handleTriggerMouseLeave}
                                         className="group inline-flex items-center justify-end gap-1 px-1.5 py-1 rounded text-xs font-medium text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none focus:ring-1 focus:ring-slate-400 whitespace-nowrap"
                                       >

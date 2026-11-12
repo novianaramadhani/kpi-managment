@@ -942,6 +942,33 @@ export async function getMonthlyAssessmentDetail(params: {
     });
   }
 
+  // 5b. Normalisasi bobot indikator jika dalam satu kategori terdapat beberapa sub-indikator (misal masing-masing tercatat 1.0)
+  for (const group of categoryMap.values()) {
+    if (group.indicators.length > 1) {
+      const sumW = group.indicators.reduce((acc, ind) => acc + (ind.indicatorWeight || 0), 0);
+      if (sumW > 1.05) {
+        for (const ind of group.indicators) {
+          ind.indicatorWeight = ind.indicatorWeight / sumW;
+          const maxS = ind.maxScore || 25;
+          if (ind.score !== null) {
+            const frac = (ind.score / maxS) * ind.indicatorWeight * ind.parameterWeight;
+            ind.finalScoreFraction = parseFloat(frac.toFixed(6));
+            ind.finalScorePercentage = parseFloat((frac * 100).toFixed(2));
+            ind.finalScoreDisplay = `${ind.finalScorePercentage.toFixed(1)}%`;
+          }
+          if (ind.annualScore !== null && ind.annualScore !== undefined) {
+            const annFrac = (ind.annualScore / maxS) * ind.indicatorWeight * ind.parameterWeight;
+            ind.annualFinalScoreFraction = parseFloat(annFrac.toFixed(6));
+            ind.annualFinalScorePercentage = parseFloat((annFrac * 100).toFixed(2));
+            ind.annualFinalScoreDisplay = `${ind.annualFinalScorePercentage.toFixed(1)}%`;
+          }
+        }
+      }
+    } else if (group.indicators.length === 1) {
+      group.indicators[0].indicatorWeight = 1.0;
+    }
+  }
+
   // 6. Hitung agregasi parameter & agregasi total KPI (Bulanan & Tahunan)
   const categoriesList: MonthlyCategoryGroup[] = [];
   const paramScoreSummaries: { totalFraction: number }[] = [];

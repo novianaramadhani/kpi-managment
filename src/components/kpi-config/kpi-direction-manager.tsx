@@ -25,6 +25,87 @@ interface Props {
   initialData?: KpiDirection[];
 }
 
+const DIRECTION_PRESETS = [
+  {
+    code: "HIGHER_IS_BETTER",
+    name: "Higher is Better (Makin Tinggi Makin Baik)",
+    formulaHint: "Realisasi / Target (Makin Tinggi Makin Bagus)",
+    description: "Semakin tinggi hasil aktual melampaui target, nilainya semakin bagus. Cocok untuk omzet, volume produksi, dan efisiensi.",
+  },
+  {
+    code: "LOWER_IS_BETTER",
+    name: "Lower is Better (Makin Rendah Makin Baik)",
+    formulaHint: "Target / Realisasi (Makin Kecil/Cepat Makin Bagus)",
+    description: "Semakin kecil angka aktual dari target, nilainya semakin bagus. Cocok untuk hari pengiriman (lead time), kerusakan barang, dan komplain.",
+  },
+  {
+    code: "EXACT_TARGET",
+    name: "Exact Target (Tepat Target)",
+    formulaHint: "Wajib Pas Target (Nol Deviasi)",
+    description: "Nilai harus tepat sama persis dengan target yang ditentukan. Jika pas dapat nilai penuh 100%, jika meleset mendapat nilai 0%.",
+  },
+  {
+    code: "TARGET_RANGE",
+    name: "Target Range (Rentang Target)",
+    formulaHint: "Rentang Toleransi (Antara Batas Min & Max)",
+    description: "Nilai dianggap tercapai 100% jika berada di dalam rentang batas minimum dan maksimum yang ditentukan.",
+  },
+  {
+    code: "NOT_APPLICABLE",
+    name: "Not Applicable (Kualitatif / Tanpa Rumus)",
+    formulaHint: "Kriteria Bertingkat (Tanpa Rumus Hitungan)",
+    description: "Untuk indikator kualitatif, status teks, atau checklist di mana nilai dihitung langsung dari kriteria skor yang dipilih.",
+  },
+];
+
+const FORMULA_PRESETS = [
+  {
+    value: "Realisasi / Target (Makin Tinggi Makin Bagus)",
+    label: "Realisasi ÷ Target (Makin Tinggi Makin Bagus)",
+    example: "Contoh: Omzet, Produksi (Capai 120 dari target 100 = 120%)",
+  },
+  {
+    value: "Target / Realisasi (Makin Kecil/Cepat Makin Bagus)",
+    label: "Target ÷ Realisasi (Makin Kecil / Cepat Makin Bagus)",
+    example: "Contoh: Lead Time, Kerusakan (Target 3 hari, selesai 2 hari = Lebih Cepat)",
+  },
+  {
+    value: "Wajib Pas Target (Nol Deviasi)",
+    label: "Wajib Pas Target (Harus Tepat Sama)",
+    example: "Contoh: Target 100%. Pas = 100%, Kurang/Lebih = 0%",
+  },
+  {
+    value: "Rentang Toleransi (Antara Batas Min & Max)",
+    label: "Rentang Toleransi (Antara Min s/d Max)",
+    example: "Contoh: Suhu 20°C - 25°C, Anggaran biaya ±5%",
+  },
+  {
+    value: "Kriteria Bertingkat (Tanpa Rumus Hitungan)",
+    label: "Kriteria Bertingkat (Penilaian Langsung / Skala)",
+    example: "Contoh: Kedisiplinan, Kerapian, Checklist SOP (Skor 5, 15, 25)",
+  },
+];
+
+export function formatFriendlyFormula(formula: string | null | undefined): string {
+  if (!formula) return "-";
+  if (formula.includes("Actual / Target") || formula.includes("Realisasi / Target") || formula.includes("Realisasi ÷ Target")) {
+    return "Realisasi ÷ Target (Makin Tinggi Bagus)";
+  }
+  if (formula.includes("Target / Actual") || formula.includes("Target / Realisasi") || formula.includes("Target ÷ Realisasi")) {
+    return "Target ÷ Realisasi (Makin Cepat/Kecil Bagus)";
+  }
+  if (formula.includes("Actual ==") || formula.includes("Pas Target") || formula.includes("Tepat Target")) {
+    return "Wajib Pas Target (Nol Deviasi)";
+  }
+  if (formula.includes("Min <=") || formula.includes("Rentang")) {
+    return "Rentang Toleransi (Min – Max)";
+  }
+  if (formula.includes("Kriteria") || formula.includes("Kualitatif")) {
+    return "Kriteria Bertingkat (Tanpa Rumus)";
+  }
+  return formula;
+}
+
 export function KpiDirectionManager({ initialData = [] }: Props) {
   const [data, setData] = useState<KpiDirection[]>(initialData);
   const [loading, setLoading] = useState<boolean>(initialData.length === 0);
@@ -41,6 +122,8 @@ export function KpiDirectionManager({ initialData = [] }: Props) {
   const [formFormulaHint, setFormFormulaHint] = useState<string>("");
   const [formSortOrder, setFormSortOrder] = useState<number>(0);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [isCustomFormula, setIsCustomFormula] = useState<boolean>(false);
+  const [customFormulaInput, setCustomFormulaInput] = useState<string>("");
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -73,8 +156,10 @@ export function KpiDirectionManager({ initialData = [] }: Props) {
     setFormCode("");
     setFormName("");
     setFormDescription("");
-    setFormFormulaHint("(Actual / Target) * 100%");
+    setFormFormulaHint(FORMULA_PRESETS[0].value);
     setFormSortOrder(data.length + 1);
+    setIsCustomFormula(false);
+    setCustomFormulaInput("");
     setIsModalOpen(true);
   };
 
@@ -83,7 +168,28 @@ export function KpiDirectionManager({ initialData = [] }: Props) {
     setFormCode(item.code);
     setFormName(item.name);
     setFormDescription(item.description || "");
-    setFormFormulaHint(item.formulaHint || "");
+    const rawHint = item.formulaHint || "";
+    const matchedPreset = FORMULA_PRESETS.find(
+      (f) =>
+        f.value === rawHint ||
+        (rawHint.includes("Actual / Target") && f.value.includes("Realisasi / Target")) ||
+        (rawHint.includes("Target / Actual") && f.value.includes("Target / Realisasi")) ||
+        (rawHint.includes("Actual ==") && f.value.includes("Pas Target")) ||
+        (rawHint.includes("Min <=") && f.value.includes("Rentang"))
+    );
+    if (matchedPreset) {
+      setFormFormulaHint(matchedPreset.value);
+      setIsCustomFormula(false);
+      setCustomFormulaInput("");
+    } else if (rawHint) {
+      setFormFormulaHint(rawHint);
+      setIsCustomFormula(true);
+      setCustomFormulaInput(rawHint);
+    } else {
+      setFormFormulaHint(FORMULA_PRESETS[0].value);
+      setIsCustomFormula(false);
+      setCustomFormulaInput("");
+    }
     setFormSortOrder(item.sortOrder);
     setIsModalOpen(true);
   };
@@ -186,41 +292,45 @@ export function KpiDirectionManager({ initialData = [] }: Props) {
   const getDirectionBadge = (code: string) => {
     switch (code) {
       case "HIGHER_IS_BETTER":
-        return (
-          <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">
-            <TrendingUp className="h-3 w-3" />
-            Makin Tinggi Makin Baik
-          </span>
-        );
+        return {
+          icon: TrendingUp,
+          theme: "bg-emerald-50 text-emerald-700 border border-emerald-200/60",
+        };
       case "LOWER_IS_BETTER":
-        return (
-          <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700 border border-amber-200">
-            <TrendingDown className="h-3 w-3" />
-            Makin Rendah Makin Baik
-          </span>
-        );
+        return {
+          icon: TrendingDown,
+          theme: "bg-amber-50 text-amber-700 border border-amber-200/60",
+        };
       case "EXACT_TARGET":
-        return (
-          <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 border border-blue-200">
-            <Target className="h-3 w-3" />
-            Tepat Target
-          </span>
-        );
+        return {
+          icon: Target,
+          theme: "bg-sky-50 text-sky-700 border border-sky-200/60",
+        };
       case "TARGET_RANGE":
-        return (
-          <span className="inline-flex items-center gap-1 rounded-md bg-purple-50 px-2 py-0.5 text-xs font-semibold text-purple-700 border border-purple-200">
-            <SlidersHorizontal className="h-3 w-3" />
-            Rentang Target
-          </span>
-        );
+        return {
+          icon: SlidersHorizontal,
+          theme: "bg-purple-50 text-purple-700 border border-purple-200/60",
+        };
       default:
-        return (
-          <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700 border border-slate-200">
-            <Compass className="h-3 w-3" />
-            Arah Standar
-          </span>
-        );
+        return {
+          icon: Compass,
+          theme: "bg-slate-100 text-slate-700 border border-slate-200/60",
+        };
     }
+  };
+
+  const parseDirectionName = (name: string) => {
+    const match = name.match(/^(.*?)\s*\((.*?)\)$/);
+    if (match) {
+      return {
+        primary: match[1].trim(),
+        secondary: match[2].trim(),
+      };
+    }
+    return {
+      primary: name,
+      secondary: null,
+    };
   };
 
   return (
@@ -277,64 +387,76 @@ export function KpiDirectionManager({ initialData = [] }: Props) {
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-600">
-                  <th className="py-2.5 px-3.5 w-64">Arah Penilaian &amp; Kode</th>
+                <tr className="border-b border-slate-200 bg-slate-50/75 text-[11px] font-semibold text-slate-600">
+                  <th className="py-2.5 px-3.5 w-64">Arah Penilaian</th>
                   <th className="py-2.5 px-3 w-48">Rumus Acuan</th>
                   <th className="py-2.5 px-3">Penjelasan &amp; Contoh</th>
                   <th className="py-2.5 px-3.5 text-right w-20">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredData.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
-                    {/* Arah & Kode */}
-                    <td className="py-2.5 px-3.5">
-                      <div className="flex items-center gap-2.5">
-                        <div className="shrink-0">{getDirectionBadge(item.code)}</div>
-                        <div>
-                          <div className="font-semibold text-slate-900 text-xs">{item.name}</div>
-                          <div className="text-[10px] font-mono text-slate-400 uppercase">{item.code}</div>
+                {filteredData.map((item) => {
+                  const badgeInfo = getDirectionBadge(item.code);
+                  const Icon = badgeInfo.icon;
+                  const parsed = parseDirectionName(item.name);
+
+                  return (
+                    <tr key={item.id} className="hover:bg-slate-50/70 transition-colors">
+                      {/* Arah & Kode */}
+                      <td className="py-2.5 px-3.5">
+                        <div className="min-w-0">
+                          <div className="font-semibold text-slate-900 text-xs flex items-center gap-1.5 flex-wrap">
+                            <span>{parsed.primary}</span>
+                            {parsed.secondary && (
+                              <span className="text-[11px] font-normal text-slate-500">
+                                • {parsed.secondary}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] font-mono text-slate-400 uppercase mt-0.5">
+                            {item.code}
+                          </div>
                         </div>
-                      </div>
-                    </td>
+                      </td>
 
-                    {/* Rumus Acuan */}
-                    <td className="py-2.5 px-3">
-                      <span className="inline-flex items-center font-mono text-[11px] text-slate-700 bg-slate-50 px-2 py-0.5 rounded border border-slate-200">
-                        {item.formulaHint || "-"}
-                      </span>
-                    </td>
+                      {/* Rumus Acuan */}
+                      <td className="py-2.5 px-3">
+                        <span className="inline-block rounded-md bg-slate-50 px-2 py-1 font-medium text-[11px] text-slate-700 border border-slate-200/70">
+                          {formatFriendlyFormula(item.formulaHint)}
+                        </span>
+                      </td>
 
-                    {/* Penjelasan */}
-                    <td className="py-2.5 px-3">
-                      <p className="text-xs text-slate-600 leading-relaxed max-w-xl">
-                        {item.description || "-"}
-                      </p>
-                    </td>
+                      {/* Penjelasan */}
+                      <td className="py-2.5 px-3">
+                        <p className="text-xs text-slate-600 leading-relaxed max-w-xl">
+                          {item.description || "-"}
+                        </p>
+                      </td>
 
-                    {/* Aksi */}
-                    <td className="py-2.5 px-3.5 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          onClick={() => openEditModal(item)}
-                          className="rounded-md border border-slate-200 bg-white p-1 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition"
-                          title="Edit"
-                        >
-                          <Edit2 className="h-3.5 w-3.5" />
-                        </button>
-                        {item.isActive && (
+                      {/* Aksi */}
+                      <td className="py-2.5 px-3.5 text-right">
+                        <div className="flex items-center justify-end gap-1">
                           <button
-                            onClick={() => handleDelete(item)}
-                            className="rounded-md border border-rose-200 bg-rose-50 p-1 text-rose-600 hover:bg-rose-100 transition"
-                            title="Hapus"
+                            onClick={() => openEditModal(item)}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+                            title="Edit"
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            <Edit2 className="h-3.5 w-3.5" />
                           </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                          {item.isActive && (
+                            <button
+                              onClick={() => handleDelete(item)}
+                              className="inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                              title="Hapus"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -363,6 +485,36 @@ export function KpiDirectionManager({ initialData = [] }: Props) {
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-3.5 text-xs">
+              {/* Dropdown Preset Cepat */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Pilih Preset Arah Evaluasi
+                </label>
+                <select
+                  value={DIRECTION_PRESETS.some((p) => p.code === formCode) ? formCode : formCode ? "CUSTOM" : ""}
+                  onChange={(e) => {
+                    const selected = e.target.value;
+                    if (selected === "CUSTOM") return;
+                    const found = DIRECTION_PRESETS.find((p) => p.code === selected);
+                    if (found) {
+                      setFormCode(found.code);
+                      setFormName(found.name);
+                      setFormFormulaHint(found.formulaHint);
+                      setFormDescription(found.description);
+                    }
+                  }}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:outline-hidden"
+                >
+                  <option value="">-- Pilih dari Template Standar --</option>
+                  {DIRECTION_PRESETS.map((p) => (
+                    <option key={p.code} value={p.code}>
+                      {p.name}
+                    </option>
+                  ))}
+                  <option value="CUSTOM">Custom (Ketik Manual)</option>
+                </select>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -374,7 +526,7 @@ export function KpiDirectionManager({ initialData = [] }: Props) {
                     value={formCode}
                     onChange={(e) => setFormCode(e.target.value)}
                     required
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-mono uppercase text-slate-900 focus:border-blue-500 focus:outline-hidden"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-mono uppercase text-slate-900 focus:border-slate-900 focus:outline-hidden"
                   />
                 </div>
 
@@ -388,20 +540,90 @@ export function KpiDirectionManager({ initialData = [] }: Props) {
                     value={formName}
                     onChange={(e) => setFormName(e.target.value)}
                     required
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:outline-hidden"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Rumus Kalkulasi Acuan</label>
-                <input
-                  type="text"
-                  placeholder="misal: (Actual / Target) * 100% atau (Target / Actual) * 100%"
-                  value={formFormulaHint}
-                  onChange={(e) => setFormFormulaHint(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-mono text-slate-900 focus:border-blue-500 focus:outline-hidden"
-                />
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-700">Cara Perhitungan (Rumus Acuan)</label>
+                  {!isCustomFormula ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomFormula(true);
+                        setCustomFormulaInput(formFormulaHint || "");
+                      }}
+                      className="inline-flex items-center gap-1 rounded-md bg-slate-100 hover:bg-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-700 transition"
+                    >
+                      <Plus className="h-3 w-3" />
+                      <span>Tambah Rumus Custom</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomFormula(false);
+                        if (!FORMULA_PRESETS.some((f) => f.value === formFormulaHint)) {
+                          setFormFormulaHint(FORMULA_PRESETS[0].value);
+                        }
+                      }}
+                      className="text-[11px] font-medium text-slate-500 hover:text-slate-800 underline transition"
+                    >
+                      Pilih dari Template Standar
+                    </button>
+                  )}
+                </div>
+
+                {!isCustomFormula ? (
+                  <div className="space-y-1.5">
+                    {/* Dropdown Bersih Tanpa Input Manual */}
+                    <select
+                      value={formFormulaHint}
+                      onChange={(e) => setFormFormulaHint(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:outline-hidden"
+                    >
+                      {FORMULA_PRESETS.map((f) => (
+                        <option key={f.value} value={f.value}>
+                          {f.label}
+                        </option>
+                      ))}
+                    </select>
+
+                    {/* Panduan cara baca */}
+                    {(() => {
+                      const activePreset = FORMULA_PRESETS.find((f) => f.value === formFormulaHint);
+                      if (activePreset) {
+                        return (
+                          <div className="rounded-lg bg-sky-50 border border-sky-200/70 p-2 text-[11px] text-sky-900 flex items-start gap-1.5">
+                            <span className="shrink-0 font-semibold">Cara membaca:</span>
+                            <span>{activePreset.example}</span>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {/* Input Khusus Muncul Hanya Saat Tombol Tambah Rumus Custom Diklik */}
+                    <input
+                      type="text"
+                      placeholder="Ketik keterangan rumus acuan custom..."
+                      value={customFormulaInput}
+                      onChange={(e) => {
+                        setCustomFormulaInput(e.target.value);
+                        setFormFormulaHint(e.target.value);
+                      }}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-hidden"
+                      autoFocus
+                    />
+                    <p className="text-[11px] text-slate-400">
+                      Ketikkan keterangan petunjuk cara hitung rumus khusus yang diinginkan.
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -411,7 +633,7 @@ export function KpiDirectionManager({ initialData = [] }: Props) {
                   placeholder="Penjelasan kapan arah penilaian ini digunakan dan contoh indikatornya..."
                   value={formDescription}
                   onChange={(e) => setFormDescription(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-hidden"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:outline-hidden"
                 />
               </div>
 

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Swal from "sweetalert2";
-import { Search, RefreshCw } from "lucide-react";
+import { Search, RefreshCw, Pencil, Trash2 } from "lucide-react";
 
 interface Department {
   id: number;
@@ -125,6 +125,8 @@ export function AssessorMatrixManager({
   const [selectedDeptId, setSelectedDeptId] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ASSIGNED" | "UNASSIGNED">("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const PAGE_SIZE = 25;
 
   // Data State
   const [assignments, setAssignments] = useState<AssessorAssignmentRow[]>([]);
@@ -290,6 +292,17 @@ export function AssessorMatrixManager({
     });
   }, [enrichedTemplateRows, selectedDeptId, statusFilter, searchQuery]);
 
+  // Reset page to 1 whenever filters or search query change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedPeriodId, selectedDeptId, statusFilter, searchQuery]);
+
+  const totalPages = Math.ceil(filteredTemplateRows.length / PAGE_SIZE) || 1;
+  const paginatedRows = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filteredTemplateRows.slice(start, start + PAGE_SIZE);
+  }, [filteredTemplateRows, currentPage]);
+
   // Open Assign Modal for a specific Template KPI row
   const handleOpenAssignForTemplate = (tpl: TemplateOption) => {
     setModalTemplateId(tpl.id);
@@ -336,6 +349,55 @@ export function AssessorMatrixManager({
         icon: "success",
         title: "Terhapus",
         text: "Penugasan penilai berhasil dihapus.",
+        timer: 1400,
+        showConfirmButton: false,
+      });
+      fetchAssignments();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Gagal menghapus.";
+      Swal.fire({ icon: "error", title: "Gagal", text: msg });
+    }
+  };
+
+  // Delete all assessor assignments for a template / employee
+  const handleDeleteTemplateAssessors = async (
+    tpl: TemplateOption,
+    assessors: GroupedTemplateAssessorRow[],
+    targetName: string
+  ) => {
+    if (assessors.length === 0) return;
+
+    if (assessors.length === 1) {
+      return handleDelete(assessors[0]);
+    }
+
+    const assessorNames = assessors.map((a) => a.assessorName).join(", ");
+    const result = await Swal.fire({
+      title: "Hapus Penugasan Penilai?",
+      html: `Apakah Anda yakin ingin menghapus seluruh penugasan penilai (<b>${assessorNames}</b>) untuk <b>${targetName}</b>?`,
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#d33",
+      cancelButtonColor: "#64748b",
+      confirmButtonText: "Ya, Hapus Semua",
+      cancelButtonText: "Batal",
+    });
+
+    if (!result.isConfirmed) return;
+
+    try {
+      const allIds = assessors.flatMap((a) => a.assignmentIds);
+      const idsParam = allIds.join(",");
+      const res = await fetch(`/api/admin/assessor-assignments?ids=${idsParam}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal menghapus penugasan asesor.");
+
+      Swal.fire({
+        icon: "success",
+        title: "Terhapus",
+        text: `Penugasan penilai untuk ${targetName} berhasil dihapus.`,
         timer: 1400,
         showConfirmButton: false,
       });
@@ -554,11 +616,12 @@ export function AssessorMatrixManager({
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+            <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  <th className="py-2.5 px-3.5">Template KPI &amp; Karyawan Dinilai</th>
+                  <th className="py-2.5 px-3.5">Karyawan Dinilai</th>
                   <th className="py-2.5 px-3.5">Departemen</th>
                   <th className="py-2.5 px-3.5">Asesor Penilai</th>
                   <th className="py-2.5 px-3.5">Role &amp; Tahap</th>
@@ -567,23 +630,42 @@ export function AssessorMatrixManager({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredTemplateRows.map(({ tpl, dept, jobLevel, ownerEmp, tplAssessors }) => (
-                  <tr key={tpl.id} className="hover:bg-slate-50/70 transition-colors">
-                    {/* Template KPI & Owner Employee */}
-                    <td className="py-3 px-3.5">
-                      <div className="font-semibold text-slate-900">{tpl.name}</div>
-                      {ownerEmp ? (
-                        <div className="text-[11px] text-slate-500 mt-0.5">
-                          <span className="font-medium text-slate-700">{ownerEmp.name}</span>{" "}
-                          <span className="font-mono text-slate-400">({ownerEmp.nik})</span>
-                          {ownerEmp.jobPosition ? ` • ${ownerEmp.jobPosition}` : ""}
-                        </div>
-                      ) : (
-                        <div className="text-[11px] text-slate-400 mt-0.5">
-                          Template Standar Departemen
-                        </div>
-                      )}
-                    </td>
+                {paginatedRows.map(({ tpl, dept, jobLevel, ownerEmp, tplAssessors }) => {
+                  const isAutoGeneratedEmployeeName =
+                    ownerEmp &&
+                    tpl.name.toLowerCase().includes(ownerEmp.name.toLowerCase());
+
+                  return (
+                    <tr key={tpl.id} className="hover:bg-slate-50/70 transition-colors">
+                      {/* Template KPI & Owner Employee */}
+                      <td className="py-3 px-3.5">
+                        {ownerEmp ? (
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-semibold text-slate-900">{ownerEmp.name}</span>
+                              <span className="font-mono text-[11px] text-slate-400">({ownerEmp.nik})</span>
+                            </div>
+                            <div className="text-[11px] text-slate-500 flex items-center gap-1.5 flex-wrap">
+                              <span>{ownerEmp.jobPosition || "Karyawan"}</span>
+                              {!isAutoGeneratedEmployeeName && (
+                                <>
+                                  <span className="text-slate-300">•</span>
+                                  <span className="text-slate-400">Template: {tpl.name}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-semibold text-slate-900">{tpl.name}</span>
+                            </div>
+                            <div className="text-[11px] text-slate-400">
+                              Template Standar Departemen
+                            </div>
+                          </div>
+                        )}
+                      </td>
 
                     {/* Departemen */}
                     <td className="py-3 px-3.5">
@@ -648,34 +730,111 @@ export function AssessorMatrixManager({
                     </td>
 
                     {/* Aksi */}
-                    <td className="py-3 px-3.5 text-right">
-                      <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
+                    <td className="py-3 px-3.5 text-right whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {/* Button Edit / Atur Penilai */}
                         <button
                           type="button"
                           onClick={() => handleOpenAssignForTemplate(tpl)}
-                          className="rounded-lg border border-blue-200 bg-blue-50/70 px-2.5 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 transition cursor-pointer"
+                          title={tplAssessors.length > 0 ? "Edit / Atur Penilai" : "Assign Penilai"}
+                          className="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-blue-50 hover:border-blue-300 text-slate-600 hover:text-blue-600 transition shadow-2xs cursor-pointer"
                         >
-                          + Assign Penilai
+                          <Pencil className="w-3.5 h-3.5" />
                         </button>
-                        {tplAssessors.map((a) => (
+
+                        {/* Button Delete */}
+                        {tplAssessors.length > 0 && (
                           <button
-                            key={a.id}
                             type="button"
-                            onClick={() => handleDelete(a)}
-                            title={`Hapus penilai ${a.assessorName}`}
-                            className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 transition cursor-pointer"
+                            onClick={() => handleDeleteTemplateAssessors(tpl, tplAssessors, ownerEmp?.name || tpl.name)}
+                            title={
+                              tplAssessors.length === 1
+                                ? `Hapus penilai ${tplAssessors[0].assessorName}`
+                                : `Hapus seluruh penugasan penilai (${tplAssessors.length})`
+                            }
+                            className="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-rose-50 hover:border-rose-300 text-slate-400 hover:text-rose-600 transition shadow-2xs cursor-pointer"
                           >
-                            Hapus
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
-                        ))}
+                        )}
                       </div>
                     </td>
                   </tr>
-                ))}
+                );
+              })}
               </tbody>
             </table>
           </div>
-        )}
+
+          {/* Pagination Controls (Batas 25 Karyawan per Halaman) */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-slate-200 bg-slate-50/60 text-xs">
+            <div className="text-slate-600 font-medium">
+              Menampilkan <span className="font-semibold text-slate-900">{filteredTemplateRows.length === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1}</span> –{" "}
+              <span className="font-semibold text-slate-900">{Math.min(currentPage * PAGE_SIZE, filteredTemplateRows.length)}</span> dari{" "}
+              <span className="font-semibold text-slate-900">{filteredTemplateRows.length}</span> karyawan dinilai
+            </div>
+
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 bg-white font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+                >
+                  <span>← Sebelumnya</span>
+                </button>
+
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: totalPages }, (_, i) => i + 1)
+                    .filter((page) => {
+                      if (totalPages <= 7) return true;
+                      if (page === 1 || page === totalPages) return true;
+                      if (Math.abs(page - currentPage) <= 1) return true;
+                      return false;
+                    })
+                    .reduce<(number | string)[]>((acc, page, idx, arr) => {
+                      if (idx > 0 && page - (arr[idx - 1] as number) > 1) {
+                        acc.push("...");
+                      }
+                      acc.push(page);
+                      return acc;
+                    }, [])
+                    .map((item, idx) =>
+                      item === "..." ? (
+                        <span key={`ellipsis-${idx}`} className="px-2 py-1 text-slate-400">
+                          ...
+                        </span>
+                      ) : (
+                        <button
+                          key={`page-${item}`}
+                          type="button"
+                          onClick={() => setCurrentPage(item as number)}
+                          className={`min-w-8 h-8 px-2 rounded-lg font-semibold transition cursor-pointer text-xs ${
+                            currentPage === item
+                              ? "bg-blue-600 text-white shadow-2xs"
+                              : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+                          }`}
+                        >
+                          {item}
+                        </button>
+                      )
+                    )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 bg-white font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+                >
+                  <span>Selanjutnya →</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
       </div>
 
       {/* Modal Assign Penilai */}
@@ -726,11 +885,17 @@ export function AssessorMatrixManager({
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-900 focus:border-blue-500 focus:outline-hidden"
                 >
                   <option value="ALL">Semua Template KPI</option>
-                  {templates.map((tpl) => (
-                    <option key={tpl.id} value={tpl.id}>
-                      {tpl.name}
-                    </option>
-                  ))}
+                  {templates.map((tpl) => {
+                    const emp = tpl.employeeId ? employeeMap.get(tpl.employeeId) : null;
+                    const label = emp
+                      ? `${emp.name} (${emp.nik}) - ${emp.jobPosition || "Individu"}`
+                      : tpl.name;
+                    return (
+                      <option key={tpl.id} value={tpl.id}>
+                        {label}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
 

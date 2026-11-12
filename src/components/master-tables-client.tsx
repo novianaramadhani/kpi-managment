@@ -20,6 +20,7 @@ import {
   type SmartDepartmentImportResult,
   matchesSite,
   matchesDeptName,
+  matchesOperatingUnit,
 } from "@/lib/department-mapping-utils";
 import {
   exportDepartmentsToExcel,
@@ -2954,7 +2955,7 @@ export function OperatingUnitTableClient({
           {filteredUnits.map((u) => {
             const isSelected = selectedIds.includes(u.id);
             const empCount = employees.filter(
-              (e) => e.isActive !== false && (e.operatingUnit || "HO").toUpperCase() === u.name.toUpperCase()
+              (e) => e.isActive !== false && matchesOperatingUnit(e.operatingUnit, u.name, u.id)
             ).length;
 
             return (

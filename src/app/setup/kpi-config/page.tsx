@@ -92,7 +92,10 @@ export default async function KpiConfigPage({
       />
 
       {/* Navigation Tabs (Soft Light-Blue Active State) */}
-      <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-white p-1">
+      <div
+        data-tour="step-2-config-tabs"
+        className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-white p-1"
+      >
         {tabsConfig.map((t) => {
           const Icon = t.icon;
           const isActive = activeTab === t.id;

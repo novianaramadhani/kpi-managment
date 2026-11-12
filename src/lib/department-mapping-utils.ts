@@ -57,6 +57,39 @@ export function matchesSite(site1?: string | null, site2?: string | null): boole
   return false;
 }
 
+/**
+ * Mencocokkan nilai operatingUnit karyawan dengan nama atau ID Operating Unit / Site
+ * Menangani variasi penulisan seperti "WS 89" vs "WS89", "ou-ws89", "JO-IC" vs "JOIC", dsb.
+ */
+export function matchesOperatingUnit(
+  empOu?: string | null,
+  unitName?: string | null,
+  unitId?: string | null
+): boolean {
+  if (!unitName && !unitId) return false;
+  const rawEmp = (empOu || "HO").trim().toUpperCase();
+  const rawUnit = (unitName || "").trim().toUpperCase();
+
+  // 1. Pencocokan langsung (exact match)
+  if (rawUnit && rawEmp === rawUnit) return true;
+
+  // 2. Pencocokan alphanumeric bersih (mengabaikan spasi, dash, titik, dsb.)
+  const cleanEmp = rawEmp.replace(/[^A-Z0-9]/g, "");
+  const cleanName = rawUnit.replace(/[^A-Z0-9]/g, "");
+  if (cleanEmp && cleanName && cleanEmp === cleanName) return true;
+
+  // 3. Pencocokan terhadap ID unit (contoh: "ou-ws89" -> "WS89")
+  if (unitId) {
+    const cleanId = unitId.replace(/^ou-/i, "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (cleanId && cleanEmp === cleanId) return true;
+  }
+
+  // 4. Fallback dengan aturan pembersihan site
+  if (rawUnit && matchesSite(rawEmp, rawUnit)) return true;
+
+  return false;
+}
+
 export function cleanDeptBaseName(name?: string | null): string {
   if (!name) return "";
   let str = normalizeDeptName(name);

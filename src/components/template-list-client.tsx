@@ -623,11 +623,11 @@ export function TemplateListClient({
           </div>
 
           {/* Right: Import Excel, Tambah Template */}
-          <div data-tour="step-1-add-template" className="flex items-center gap-2 shrink-0">
+          <div data-tour="step-3-add-template" className="flex items-center gap-2 shrink-0">
             {/* Import Excel Button */}
             <Link
               href="/setup/templates/import"
-              data-tour="step-2-import-btn"
+              data-tour="step-3-import-btn"
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-blue-700 shadow-2xs transition cursor-pointer"
               title="Import Master Template KPI dari berkas Excel"
             >
@@ -661,7 +661,7 @@ export function TemplateListClient({
 
       {/* 2. FLAT ENTERPRISE TABLE VIEW */}
       <div
-        data-tour="step-1-template-table"
+        data-tour="step-3-template-table"
         className="bg-white rounded-xl border border-slate-200/90 shadow-2xs overflow-hidden"
       >
         {/* Selection Banner if any items are selected */}

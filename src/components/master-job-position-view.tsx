@@ -6,7 +6,6 @@ import type { Department, Employee, JobLevel, JobPosition, JobCategory } from "@
 import type { JobPositionMappingWithDetails } from "@/lib/job-position-mapping-actions";
 import { JobPositionTableClient } from "./master-tables-client";
 import { JobPositionMappingTableClient } from "./job-position-mapping-table-client";
-import { Briefcase, Network } from "lucide-react";
 
 interface MasterJobPositionViewProps {
   jobPositions: JobPosition[];
@@ -86,15 +85,14 @@ export function MasterJobPositionView({
             role="tab"
             aria-selected={activeSubtab === "positions"}
             onClick={() => handleTabChange("positions")}
-            className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs transition cursor-pointer ${
+            className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs transition cursor-pointer ${
               activeSubtab === "positions"
-                ? "bg-white text-slate-900 font-bold shadow-xs border border-slate-200/60"
+                ? "bg-white text-slate-900 font-bold shadow-xs border border-slate-200/80"
                 : "text-slate-600 hover:text-slate-900 font-medium hover:bg-white/50"
             }`}
           >
-            <Briefcase className={`w-3.5 h-3.5 ${activeSubtab === "positions" ? "text-slate-900" : "text-slate-500"}`} />
             <span>Job Position</span>
-            <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-600">
               {jobPositions.length}
             </span>
           </button>
@@ -105,20 +103,19 @@ export function MasterJobPositionView({
             role="tab"
             aria-selected={activeSubtab === "mapping"}
             onClick={() => handleTabChange("mapping")}
-            className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs transition cursor-pointer ${
+            className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs transition cursor-pointer ${
               activeSubtab === "mapping"
-                ? "bg-white text-slate-900 font-bold shadow-xs border border-slate-200/60"
+                ? "bg-white text-slate-900 font-bold shadow-xs border border-slate-200/80"
                 : "text-slate-600 hover:text-slate-900 font-medium hover:bg-white/50"
             }`}
           >
-            <Network className={`w-3.5 h-3.5 ${activeSubtab === "mapping" ? "text-slate-900" : "text-slate-500"}`} />
             <span>Mapping Job Level</span>
             {unmappedCount > 0 ? (
-              <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
-                {unmappedCount} Belum Lengkap
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                {unmappedCount} Belum
               </span>
             ) : (
-              <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800">
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700">
                 Lengkap
               </span>
             )}

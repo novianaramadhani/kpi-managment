@@ -19,6 +19,7 @@ import {
   jobPositions,
   kpiAssessorAssignments,
   users,
+  userOnboarding,
   kpiCalculationRules,
   departmentHeads,
   jobLevelParameterWeights,
@@ -58,6 +59,7 @@ import {
 } from "./excel-template-kpi";
 import bcrypt from "bcryptjs";
 import { requireAuth, requireRole, requireAdmin, requireAdminOrHr } from "@/lib/auth-guard";
+import { hasUserPermission } from "@/lib/rbac-catalog";
 
 const s = (fd: FormData, k: string) => (fd.get(k)?.toString().trim() ?? "");
 const n = (fd: FormData, k: string): number | null => {
@@ -1207,7 +1209,38 @@ export async function upsertEmployee(fd: FormData) {
   }
 
   if (id) {
+    const [existingCurrent] = await db
+      .select({ id: employees.id, nik: employees.nik })
+      .from(employees)
+      .where(eq(employees.id, id))
+      .limit(1);
+
+    const isNikChanged = existingCurrent && existingCurrent.nik.trim().toLowerCase() !== data.nik.toLowerCase();
+    if (isNikChanged) {
+      const [actorData] = await db
+        .select({
+          id: employees.id,
+          role: employees.role,
+          isCustomRole: employees.isCustomRole,
+          customPermissions: employees.customPermissions,
+        })
+        .from(employees)
+        .where(eq(employees.id, currentUser.id))
+        .limit(1);
+
+      if (!hasUserPermission(actorData, "master.employee.edit_nik")) {
+        throw new Error("Akses ditolak: Anda tidak memiliki otoritas RBAC (master.employee.edit_nik) untuk mengubah NIK karyawan.");
+      }
+    }
+
     await db.update(employees).set(data).where(eq(employees.id, id));
+
+    // Sinkronkan ke tabel users dan userOnboarding jika NIK diubah
+    if (isNikChanged) {
+      await db.update(users).set({ nik: data.nik }).where(eq(users.employeeId, id));
+      await db.update(userOnboarding).set({ nik: data.nik }).where(eq(userOnboarding.employeeId, id));
+    }
+
     await audit("employee", id, "UPDATE", data, currentUser.name);
   } else {
     const [row] = await db.insert(employees).values(data as typeof employees.$inferInsert).returning();

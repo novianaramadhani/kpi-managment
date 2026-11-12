@@ -15,6 +15,7 @@ import { eq, asc, desc, or, and } from "drizzle-orm";
 import { notFound, redirect } from "next/navigation";
 import { upsertEmployee } from "@/lib/actions";
 import { resetEmployeePasswordAction, getCurrentUser } from "@/lib/auth";
+import { hasUserPermission } from "@/lib/rbac-catalog";
 import { EmployeeDetailClient, UnifiedLogItem } from "./employee-detail-client";
 
 export const dynamic = "force-dynamic";
@@ -226,6 +227,19 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
   // Urutkan menurut waktu terbaru (descending)
   unifiedLogs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
+  const [currentUserRecord] = await db
+    .select({
+      id: employees.id,
+      role: employees.role,
+      isCustomRole: employees.isCustomRole,
+      customPermissions: employees.customPermissions,
+    })
+    .from(employees)
+    .where(eq(employees.id, currentUser.id))
+    .limit(1);
+
+  const canEditNik = hasUserPermission(currentUserRecord, "master.employee.edit_nik");
+
   async function handleUpsertEmployee(fd: FormData) {
     "use server";
     try {
@@ -248,6 +262,7 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
         mappings={mappingsList}
         permission={permission}
         auditLogs={unifiedLogs}
+        canEditNik={canEditNik}
         upsertAction={handleUpsertEmployee}
         resetPasswordAction={resetEmployeePasswordAction}
       />

@@ -98,6 +98,7 @@ export function AppShell({ children, initialUser }: AppShellProps) {
   const handleOpenGuidelines = () => {
     setIsProfileOpen(false);
     setIsMobileMenuOpen(false);
+    setIsSidebarOpen(true);
     setTourStep(1);
     setIsTourOpen(true);
     if (currentUser?.nik) {
@@ -110,6 +111,9 @@ export function AppShell({ children, initialUser }: AppShellProps) {
 
   const handleTourStepChange = (nextStep: number) => {
     setTourStep(nextStep);
+    if (nextStep === 1) {
+      setIsSidebarOpen(true);
+    }
     if (currentUser?.nik) {
       if (typeof window !== "undefined") {
         window.sessionStorage.setItem(
@@ -696,7 +700,7 @@ export function AppShell({ children, initialUser }: AppShellProps) {
       >
         {/* Brand Logo Header: Clean, Integrated */}
         {isSidebarOpen ? (
-          <div className="h-16 px-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
+          <div className="h-16 px-4 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
             <Link href="/dashboard" className="flex items-center gap-2.5 group overflow-hidden">
               <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-600 text-white font-bold text-xs shadow-2xs group-hover:bg-blue-700 transition shrink-0">
                 KPI
@@ -720,7 +724,7 @@ export function AppShell({ children, initialUser }: AppShellProps) {
             </button>
           </div>
         ) : (
-          <div className="h-16 border-b border-slate-100 flex items-center justify-center shrink-0 bg-white">
+          <div className="h-16 border-b border-slate-200 flex items-center justify-center shrink-0 bg-white">
             <button
               type="button"
               onClick={() => setIsSidebarOpen(true)}
@@ -737,7 +741,10 @@ export function AppShell({ children, initialUser }: AppShellProps) {
         )}
 
         {/* Navigation Items (Clean Flat List) */}
-        <nav className={`flex-1 overflow-y-auto py-3 space-y-1 ${isSidebarOpen ? "px-3" : "px-2"}`}>
+        <nav
+          data-tour="sidebar-nav-container"
+          className={`flex-1 overflow-y-auto py-3 space-y-1 ${isSidebarOpen ? "px-3" : "px-2"}`}
+        >
           {visibleNav.map((l) => {
             const active = isActive(l.href);
             const tourAttr = `nav-${l.href.replace(/[^a-z0-9]/gi, "-")}`;
@@ -837,10 +844,11 @@ export function AppShell({ children, initialUser }: AppShellProps) {
       {/* Main Content Area */}
       <div className="flex min-w-0 flex-1 flex-col max-w-full overflow-x-hidden">
         {/* Top Header Bar across all internal pages (Desktop - Clean & Minimal) */}
-        <header className="sticky top-0 z-40 hidden md:flex items-center justify-between border-b border-slate-200 bg-white/95 px-6 py-3.5 backdrop-blur-md shadow-2xs">
+        <header className="sticky top-0 z-40 hidden md:flex h-16 items-center justify-between border-b border-slate-200 bg-white/95 px-6 backdrop-blur-md shadow-2xs">
           <div className="flex items-center gap-3">
             <button
               type="button"
+              data-tour="sidebar-burger-btn"
               onClick={() => setIsSidebarOpen((prev) => !prev)}
               className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 active:scale-95 transition cursor-pointer"
               title={isSidebarOpen ? "Tutup Menu Sidebar" : "Buka Menu Sidebar"}
@@ -851,9 +859,9 @@ export function AppShell({ children, initialUser }: AppShellProps) {
               </svg>
             </button>
             <div className="flex items-center gap-2 text-xs">
-              <span className="font-bold uppercase tracking-wider text-blue-600">KPI System</span>
+              <span className="font-bold uppercase tracking-wider text-slate-500">KPI System</span>
               <span className="text-slate-300">/</span>
-              <span className="text-sm font-bold text-slate-800">
+              <span className="font-bold text-slate-800 text-xs">
                 {pathname === "/dashboard"
                   ? "Overview Dashboard"
                   : pathname.startsWith("/setup/kpi-config")

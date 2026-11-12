@@ -1092,9 +1092,11 @@ export function buildIndividualEmployeeSheet(
         },
       });
 
-      // Col 4: Satuan
-      setCell(targetR, 4, { t: "s", v: unitStr, s: styleCellCenter });
-      setCell(actualR, 4, { t: "s", v: unitStr, s: styleCellCenter });
+      // Col 4: Satuan & Tipe
+      const targetUnitDisplay = unitStr && unitStr !== "-" ? `${unitStr} (Target)` : "Target";
+      const actualUnitDisplay = unitStr && unitStr !== "-" ? `${unitStr} (Actual)` : "Actual";
+      setCell(targetR, 4, { t: "s", v: targetUnitDisplay, s: styleCellCenter });
+      setCell(actualR, 4, { t: "s", v: actualUnitDisplay, s: styleCellCenter });
 
       // Cols 5..16: Bulan 1 s/d 12 (Jan - Des)
       const normEmpDept = (empDept || "").trim().toLowerCase();

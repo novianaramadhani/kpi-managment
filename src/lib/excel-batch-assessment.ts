@@ -8,6 +8,8 @@ import {
   type KpiScoreResult,
 } from "./scoring";
 
+export type { GenericScoringRule, KpiScoreResult };
+
 // ============================================================================
 // TYPES & DATA STRUCTURES
 // ============================================================================
@@ -33,6 +35,7 @@ export interface IndicatorMatchingTarget {
   parameterId: number | null;
   name: string;
   categoryName?: string;
+  categoryNumber?: number;
   target?: number | string | null;
   unit?: string | null;
   inputType?: string;
@@ -1284,14 +1287,17 @@ export function extractMatchingTargetsFromCategories(categories: any[]): Indicat
   const targets: IndicatorMatchingTarget[] = [];
   if (!categories || !Array.isArray(categories)) return targets;
 
-  for (const cat of categories) {
+  for (let catIdx = 0; catIdx < categories.length; catIdx++) {
+    const cat = categories[catIdx];
     if (!cat.indicators || !Array.isArray(cat.indicators)) continue;
+    const catNum = cat.categoryNumber || (catIdx + 1);
     for (const ind of cat.indicators) {
       targets.push({
         appraisalItemId: ind.appraisalItemId,
         parameterId: ind.parameterId ?? null,
         name: ind.indicatorName || "Indikator",
         categoryName: cat.categoryName,
+        categoryNumber: catNum,
         target: ind.target,
         unit: ind.unit,
         inputType: ind.inputType,
@@ -1300,7 +1306,7 @@ export function extractMatchingTargetsFromCategories(categories: any[]): Indicat
         direction: ind.direction,
         measurementType: ind.measurementType,
         indicatorWeight: ind.indicatorWeight ?? 0.2,
-        parameterWeight: ind.parameterWeight ?? 1.0,
+        parameterWeight: ind.parameterWeight ?? cat.categoryWeight ?? 1.0,
         maxScore: ind.maxScore || 25,
         scoringRules: ind.scoringRules || [],
         currentActual: ind.actualValue,

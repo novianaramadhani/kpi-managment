@@ -299,13 +299,13 @@ export function getExcelNumberFormatForUnit(unit: string | null | undefined): st
     return `"Rp "#,##0" /${denom}";("Rp "#,##0" /${denom}");"-"`;
   }
   if (u.includes("bcm/jam") || u.includes("bcm / jam")) {
-    return `#,##0.##" Bcm/Jam"`;
+    return `#,##0" Bcm/Jam"`;
   }
   if (u.includes("ltr/bcm") || u.includes("ltr / bcm")) {
-    return `#,##0.##" Ltr/Bcm"`;
+    return `#,##0" Ltr/Bcm"`;
   }
   if (u === "jam" || u === "hours" || u === "hour") {
-    return `#,##0.##" Jam"`;
+    return `#,##0" Jam"`;
   }
   if (u === "hari" || u === "days" || u === "day") {
     return `#,##0" Hari"`;
@@ -317,7 +317,7 @@ export function getExcelNumberFormatForUnit(unit: string | null | undefined): st
     return `#,##0`;
   }
 
-  return `#,##0.##`;
+  return `#,##0`;
 }
 
 /**
@@ -332,7 +332,7 @@ export function getMonthlyCellNumberFormat(unit: string | null | undefined): str
   if (u === "rp" || u === "idr" || u === "rupiah") {
     return `"Rp "#,##0;("Rp "#,##0);"-"`;
   }
-  return `#,##0.##`;
+  return `#,##0`;
 }
 
 export interface ResolvedIndicatorTargetAndUnit {

@@ -26,6 +26,7 @@ import {
   Layers,
   Info,
   ChevronDown,
+  Users,
 } from "lucide-react";
 import { td, th, btnPrimary, btnSecondary, inputCls } from "./ui";
 
@@ -43,11 +44,25 @@ export interface DepartmentItem {
   name: string;
 }
 
+export interface PitEmployeeItem {
+  id: number;
+  nik: string;
+  name: string;
+  departmentId: number;
+  jobPosition?: string | null;
+  jobPositionId?: number | null;
+  jobLevelId?: number | null;
+  operatingUnit?: string | null;
+  pitId?: number | null;
+  isActive?: boolean;
+}
+
 interface MasterPitTableClientProps {
   pits: PitWithStats[];
   sites?: SiteItem[];
   availableSites?: string[];
   departments?: DepartmentItem[];
+  employees?: PitEmployeeItem[];
   createAction: (fd: FormData) => Promise<{ success: boolean; id: number }>;
   updateAction: (fd: FormData) => Promise<{ success: boolean }>;
   deleteAction: (fd: FormData) => Promise<{ success: boolean }>;
@@ -101,6 +116,7 @@ export function MasterPitTableClient({
   sites,
   availableSites,
   departments,
+  employees,
   createAction,
   updateAction,
   deleteAction,
@@ -112,15 +128,31 @@ export function MasterPitTableClient({
   const [selectedStatus, setSelectedStatus] = useState("ALL");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
-  // State Modal CRUD & Detail
-  const [modalMode, setModalMode] = useState<"add" | "edit" | "detail">("add");
+  // State Modal CRUD PIT (Tambah & Edit)
+  const [modalMode, setModalMode] = useState<"add" | "edit">("add");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [activePit, setActivePit] = useState<PitWithStats | null>(null);
+
+  // State Modal Karyawan Terhubung PIT
+  const [viewEmployeesPit, setViewEmployeesPit] = useState<PitWithStats | null>(null);
 
   // State Modal Impor Excel
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   const [isPending, startTransition] = useTransition();
+
+  // Group karyawan terdaftar per PIT ID
+  const employeesByPitId = useMemo(() => {
+    const map = new Map<number, PitEmployeeItem[]>();
+    (employees || []).forEach((emp) => {
+      if (emp.pitId != null) {
+        const list = map.get(emp.pitId) || [];
+        list.push(emp);
+        map.set(emp.pitId, list);
+      }
+    });
+    return map;
+  }, [employees]);
 
   // Daftar Site dari database secara dinamis
   const [siteList, setSiteList] = useState<SiteItem[]>(sites || []);
@@ -234,11 +266,9 @@ export function MasterPitTableClient({
     setIsModalOpen(true);
   };
 
-  // Buka Modal Detail
-  const handleOpenDetail = (p: PitWithStats) => {
-    setActivePit(p);
-    setModalMode("detail");
-    setIsModalOpen(true);
+  // Buka Modal Karyawan PIT
+  const handleOpenEmployees = (p: PitWithStats) => {
+    setViewEmployeesPit(p);
   };
 
   // Hapus Single PIT
@@ -664,9 +694,17 @@ export function MasterPitTableClient({
                         <div className="font-bold text-slate-900">{p.name}</div>
                       </td>
 
-                      {/* Penggunaan: jumlah Mapping dan Template */}
+                      {/* Penggunaan: jumlah Karyawan, Mapping dan Template */}
                       <td className={`${td} text-center align-middle`}>
                         <div className="inline-flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEmployees(p)}
+                            className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200/80 transition cursor-pointer"
+                            title="Klik untuk melihat karyawan di PIT ini"
+                          >
+                            {(employeesByPitId.get(p.id) || []).length} Karyawan
+                          </button>
                           <span
                             className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-100 text-slate-700"
                             title="Jumlah Mapping Departemen yang terhubung"
@@ -709,14 +747,15 @@ export function MasterPitTableClient({
                         </button>
                       </td>
 
-                      {/* Aksi: Detail, Edit, dan Hapus */}
+                      {/* Aksi: Lihat Karyawan, Edit PIT, dan Hapus */}
                       <td className={`${td} text-right align-middle`}>
                         <div className="inline-flex items-center gap-1">
                           <button
                             type="button"
-                            onClick={() => handleOpenDetail(p)}
-                            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition cursor-pointer"
-                            title="Lihat Detail PIT"
+                            onClick={() => handleOpenEmployees(p)}
+                            className="rounded-lg p-1.5 text-blue-600 hover:bg-blue-50 hover:text-blue-800 transition cursor-pointer"
+                            title="Lihat Karyawan di PIT"
+                            aria-label={`Lihat Karyawan di PIT ${p.name}`}
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </button>
@@ -724,7 +763,8 @@ export function MasterPitTableClient({
                             type="button"
                             onClick={() => handleOpenEdit(p)}
                             className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition cursor-pointer"
-                            title="Edit PIT"
+                            title="Edit Master PIT"
+                            aria-label={`Edit PIT ${p.name}`}
                           >
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
@@ -734,6 +774,7 @@ export function MasterPitTableClient({
                             disabled={isPending}
                             className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition cursor-pointer"
                             title="Hapus PIT"
+                            aria-label={`Hapus PIT ${p.name}`}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -770,6 +811,17 @@ export function MasterPitTableClient({
           onSwitchToEdit={() => setModalMode("edit")}
           createAction={createAction}
           updateAction={updateAction}
+        />
+      )}
+
+      {/* 4. Modal Lihat Karyawan Terhubung PIT */}
+      {viewEmployeesPit && (
+        <PitEmployeesModal
+          isOpen={Boolean(viewEmployeesPit)}
+          pit={viewEmployeesPit}
+          employees={employees || []}
+          departments={deptList}
+          onClose={() => setViewEmployeesPit(null)}
         />
       )}
 
@@ -983,12 +1035,12 @@ function PitModal({
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white">
           <div>
             <h3 id="pit-modal-title" className="text-sm font-bold text-slate-900">
-              {mode === "add" ? "Tambah Master PIT" : "Detail Master PIT"}
+              {mode === "add" ? "Tambah Master PIT" : "Edit Master PIT"}
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
               {mode === "add"
                 ? "Daftarkan Master PIT baru yang terhubung ke Site dan Departemen."
-                : "Informasi detail lokasi penambangan PIT beserta relasinya."}
+                : "Perbarui informasi nama, site, dan relasi Master PIT."}
             </p>
           </div>
           <button
@@ -1245,7 +1297,7 @@ function PitModal({
                 ? "Menyimpan..."
                 : mode === "add" && !pit
                 ? "Tambah PIT"
-                : "Edit PIT"}
+                : "Simpan Perubahan"}
             </button>
           </div>
         </form>
@@ -1453,6 +1505,243 @@ function PitImportModal({ isOpen, onClose, importAction }: PitImportModalProps) 
               {isProcessing ? "Memproses..." : `Impor ${previewItems.length} PIT`}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// SUB-KOMPONEN: MODAL LIHAT KARYAWAN TERHUBUNG PIT
+// -----------------------------------------------------------------------------
+interface PitEmployeesModalProps {
+  isOpen: boolean;
+  pit: PitWithStats | null;
+  employees: PitEmployeeItem[];
+  departments: DepartmentItem[];
+  onClose: () => void;
+}
+
+function PitEmployeesModal({
+  isOpen,
+  pit,
+  employees,
+  departments,
+  onClose,
+}: PitEmployeesModalProps) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
+
+  // Escape key listener untuk menutup modal
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isOpen) {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
+
+  // Map ID departemen ke nama departemen
+  const deptMap = useMemo(() => {
+    const map = new Map<number, string>();
+    departments.forEach((d) => map.set(d.id, d.name));
+    return map;
+  }, [departments]);
+
+  // Filter seluruh karyawan yang terdaftar di PIT ini
+  const pitEmployees = useMemo(() => {
+    if (!pit) return [];
+    return employees.filter((emp) => emp.pitId === pit.id);
+  }, [pit, employees]);
+
+  // Filter pencarian dan status
+  const filteredEmployees = useMemo(() => {
+    return pitEmployees.filter((emp) => {
+      if (statusFilter === "ACTIVE" && emp.isActive === false) return false;
+      if (statusFilter === "INACTIVE" && emp.isActive !== false) return false;
+
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const matchNik = emp.nik.toLowerCase().includes(q);
+        const matchName = emp.name.toLowerCase().includes(q);
+        const matchPos = (emp.jobPosition || "").toLowerCase().includes(q);
+        const deptName = deptMap.get(emp.departmentId) || "";
+        const matchDept = deptName.toLowerCase().includes(q);
+        const matchUnit = (emp.operatingUnit || "").toLowerCase().includes(q);
+        if (!matchNik && !matchName && !matchPos && !matchDept && !matchUnit) return false;
+      }
+      return true;
+    });
+  }, [pitEmployees, statusFilter, searchQuery, deptMap]);
+
+  if (!isOpen || !pit) return null;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="pit-employees-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-4xl max-h-[90vh] flex flex-col rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header Modal */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600 border border-blue-100 shrink-0">
+              <Users className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 id="pit-employees-modal-title" className="text-sm font-bold text-slate-900">
+                  Daftar Karyawan di PIT: {pit.name}
+                </h3>
+                <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
+                  {pit.code}
+                </span>
+                <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                  Site {pit.site || "-"}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Total {pitEmployees.length} karyawan terdaftar di sektor operasional {pit.name}.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition cursor-pointer"
+            title="Tutup Modal"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Toolbar: Search & Filter */}
+        <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Cari NIK, nama karyawan, jabatan, departemen..."
+              className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-4 py-2 text-xs focus:border-blue-500 focus:outline-hidden focus:ring-2 focus:ring-blue-100"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as "ALL" | "ACTIVE" | "INACTIVE")}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 focus:border-blue-500 focus:outline-hidden cursor-pointer"
+            >
+              <option value="ALL">Semua Status ({pitEmployees.length})</option>
+              <option value="ACTIVE">
+                Hanya Aktif ({pitEmployees.filter((e) => e.isActive !== false).length})
+              </option>
+              <option value="INACTIVE">
+                Nonaktif ({pitEmployees.filter((e) => e.isActive === false).length})
+              </option>
+            </select>
+          </div>
+        </div>
+
+        {/* Table Container */}
+        <div className="flex-1 overflow-y-auto">
+          {filteredEmployees.length === 0 ? (
+            <div className="py-16 text-center text-slate-500">
+              <div className="flex flex-col items-center justify-center space-y-2">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
+                  <Users className="h-6 w-6" />
+                </div>
+                <p className="font-semibold text-slate-700">
+                  {pitEmployees.length === 0
+                    ? "Belum ada karyawan yang dimapping ke PIT ini"
+                    : "Tidak ada karyawan yang sesuai kriteria pencarian"}
+                </p>
+                <p className="text-xs text-slate-400 max-w-sm">
+                  {pitEmployees.length === 0
+                    ? "Mapping karyawan ke PIT dapat dilakukan melalui Master Karyawan atau impor data karyawan."
+                    : "Coba ubah kata kunci pencarian atau ubah filter status karyawan."}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <table className="w-full text-left border-collapse">
+              <thead className="sticky top-0 bg-slate-50/95 backdrop-blur-xs border-b border-slate-200 text-left text-xs font-bold text-slate-700 z-10">
+                <tr>
+                  <th className="w-12 px-3 py-2.5 text-center">No</th>
+                  <th className="px-4 py-2.5">NIK</th>
+                  <th className="px-4 py-2.5">Nama Karyawan</th>
+                  <th className="px-4 py-2.5">Departemen</th>
+                  <th className="px-4 py-2.5">Jabatan</th>
+                  <th className="px-4 py-2.5 text-center">Operating Unit</th>
+                  <th className="px-4 py-2.5 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-xs">
+                {filteredEmployees.map((emp, index) => (
+                  <tr key={emp.id} className="hover:bg-slate-50/70 transition">
+                    <td className="px-3 py-2.5 text-center text-slate-400 font-medium">
+                      {index + 1}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className="font-mono font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded text-[11px] border border-slate-200/80">
+                        {emp.nik}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <div className="font-bold text-slate-900">{emp.name}</div>
+                    </td>
+                    <td className="px-4 py-2.5 text-slate-600">
+                      {deptMap.get(emp.departmentId) || "-"}
+                    </td>
+                    <td className="px-4 py-2.5 text-slate-600">
+                      {emp.jobPosition || "-"}
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700">
+                        {emp.operatingUnit || "HO"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          emp.isActive !== false
+                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                            : "bg-slate-100 text-slate-500 border border-slate-200"
+                        }`}
+                      >
+                        {emp.isActive !== false ? "Aktif" : "Nonaktif"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Footer Modal */}
+        <div className="flex items-center justify-between px-6 py-3 border-t border-slate-200 bg-slate-50">
+          <span className="text-xs text-slate-500">
+            Menampilkan <strong className="font-bold text-slate-800">{filteredEmployees.length}</strong> dari{" "}
+            <strong className="font-bold text-slate-800">{pitEmployees.length}</strong> karyawan
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-xs font-semibold rounded-lg bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+          >
+            Tutup
+          </button>
         </div>
       </div>
     </div>

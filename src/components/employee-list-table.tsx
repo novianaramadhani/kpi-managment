@@ -10,7 +10,7 @@ import { Table, td, th, inputCls } from "./ui";
 import { formatTenureYears } from "@/lib/scoring";
 import { EmployeeModal } from "./employee-modal";
 import { ExcelImportCard } from "./excel-import-modal";
-import type { DepartmentMappingWithDetails } from "@/lib/department-mapping-utils";
+import { type DepartmentMappingWithDetails, matchesOperatingUnit } from "@/lib/department-mapping-utils";
 import { downloadEmployeeTemplate, exportEmployeesToExcel } from "@/lib/excel-template";
 import {
   Pencil,
@@ -116,6 +116,27 @@ export function EmployeeListTable({
     (e) => (statusView === "ACTIVE" ? e.isActive !== false : e.isActive === false) && (!e.dateOfHire || e.dateOfHire.trim() === "" || e.dateOfHire === "1970-01-01")
   ).length;
 
+  // Daftar Operating Unit / Site dinamis dari database & data karyawan
+  const availableUnits = useMemo(() => {
+    const list: string[] = [];
+    const seen = new Set<string>();
+    const base = ["HO", "GAM", "AKP", "JO-IC", "WS89"];
+    base.forEach((b) => {
+      const clean = b.toUpperCase().replace(/[^A-Z0-9]/g, "");
+      seen.add(clean);
+      list.push(b);
+    });
+    employees.forEach((e) => {
+      const ou = (e.operatingUnit || "").trim();
+      const clean = ou.toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (clean && !seen.has(clean)) {
+        seen.add(clean);
+        list.push(ou);
+      }
+    });
+    return list;
+  }, [employees]);
+
   // Filter logika
   const filteredEmployees = employees.filter((e) => {
     // Filter Missing Date of Hire
@@ -137,7 +158,7 @@ export function EmployeeListTable({
       return false;
     }
     // 2. Filter Operating Unit
-    if (selectedUnit !== "ALL" && (e.operatingUnit || "HO").toUpperCase() !== selectedUnit) {
+    if (selectedUnit !== "ALL" && !matchesOperatingUnit(e.operatingUnit, selectedUnit)) {
       return false;
     }
     // 3. Search Query
@@ -694,7 +715,7 @@ export function EmployeeListTable({
     <div className="space-y-4">
       {/* Control Card & Header */}
       <div
-        data-tour="step-3-master-actions"
+        data-tour="step-1-master-actions"
         className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm space-y-4"
       >
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -924,9 +945,18 @@ export function EmployeeListTable({
                 className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-2xs focus:border-sky-500 focus:outline-none"
               >
                 <option value="ALL">Semua Site</option>
-                <option value="HO">HO</option>
-                <option value="GAM">GAM</option>
-                <option value="AKP">AKP</option>
+                {availableUnits.map((u) => {
+                  const count = employees.filter(
+                    (e) =>
+                      matchesOperatingUnit(e.operatingUnit, u) &&
+                      (statusView === "ACTIVE" ? e.isActive !== false : e.isActive === false)
+                  ).length;
+                  return (
+                    <option key={u} value={u}>
+                      {u} ({count})
+                    </option>
+                  );
+                })}
               </select>
             </div>
 
@@ -1008,7 +1038,7 @@ export function EmployeeListTable({
 
       {/* Tabel Karyawan */}
       <div
-        data-tour="step-3-master-table"
+        data-tour="step-1-master-table"
         className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden"
       >
         {filteredEmployees.length === 0 ? (

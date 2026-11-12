@@ -190,40 +190,49 @@ export function ScoringMethodManager({ initialData = [] }: Props) {
     });
   }, [data, filterActive, filterRequirement, search]);
 
+  const parseScoringName = (name: string) => {
+    const match = name.match(/^(.*?)\s*\((.*?)\)$/);
+    if (match) {
+      return {
+        primary: match[1].trim(),
+        secondary: match[2].trim(),
+      };
+    }
+    return {
+      primary: name,
+      secondary: null,
+    };
+  };
+
   const getMethodBadge = (code: string) => {
     switch (code) {
       case "CRITERIA_BASED":
         return (
-          <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 border border-blue-200">
-            <TableProperties className="h-3 w-3" />
-            Matriks Kriteria (Band)
+          <span className="inline-flex items-center rounded-md bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700 border border-sky-200/60">
+            Kriteria Bertingkat
           </span>
         );
       case "FORMULA_BASED":
         return (
-          <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700 border border-indigo-200">
-            <Calculator className="h-3 w-3" />
+          <span className="inline-flex items-center rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700 border border-indigo-200/60">
             Formula Engine
           </span>
         );
       case "DIRECT_SCORE":
         return (
-          <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">
-            <Award className="h-3 w-3" />
-            Input Langsung Asesor
+          <span className="inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 border border-emerald-200/60">
+            Skor Asesor
           </span>
         );
       case "RATING_BASED":
         return (
-          <span className="inline-flex items-center gap-1 rounded-md bg-purple-50 px-2 py-0.5 text-xs font-semibold text-purple-700 border border-purple-200">
-            <Star className="h-3 w-3" />
+          <span className="inline-flex items-center rounded-md bg-purple-50 px-2 py-0.5 text-[11px] font-medium text-purple-700 border border-purple-200/60">
             Skala Rating
           </span>
         );
       default:
         return (
-          <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700 border border-slate-200">
-            <Layers className="h-3 w-3" />
+          <span className="inline-flex items-center rounded-md bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-700 border border-slate-200/60">
             Metode Standar
           </span>
         );
@@ -284,62 +293,69 @@ export function ScoringMethodManager({ initialData = [] }: Props) {
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-600">
-                  <th className="py-2.5 px-3.5 w-64">Metode &amp; Kode</th>
-                  <th className="py-2.5 px-3 w-48">Klasifikasi</th>
+                <tr className="border-b border-slate-200 bg-slate-50/75 text-[11px] font-semibold text-slate-600">
+                  <th className="py-2.5 px-3.5 w-64">Metode Penilaian</th>
+                  <th className="py-2.5 px-3 w-44">Klasifikasi</th>
                   <th className="py-2.5 px-3">Deskripsi</th>
                   <th className="py-2.5 px-3.5 text-right w-20">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredData.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
-                    {/* Metode & Kode */}
-                    <td className="py-2.5 px-3.5">
-                      <div className="flex items-center gap-2.5">
-                        <div className="rounded-lg bg-slate-100 p-2 shrink-0">
-                          <Calculator className="h-4 w-4 text-slate-600" />
+                {filteredData.map((item) => {
+                  const parsed = parseScoringName(item.name);
+                  return (
+                    <tr key={item.id} className="hover:bg-slate-50/70 transition-colors">
+                      {/* Metode & Kode */}
+                      <td className="py-2.5 px-3.5">
+                        <div className="min-w-0">
+                          <div className="font-semibold text-slate-900 text-xs flex items-center gap-1.5 flex-wrap">
+                            <span>{parsed.primary}</span>
+                            {parsed.secondary && (
+                              <span className="text-[11px] font-normal text-slate-500">
+                                • {parsed.secondary}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] font-mono text-slate-400 uppercase mt-0.5">
+                            {item.code}
+                          </div>
                         </div>
-                        <div>
-                          <div className="font-semibold text-slate-900 text-xs">{item.name}</div>
-                          <div className="text-[10px] font-mono text-slate-400 uppercase">{item.code}</div>
-                        </div>
-                      </div>
-                    </td>
+                      </td>
 
-                    {/* Klasifikasi */}
-                    <td className="py-2.5 px-3">{getMethodBadge(item.code)}</td>
+                      {/* Klasifikasi */}
+                      <td className="py-2.5 px-3">{getMethodBadge(item.code)}</td>
 
-                    {/* Deskripsi */}
-                    <td className="py-2.5 px-3">
-                      <p className="text-xs text-slate-600 leading-relaxed max-w-xl">
-                        {item.description || "-"}
-                      </p>
-                    </td>
+                      {/* Deskripsi */}
+                      <td className="py-2.5 px-3">
+                        <p className="text-xs text-slate-600 leading-relaxed max-w-xl">
+                          {item.description || "-"}
+                        </p>
+                      </td>
 
-                    {/* Aksi */}
-                    <td className="py-2.5 px-3.5 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          onClick={() => openEditModal(item)}
-                          className="rounded-md border border-slate-200 bg-white p-1 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition"
-                          title="Edit"
-                        >
-                          <Edit2 className="h-3.5 w-3.5" />
-                        </button>
-                        {item.isActive && (
+                      {/* Aksi */}
+                      <td className="py-2.5 px-3.5 text-right">
+                        <div className="flex items-center justify-end gap-1">
                           <button
-                            onClick={() => handleDelete(item)}
-                            className="rounded-md border border-rose-200 bg-rose-50 p-1 text-rose-600 hover:bg-rose-100 transition"
-                            title="Hapus"
+                            onClick={() => openEditModal(item)}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+                            title="Edit"
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            <Edit2 className="h-3.5 w-3.5" />
                           </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                          {item.isActive && (
+                            <button
+                              onClick={() => handleDelete(item)}
+                              className="inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                              title="Hapus"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -54,6 +54,7 @@ interface Props {
   mappings?: DepartmentMapping[];
   permission?: JobLevelPermission | null;
   auditLogs?: UnifiedLogItem[];
+  canEditNik?: boolean;
   upsertAction: (fd: FormData) => Promise<{ success: boolean; error?: string } | void>;
   resetPasswordAction: (
     employeeId: number
@@ -69,6 +70,7 @@ export function EmployeeDetailClient({
   mappings = [],
   permission,
   auditLogs = [],
+  canEditNik = true,
   upsertAction,
   resetPasswordAction,
 }: Props) {
@@ -76,6 +78,7 @@ export function EmployeeDetailClient({
   const [isPending, startTransition] = useTransition();
 
   // Unified Form State (pertahankan data & functionality asli 100%)
+  const [nik, setNik] = useState(employee.nik || "");
   const [departmentId, setDepartmentId] = useState(String(employee.departmentId));
   const [operatingUnit, setOperatingUnit] = useState(employee.operatingUnit || "HO");
 
@@ -267,6 +270,7 @@ export function EmployeeDetailClient({
 
   // Deteksi jika ada data yang diubah / belum disimpan
   const isDirty = useMemo(() => {
+    if (nik.trim() !== (employee.nik || "").trim()) return true;
     if (String(departmentId) !== String(employee.departmentId || "")) return true;
     if (pitId !== (employee.pitId ? String(employee.pitId) : "")) return true;
     if (String(jobLevelId) !== String(employee.jobLevelId || "")) return true;
@@ -289,6 +293,7 @@ export function EmployeeDetailClient({
     }
     return false;
   }, [
+    nik,
     departmentId,
     pitId,
     jobLevelId,
@@ -303,6 +308,7 @@ export function EmployeeDetailClient({
   ]);
 
   const handleResetAllChanges = () => {
+    setNik(employee.nik || "");
     setDepartmentId(String(employee.departmentId || ""));
     setPitId(employee.pitId ? String(employee.pitId) : "");
     setJobLevelId(String(employee.jobLevelId || ""));
@@ -344,6 +350,16 @@ export function EmployeeDetailClient({
   const handleSimpan = (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (!nik.trim()) {
+      void Swal.fire({
+        icon: "warning",
+        title: "NIK Belum Diisi",
+        text: "Nomor Induk Karyawan (NIK) wajib diisi sebelum menyimpan.",
+        confirmButtonColor: "#2563eb",
+      });
+      return;
+    }
+
     if (!departmentId) {
       void Swal.fire({
         icon: "warning",
@@ -376,7 +392,7 @@ export function EmployeeDetailClient({
 
     const fd = new FormData();
     fd.append("id", String(employee.id));
-    fd.append("nik", employee.nik);
+    fd.append("nik", nik.trim());
     fd.append("name", employee.name);
     fd.append("departmentId", departmentId);
     fd.append("pitId", pitId || "");
@@ -660,10 +676,29 @@ export function EmployeeDetailClient({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3.5">
             {/* Row 1: NIK & Tanggal Masuk */}
             <div>
-              <label className={labelBase}>Nomor Induk Karyawan (NIK)</label>
-              <div className="text-xs font-bold text-slate-900 py-1.5 px-3 rounded-lg bg-slate-100/70 border border-slate-200/60 font-mono">
-                {employee.nik}
+              <div className="flex items-center justify-between mb-1">
+                <label className={labelBase} style={{ marginBottom: 0 }}>
+                  Nomor Induk Karyawan (NIK) <span className="text-rose-500">*</span>
+                </label>
+                {!canEditNik && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
+                    <Lock className="w-2.5 h-2.5" /> Terkunci (RBAC)
+                  </span>
+                )}
               </div>
+              <input
+                type="text"
+                value={nik}
+                onChange={(e) => setNik(e.target.value)}
+                disabled={!canEditNik}
+                placeholder="Contoh: 20.724.228"
+                className={`${inputBase} font-mono ${
+                  !canEditNik
+                    ? "bg-slate-100/70 text-slate-500 cursor-not-allowed border-slate-200/60"
+                    : "bg-white text-slate-900 border-slate-200"
+                }`}
+                required
+              />
             </div>
 
             <div>

@@ -29,149 +29,255 @@ export interface TourStepConfig {
 export const KPI_TOUR_STEPS: TourStepConfig[] = [
   {
     step: 1,
-    code: "STEP 1 OF 6",
-    title: "Master Template KPI",
-    primaryRoute: "/setup/templates",
-    allowedRoles: ["ADMIN"],
-    primarySelector: '[data-tour="step-1-template-tabs"]',
+    code: "STEP 1 OF 8",
+    title: "Navigasi Menu (Burger Sidebar)",
+    primaryRoute: "",
+    allowedRoles: ["ADMIN", "HR", "MANAGER", "HEAD_DEPT", "PENILAI", "KARYAWAN"],
+    primarySelector: '[data-tour="sidebar-nav-container"]',
     fallbackSelectors: [
-      '[data-tour="step-1-template-toolbar"]',
-      '[data-tour="nav--setup-templates"]',
+      '[data-tour="sidebar-burger-btn"]',
+      '[data-tour="nav--dashboard"]',
       '[data-tour="nav--admin"]',
+      '[data-tour="help-guidelines-btn"]',
+    ],
+    preferredPlacement: "right",
+    subTargets: [
+      {
+        label: "Buka & Tutup Sidebar",
+        selector: '[data-tour="sidebar-nav-container"]',
+        summary: "Pusat navigasi utama untuk berpindah antar modul sistem KPI secara cepat.",
+        points: [
+          "Klik tombol burger (≡) di pojok kiri atas untuk membuka atau memperkecil sidebar menu.",
+          "Sidebar memuat menu lengkap yang disesuaikan dengan wewenang (role) pengguna.",
+        ],
+      },
+      {
+        label: "Daftar Fitur Utama",
+        selector: '[data-tour="sidebar-nav-container"]',
+        summary: "Ikhtisar jalan pintas ke seluruh fitur utama aplikasi.",
+        points: [
+          "Dashboard: Ringkasan performa dan grafik pencapaian nilai KPI.",
+          "Admin Menu: Pengaturan master data, penugasan asesor, dan formula acuan.",
+          "Template KPI: Standarisasi struktur indikator dan bobot penilaian.",
+          "Penilaian KPI: Lembar input realisasi bulanan dan persetujuan atasan.",
+          "Report & Export: Rekapitulasi nilai akhir dan ekspor laporan Excel resmi.",
+        ],
+      },
+    ],
+    fallbackNote:
+      "Gunakan tombol burger di kiri atas untuk membuka bilah navigasi samping yang memuat seluruh modul sistem KPI.",
+  },
+  {
+    step: 2,
+    code: "STEP 2 OF 8",
+    title: "Overview Dashboard",
+    primaryRoute: "/dashboard",
+    allowedRoles: ["ADMIN", "HR", "MANAGER", "HEAD_DEPT", "PENILAI", "KARYAWAN"],
+    primarySelector: '[data-tour="nav--dashboard"]',
+    fallbackSelectors: [
+      '[data-tour="sidebar-nav-container"]',
+      '[data-tour="sidebar-burger-btn"]',
       '[data-tour="help-guidelines-btn"]',
     ],
     preferredPlacement: "bottom",
     subTargets: [
       {
-        label: "Tab Template & Parameter",
-        selector: '[data-tour="step-1-template-tabs"]',
-        route: "/setup/templates",
-        summary: "Beralih antar modul pengelolaan standar KPI dalam satu halaman.",
+        label: "Metrik Performa",
+        selector: '[data-tour="nav--dashboard"]',
+        route: "/dashboard",
+        summary: "Pemantauan komprehensif atas pencapaian indikator kinerja pada periode aktif.",
         points: [
-          "Master Template: Kelola daftar struktur template KPI berdasarkan departemen dan jabatan.",
-          "Kamus Parameter: Kelola daftar indikator standar beserta satuan dan kriteria default.",
-          "Department KPI: Atur nilai target tahunan untuk parameter ber-scope departemen.",
+          "Rata-rata Skor: Mengetahui capaian nilai kinerja individu maupun seluruh departemen.",
+          "Distribusi Predikat: Grafik sebaran grade kinerja (Outstanding, Exceed, Meet, Need Improvement).",
+        ],
+      },
+      {
+        label: "Status Keterisian",
+        selector: '[data-tour="nav--dashboard"]',
+        route: "/dashboard",
+        summary: "Pelacakan lembar evaluasi yang memerlukan pengisian atau persetujuan tindak lanjut.",
+        points: [
+          "Status Penilaian: Melihat jumlah KPI berstatus Draft, Dalam Review, maupun Selesai.",
+          "Akses Instan: Klik baris penilaian untuk langsung menuju lembar kerja terkait.",
+        ],
+      },
+    ],
+    fallbackNote:
+      "Halaman Dashboard (/dashboard) menyajikan grafik dan ringkasan capaian kinerja seluruh unit kerja.",
+  },
+  {
+    step: 3,
+    code: "STEP 3 OF 8",
+    title: "Master Data Organisasi & Karyawan",
+    primaryRoute: "/setup/master?tab=karyawan",
+    allowedRoles: ["ADMIN", "HR"],
+    primarySelector: '[data-tour="step-1-master-tabs"]',
+    fallbackSelectors: [
+      '[data-tour="step-3-master-tabs"]',
+      '[data-tour="step-1-master-actions"]',
+      '[data-tour="step-1-master-table"]',
+      '[data-tour="nav--admin"]',
+      '[data-tour="sidebar-nav-container"]',
+    ],
+    preferredPlacement: "bottom",
+    subTargets: [
+      {
+        label: "Master Karyawan",
+        selector: '[data-tour="step-1-master-tabs"]',
+        route: "/setup/master?tab=karyawan",
+        summary: "Pondasi utama profil kepegawaian dan struktur penilai KPI.",
+        points: [
+          "Profil & NIK: Kelola identitas karyawan, departemen, jabatan, dan tanggal bergabung.",
+          "Hirarki Penilai: Menetapkan Penilai langsung (Supervisor) dan Head of Department.",
+        ],
+      },
+      {
+        label: "Departemen & Jabatan",
+        selector: '[data-tour="step-1-master-tabs"]',
+        route: "/setup/master?tab=departemen",
+        summary: "Struktur organisasi penentu penugasan template dan otoritas wewenang.",
+        points: [
+          "Departemen: Menata unit kerja operasional dan target KPI berbasis divisi.",
+          "Job Position & Level: Menentukan bobot tanggung jawab dan hierarki penilaian.",
+        ],
+      },
+      {
+        label: "Operating Units & PIT",
+        selector: '[data-tour="step-1-master-tabs"]',
+        route: "/setup/master?tab=operating-units",
+        summary: "Cakupan penempatan lokasi kerja dan area tambang operasional.",
+        points: [
+          "Operating Units: Pengelompokan lokasi kerja site atau kantor pusat untuk filter data.",
+          "Master PIT: Manajemen area tambang khusus operasional lapangan.",
+        ],
+      },
+      {
+        label: "Sync ERP & Import Excel",
+        selector: '[data-tour="step-1-master-actions"]',
+        route: "/setup/master?tab=karyawan",
+        summary: "Otomasi pembaruan data kepegawaian dari sistem ERP Odoo atau file spreadsheet.",
+        points: [
+          "Sinkron Odoo: Tarik data karyawan dan mutasi posisi terbaru langsung dari ERP.",
+          "Import / Export: Unduh template Excel untuk update massal atau cadangkan data resmi.",
+        ],
+      },
+    ],
+    fallbackNote:
+      "Master Data menghubungkan profil karyawan, departemen, jabatan, dan hirarki atasan yang digunakan otomatis pada lembar penilaian KPI.",
+  },
+  {
+    step: 4,
+    code: "STEP 4 OF 8",
+    title: "Konfigurasi Indikator & Formula KPI",
+    primaryRoute: "/setup/kpi-config?tab=measurement",
+    allowedRoles: ["ADMIN"],
+    primarySelector: '[data-tour="step-2-config-tabs"]',
+    fallbackSelectors: [
+      '[data-tour="nav--setup-kpi-config"]',
+      '[data-tour="nav--admin"]',
+      '[data-tour="sidebar-nav-container"]',
+    ],
+    preferredPlacement: "bottom",
+    subTargets: [
+      {
+        label: "Measurement Type",
+        selector: '[data-tour="step-2-config-tabs"]',
+        route: "/setup/kpi-config?tab=measurement",
+        summary: "Standarisasi satuan dan tipe data nilai aktual indikator kinerja.",
+        points: [
+          "Format Nilai: Angka (Number), Persentase (%), Mata Uang (IDR), Hari, Unit, Rasio, Rating.",
+          "Validasi Nilai: Memastikan batasan angka input aktual konsisten di seluruh departemen.",
+        ],
+      },
+      {
+        label: "KPI Direction",
+        selector: '[data-tour="step-2-config-tabs"]',
+        route: "/setup/kpi-config?tab=direction",
+        summary: "Arah evaluasi target capaian indikator untuk formula engine.",
+        points: [
+          "Higher is Better: Nilai aktual makin tinggi makin memuaskan (omzet, produksi, efisiensi).",
+          "Lower is Better: Nilai aktual makin rendah makin baik (lead time, biaya, insiden, komplain).",
+          "Target Range & Exact: Memerlukan capaian tepat sasaran atau berada dalam rentang toleransi.",
+        ],
+      },
+      {
+        label: "Scoring Method",
+        selector: '[data-tour="step-2-config-tabs"]',
+        route: "/setup/kpi-config?tab=scoring",
+        summary: "Metode kalkulasi otomatis perolehan skor akhir setiap parameter.",
+        points: [
+          "Criteria Based: Berdasarkan pencocokan tabel rentang kriteria (bands) nilai.",
+          "Formula Based: Menggunakan rumus kalkulasi acuan matematika otomatis dari formula engine.",
+        ],
+      },
+    ],
+    fallbackNote:
+      "Modul Konfigurasi KPI dikelola oleh Administrator untuk standarisasi tipe data, arah penilaian, dan formula hitung acuan.",
+  },
+  {
+    step: 5,
+    code: "STEP 5 OF 8",
+    title: "Master Template KPI & Standar Nilai",
+    primaryRoute: "/setup/templates",
+    allowedRoles: ["ADMIN"],
+    primarySelector: '[data-tour="step-3-template-tabs"]',
+    fallbackSelectors: [
+      '[data-tour="step-1-template-tabs"]',
+      '[data-tour="step-3-template-table"]',
+      '[data-tour="step-3-add-template"]',
+      '[data-tour="nav--setup-templates"]',
+      '[data-tour="sidebar-nav-container"]',
+    ],
+    preferredPlacement: "bottom",
+    subTargets: [
+      {
+        label: "Master Template",
+        selector: '[data-tour="step-3-template-tabs"]',
+        route: "/setup/templates",
+        summary: "Cetak biru matriks penilaian KPI berdasarkan departemen dan level jabatan.",
+        points: [
+          "Struktur Indikator: Menentukan kategori (Hard Skill, Soft Skill, Target Kerja).",
+          "Validasi Bobot: Total bobot seluruh indikator dalam satu template wajib tepat 100%.",
+        ],
+      },
+      {
+        label: "Kamus Parameter",
+        selector: '[data-tour="step-3-template-tabs"]',
+        route: "/setup/templates",
+        summary: "Katalog indikator standar terpusat untuk dipakai ulang di berbagai template.",
+        points: [
+          "Katalog Terpusat: Deskripsi KPI, satuan ukur default, dan metode hitung acuan.",
+          "Standar Kriteria: Menetapkan batasan nilai default agar penilaian seragam antar divisi.",
         ],
       },
       {
         label: "Tambah & Generate",
-        selector: '[data-tour="step-1-add-template"]',
+        selector: '[data-tour="step-3-add-template"]',
         route: "/setup/templates",
-        summary: "Buat Master Template KPI baru secara manual maupun otomatis.",
+        summary: "Membuat template KPI baru secara mandiri atau dibuat otomatis oleh sistem.",
         points: [
-          "Klik Tambah Template untuk membuat template baru serta mengatur nama, departemen, dan job level.",
-          "Klik Generate Template untuk membuat template otomatis berdasarkan pemetaan kategori jabatan.",
+          "Tambah Manual: Atur nama template, departemen, dan level jabatan secara spesifik.",
+          "Generate Otomatis: Susun template otomatis berdasarkan pemetaan kategori posisi kerja.",
         ],
       },
       {
-        label: "Tabel & Struktur KPI",
-        selector: '[data-tour="step-1-template-table"]',
+        label: "Import & Export Excel",
+        selector: '[data-tour="step-3-import-btn"]',
         route: "/setup/templates",
-        summary: "Atur indikator, bobot penilaian, satuan ukur, dan metode hitung KPI.",
+        summary: "Kelola berkas spreadsheet .xlsx untuk pembuatan dan pencadangan template massal.",
         points: [
-          "Klik nama template pada tabel untuk membuka pengaturan kategori dan indikator KPI.",
-          "Tentukan bobot (%), satuan ukur (%, Hari, Unit, IDR), serta metode hitung (AVERAGE, SUM, LAST_VALUE).",
-          "Simpan struktur template setelah status validasi bobot dinyatakan sesuai.",
+          "Import Excel: Upload format standar Excel berisi indikator, bobot, target, dan kriteria.",
+          "Export Batch: Unduh arsip seluruh template untuk dokumentasi atau format acuan offline.",
         ],
       },
     ],
     fallbackNote:
-      "Modul Master Template KPI dikelola oleh Administrator untuk menyiapkan standar indikator dan bobot sebelum ditugaskan ke karyawan.",
+      "Master Template KPI menyusun cetak biru matriks penilaian sebelum ditugaskan ke karyawan pada periode aktif.",
   },
   {
-    step: 2,
-    code: "STEP 2 OF 6",
-    title: "Import & Export Data",
-    primaryRoute: "/setup/templates",
-    allowedRoles: ["ADMIN"],
-    primarySelector: '[data-tour="step-2-import-btn"]',
-    fallbackSelectors: [
-      '[data-tour="step-1-add-template"]',
-      '[data-tour="step-1-template-table"]',
-      '[data-tour="nav--setup-templates"]',
-      '[data-tour="nav--report"]',
-    ],
-    preferredPlacement: "bottom",
-    subTargets: [
-      {
-        label: "Import Excel",
-        selector: '[data-tour="step-2-import-btn"]',
-        route: "/setup/templates",
-        summary: "Unggah file Excel untuk membuat atau memperbarui Master Template secara cepat.",
-        points: [
-          "Siapkan data indikator, bobot, target, dan kriteria penilaian sesuai format standar Excel.",
-          "Klik Import Excel lalu unggah file .xlsx yang telah diisi.",
-          "Periksa hasil validasi data pada tabel pratinjau dan perbaiki jika terdapat peringatan sebelum disimpan.",
-        ],
-      },
-      {
-        label: "Export & Unduh Batch",
-        selector: '[data-tour="step-1-template-table"]',
-        route: "/setup/templates",
-        summary: "Unduh struktur template KPI ke file Excel untuk dokumentasi atau pembaruan data.",
-        points: [
-          "Centang satu atau beberapa baris template pada tabel untuk memilih data yang akan diunduh.",
-          "Pilih Download Excel Batch (file terpisah) atau 1 File Gabungan (multi-sheet).",
-          "File hasil Export juga dapat digunakan sebagai format acuan saat melakukan Import ulang.",
-        ],
-      },
-    ],
-    fallbackNote:
-      "Fitur Import dan Export Excel tersedia pada modul Template KPI, Master Data, serta Report & Export untuk pengelolaan data berformat .xlsx.",
-  },
-  {
-    step: 3,
-    code: "STEP 3 OF 6",
-    title: "Master Data",
-    primaryRoute: "/setup/master?tab=karyawan",
-    allowedRoles: ["ADMIN", "HR"],
-    primarySelector: '[data-tour="step-3-master-tabs"]',
-    fallbackSelectors: [
-      '[data-tour="step-3-master-actions"]',
-      '[data-tour="step-3-master-table"]',
-      '[data-tour="nav--admin"]',
-      '[data-tour="help-guidelines-btn"]',
-    ],
-    preferredPlacement: "bottom",
-    subTargets: [
-      {
-        label: "Kategori Master Data",
-        selector: '[data-tour="step-3-master-tabs"]',
-        route: "/setup/master?tab=karyawan",
-        summary: "Kelola data utama organisasi yang terhubung langsung dengan proses KPI.",
-        points: [
-          "Beralih antar tab Karyawan, Departemen, Job Position, Job Level, Operating Units, dan PIT.",
-          "Kesesuaian Departemen dan Job Position menentukan template KPI serta alur persetujuan karyawan.",
-        ],
-      },
-      {
-        label: "Tambah, Import & Sync",
-        selector: '[data-tour="step-3-master-actions"]',
-        route: "/setup/master?tab=karyawan",
-        summary: "Tambahkan atau perbarui data kepegawaian secara manual, Excel, maupun ERP.",
-        points: [
-          "Gunakan tombol + Tambah Karyawan untuk input manual atau Sync Odoo untuk tarik data ERP.",
-          "Buka menu Actions untuk mengunduh template Excel, mengimpor data massal, atau mengekspor data.",
-        ],
-      },
-      {
-        label: "Tabel & Hirarki Penilai",
-        selector: '[data-tour="step-3-master-table"]',
-        route: "/setup/master?tab=karyawan",
-        summary: "Lihat dan perbarui profil karyawan beserta susunan atasan penilai.",
-        points: [
-          "Gunakan kolom pencarian dan filter unit operasional untuk menemukan data dengan cepat.",
-          "Edit data karyawan untuk memperbarui jabatan, Penilai langsung, Head Department, atau status aktif.",
-        ],
-      },
-    ],
-    fallbackNote:
-      "Master Data menghubungkan profil karyawan, departemen, jabatan, dan hirarki atasan yang digunakan otomatis pada penilaian KPI.",
-  },
-  {
-    step: 4,
-    code: "STEP 4 OF 6",
-    title: "Assign Template",
+    step: 6,
+    code: "STEP 6 OF 8",
+    title: "Penugasan Template & Asesor KPI",
     primaryRoute: "/setup/assignments?tab=template",
     allowedRoles: ["ADMIN"],
     primarySelector: '[data-tour="step-4-assign-toolbar"]',
@@ -179,131 +285,131 @@ export const KPI_TOUR_STEPS: TourStepConfig[] = [
       '[data-tour="step-4-assign-table"]',
       '[data-tour="step-4-assign-tabs"]',
       '[data-tour="nav--admin"]',
-      '[data-tour="help-guidelines-btn"]',
+      '[data-tour="sidebar-nav-container"]',
     ],
     preferredPlacement: "bottom",
     subTargets: [
       {
-        label: "Filter & Tambah Penugasan",
+        label: "Penugasan Karyawan",
         selector: '[data-tour="step-4-assign-toolbar"]',
         route: "/setup/assignments?tab=template",
-        summary: "Terapkan Master Template KPI ke karyawan atau departemen pada periode berjalan.",
+        summary: "Pemasangan template KPI ke karyawan aktif pada periode penilaian berjalan.",
         points: [
-          "Pilih Periode penilaian aktif serta filter Departemen atau Status yang ingin diperiksa.",
-          "Klik + Tambah Penugasan, pilih template KPI, lalu tentukan target (Departemen, Jabatan, atau Individu).",
-          "Simpan penugasan agar lembar penilaian KPI karyawan siap diisi.",
+          "Penugasan Massal: Terapkan template ke seluruh departemen atau jabatan sekaligus.",
+          "Ganti / Lepas: Ubah atau sesuaikan template per individu jika ada mutasi kerja.",
         ],
       },
       {
-        label: "Tabel Penugasan",
-        selector: '[data-tour="step-4-assign-table"]',
-        route: "/setup/assignments?tab=template",
-        summary: "Periksa dan ubah langsung template KPI yang terpasang pada karyawan.",
-        points: [
-          "Lihat status template yang terpasang pada setiap karyawan di periode aktif.",
-          "Gunakan pilihan Ganti Template atau tombol Lepas pada kolom Aksi untuk memperbarui penugasan.",
-        ],
-      },
-      {
-        label: "Asesor & Delegasi",
+        label: "Matriks Multi-Asesor",
         selector: '[data-tour="step-4-assign-tabs"]',
-        route: "/setup/assignments?tab=template",
-        summary: "Kelola penugasan asesor per template KPI dan pelimpahan wewenang penilaian.",
+        route: "/setup/assignments?tab=penugasan-asesor",
+        summary: "Pengaturan pemetaan siapa menilai siapa (Many-to-Many) pada lembar kerja KPI.",
         points: [
-          "Tab Penugasan Asesor KPI mengatur siapa menilai siapa berdasarkan Template KPI.",
-          "Tab Delegasi Penilaian mengatur pelimpahan wewenang sementara antar penilai sesuai rentang tanggal.",
+          "Multi-Asesor: Menugaskan lebih dari satu penilai untuk parameter KPI yang berbeda.",
+          "Penilaian Lintas Divisi: Menghubungkan supervisor lain jika ada proyek kolaboratif.",
+        ],
+      },
+      {
+        label: "Delegasi Wewenang",
+        selector: '[data-tour="step-4-assign-tabs"]',
+        route: "/setup/assignments?tab=delegasi",
+        summary: "Pelimpahan hak akses penilaian sementara jika penilai berhalangan hadir.",
+        points: [
+          "Rentang Waktu: Tentukan batas tanggal aktif pendelegasian wewenang.",
+          "Otoritas Sah: Penilai pengganti dapat mengisi realisasi dan memberikan persetujuan resmi.",
         ],
       },
     ],
     fallbackNote:
-      "Melalui Assign Template, setiap karyawan dihubungkan dengan template indikator KPI sesuai posisi dan periode penilaian aktif.",
+      "Melalui Penugasan Template & Asesor, setiap karyawan dihubungkan dengan template indikator dan penilai yang berwenang.",
   },
   {
-    step: 5,
-    code: "STEP 5 OF 6",
-    title: "KPI Target & Realisasi",
+    step: 7,
+    code: "STEP 7 OF 8",
+    title: "Penilaian Realisasi & Staging Approval",
     primaryRoute: "/input-kpi",
     allowedRoles: ["ADMIN", "HR", "MANAGER", "HEAD_DEPT", "PENILAI", "KARYAWAN"],
     primarySelector: '[data-tour="step-5-kpi-table"]',
     fallbackSelectors: [
+      '[data-tour="step-6-staging-tabs"]',
       '[data-tour="step-5-header-filter"]',
       '[data-tour="nav--input-kpi"]',
+      '[data-tour="sidebar-nav-container"]',
     ],
     preferredPlacement: "top",
     subTargets: [
       {
-        label: "Daftar & Input Realisasi",
+        label: "Input Realisasi Bulanan",
         selector: '[data-tour="step-5-kpi-table"]',
         route: "/input-kpi",
-        summary: "Kelola target tahunan, realisasi bulanan, dan bukti pendukung penilaian KPI.",
+        summary: "Pengisian angka capaian aktual pada setiap parameter dan indikator kinerja.",
         points: [
-          "Klik nama karyawan pada tabel untuk membuka lembar evaluasi KPI.",
-          "Isi nilai realisasi bulanan (dihitung otomatis dengan metode SUM, AVG, atau LAST_VALUE) atau tahunan.",
-          "Lampirkan dokumen bukti pendukung (evidence) dan periksa hasil kalkulasi skor KPI.",
+          "Metode Hitung: Nilai otomatis diolah dengan metode SUM (total), AVG (rata-rata), atau LAST_VALUE.",
+          "Kalkulasi Skor: Sistem otomatis membandingkan capaian dengan target dan menghitung skor bobot.",
         ],
       },
       {
-        label: "Filter Departemen",
-        selector: '[data-tour="step-5-header-filter"]',
+        label: "Eviden & Bukti Kerja",
+        selector: '[data-tour="step-5-kpi-table"]',
         route: "/input-kpi",
-        summary: "Saring daftar penilaian karyawan berdasarkan departemen.",
+        summary: "Lampiran dokumen pembuktian atas angka realisasi yang diinput.",
         points: [
-          "Gunakan dropdown Departemen di kanan atas untuk menampilkan karyawan pada divisi tertentu.",
-          "Pantau status kelengkapan pengisian indikator pada setiap baris karyawan.",
+          "Upload Dokumen: Lampirkan file PDF, spreadsheet, foto, atau tautan bukti hasil kerja.",
+          "Verifikasi Asesor: Penilai memeriksa keabsahan bukti sebelum menyetujui evaluasi.",
+        ],
+      },
+      {
+        label: "Tahapan Staging Approval",
+        selector: '[data-tour="step-6-staging-tabs"]',
+        route: "/input-kpi",
+        summary: "Alur persetujuan bertingkat per stage dari pengisian hingga pengesahan final.",
+        points: [
+          "Draft: Lembar kerja sedang diisi oleh karyawan / penilai dan belum diajukan.",
+          "In Review: Lembar kerja telah diajukan dan sedang diperiksa oleh Supervisor / Atasan.",
+          "Revision: Lembar kerja dikembalikan ke penilai dengan catatan perbaikan jika ada koreksi.",
+          "Approved & Final: Lembar kerja telah disahkan oleh Head of Department dan dikunci.",
         ],
       },
     ],
     fallbackNote:
-      "Buka menu Penilaian KPI (/input-kpi) lalu klik baris karyawan untuk mengisi realisasi bulanan, melampirkan bukti pendukung, dan memeriksa skor.",
+      "Buka menu Penilaian KPI (/input-kpi) untuk mengisi realisasi bulanan, melampirkan bukti pendukung, dan memeriksa skor.",
   },
   {
-    step: 6,
-    code: "STEP 6 OF 6",
-    title: "Approval & Reporting",
-    primaryRoute: "/input-kpi",
-    allowedRoles: ["ADMIN", "HR", "MANAGER", "HEAD_DEPT", "PENILAI", "KARYAWAN"],
-    primarySelector: '[data-tour="step-6-staging-tabs"]',
+    step: 8,
+    code: "STEP 8 OF 8",
+    title: "Laporan & Statistik Management Summary",
+    primaryRoute: "/report",
+    allowedRoles: ["ADMIN", "HEAD_DEPT", "PENILAI", "KARYAWAN"],
+    primarySelector: '[data-tour="step-7-report-tabs"]',
     fallbackSelectors: [
-      '[data-tour="step-6-report-export"]',
-      '[data-tour="step-6-report-tabs"]',
       '[data-tour="nav--report"]',
+      '[data-tour="sidebar-nav-container"]',
     ],
     preferredPlacement: "bottom",
     subTargets: [
       {
-        label: "Alur Staging Approval",
-        selector: '[data-tour="step-6-staging-tabs"]',
-        route: "/input-kpi",
-        summary: "Pantau tahapan pengajuan, pemeriksaan, dan persetujuan KPI berjenjang.",
+        label: "Summary Rekapitulasi KPI",
+        selector: '[data-tour="step-7-report-tabs"]',
+        route: "/report",
+        summary: "Tabel rekapitulasi nilai akhir, skor total, dan predikat kinerja seluruh karyawan.",
         points: [
-          "Ajukan KPI yang telah terisi dari status Draft ke In Review untuk diperiksa Supervisor / Penilai.",
-          "Persetujuan dilanjutkan secara berjenjang oleh Head Department hingga berstatus Approved / Final.",
-          "Tab Revision menampilkan penilaian yang dikembalikan beserta catatan perbaikan.",
+          "Daftar Terpusat: Memeriksa capaian per divisi, jabatan, dan kategori kinerja.",
+          "Pencarian & Filter: Filter berdasarkan periode aktif, unit operasional, atau grade kinerja.",
         ],
       },
       {
-        label: "Laporan & Export Excel",
-        selector: '[data-tour="step-6-report-export"]',
+        label: "Statistik & Sebaran Grade",
+        selector: '[data-tour="step-7-report-tabs"]',
         route: "/report",
-        summary: "Lihat hasil akhir penilaian kinerja dan unduh laporan resmi KPI.",
+        summary: "Analisis grafik performa departemen dan distribusi nilai organisasi.",
         points: [
-          "Buka halaman Report & Export untuk memeriksa rekapitulasi skor akhir dan predikat kinerja.",
-          "Klik tombol Export Excel (.xlsx) untuk mengunduh laporan KPI lengkap per periode.",
-        ],
-      },
-      {
-        label: "Summary & Statistik",
-        selector: '[data-tour="step-6-report-tabs"]',
-        route: "/report",
-        summary: "Analisis perbandingan capaian KPI antar departemen dan distribusi grade.",
-        points: [
-          "Tab Summary KPI menampilkan tabel rekapitulasi skor seluruh karyawan secara mendetail.",
-          "Tab Statistik & Analisis menampilkan rata-rata skor departemen serta grafik distribusi grade.",
+          "Rata-rata Departemen: Membandingkan pencapaian kinerja antar departemen secara obyektif.",
+          "Sebaran Grade: Grafik persentase karyawan dalam kategori kinerja unggul hingga evaluasi khusus.",
         ],
       },
     ],
     fallbackNote:
-      "Gunakan tab Staging pada halaman Input KPI untuk memantau status persetujuan, dan buka menu Report & Export untuk mengunduh rekapitulasi Excel.",
+      "Buka menu Report untuk melihat rekapitulasi penilaian kinerja organisasi dan analisis statistik grade karyawan.",
   },
 ];
 
@@ -373,9 +479,14 @@ export function KpiGuidedTour({
     }
 
     const desiredRoute = activeSubTarget?.route || stepConfig.primaryRoute;
+    if (!desiredRoute) {
+      setIsNavigating(false);
+      return;
+    }
+
     const [desiredBasePath] = desiredRoute.split("?");
 
-    if (pathname !== desiredBasePath) {
+    if (desiredBasePath && pathname !== desiredBasePath) {
       setIsNavigating(true);
       router.push(desiredRoute);
     } else {

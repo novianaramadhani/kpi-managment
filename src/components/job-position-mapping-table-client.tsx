@@ -32,13 +32,12 @@ import {
   Pencil,
   Trash2,
   Filter,
-  CheckCircle2,
   AlertCircle,
   X,
   ChevronLeft,
   ChevronRight,
-  Settings,
-  Layers,
+  ChevronDown,
+  ChevronUp,
   ArrowUpDown,
   Loader2,
   Users,
@@ -66,11 +65,21 @@ export function JobPositionMappingTableClient({
   const [selectedCatId, setSelectedCatId] = useState<string>("ALL");
   const [selectedStatus, setSelectedStatus] = useState<"ALL" | "MAPPED" | "UNMAPPED">("ALL");
 
-  // Sorting & Pagination
+  // View Mode: CATEGORY (Default per Job Category) vs POSITION (per Job Position)
+  const [viewMode, setViewMode] = useState<"CATEGORY" | "POSITION">("CATEGORY");
+
+  // Sorting & Pagination Position View
   const [sortField, setSortField] = useState<"dept" | "position" | "level" | "category">("dept");
   const [sortAsc, setSortAsc] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 15;
+
+  // Category View States (Expansion, Sorting, Pagination)
+  const [expandedCatIds, setExpandedCatIds] = useState<Set<number>>(new Set());
+  const [catSortField, setCatSortField] = useState<"name" | "code" | "positions" | "employees">("name");
+  const [catSortAsc, setCatSortAsc] = useState(true);
+  const [currentCatPage, setCurrentCatPage] = useState(1);
+  const catPageSize = 15;
 
   // Modals state
   const [editingItem, setEditingItem] = useState<JobPositionMappingWithDetails | null>(null);
@@ -185,6 +194,148 @@ export function JobPositionMappingTableClient({
     return filteredItems.slice(start, start + pageSize);
   }, [filteredItems, currentPage, pageSize]);
 
+  // ---------------------------------------------------------------------------
+  // GROUPING PER JOB CATEGORY (TAMPILAN UTAMA PER JOB CATEGORY)
+  // ---------------------------------------------------------------------------
+  const categoryData = useMemo(() => {
+    const posByCat = new Map<number, JobPositionMappingWithDetails[]>();
+    const unmapped: JobPositionMappingWithDetails[] = [];
+
+    initialMappings.forEach((m) => {
+      if (m.jobCategoryId !== null) {
+        const list = posByCat.get(m.jobCategoryId) || [];
+        list.push(m);
+        posByCat.set(m.jobCategoryId, list);
+      } else {
+        unmapped.push(m);
+      }
+    });
+
+    const groups = jobCategories.map((cat) => {
+      const positions = posByCat.get(cat.id) || [];
+      const deptMap = new Map<number, { id: number; code: string; name: string }>();
+      const lvlMap = new Map<number, { id: number; code: string | null; name: string }>();
+      let empCount = 0;
+
+      positions.forEach((p) => {
+        empCount += p.employeeCount || 0;
+        if (!deptMap.has(p.departmentId)) {
+          deptMap.set(p.departmentId, {
+            id: p.departmentId,
+            code: p.departmentCode,
+            name: p.departmentName,
+          });
+        }
+        if (p.jobLevelId !== null && !lvlMap.has(p.jobLevelId)) {
+          lvlMap.set(p.jobLevelId, {
+            id: p.jobLevelId,
+            code: p.jobLevelCode,
+            name: p.jobLevelName || "-",
+          });
+        }
+      });
+
+      return {
+        category: cat,
+        positions: positions.sort((a, b) => a.positionName.localeCompare(b.positionName)),
+        positionCount: positions.length,
+        employeeCount: empCount,
+        departments: Array.from(deptMap.values()).sort((a, b) => a.code.localeCompare(b.code)),
+        jobLevels: Array.from(lvlMap.values()).sort((a, b) => a.name.localeCompare(b.name)),
+        isFullyMapped: positions.length > 0 && positions.every((p) => p.jobLevelId !== null),
+      };
+    });
+
+    return { groups, unmapped };
+  }, [jobCategories, initialMappings]);
+
+  // Filtered & Sorted Category Groups
+  const filteredCategoryGroups = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+
+    return categoryData.groups
+      .filter((g) => {
+        if (selectedDeptId !== "ALL" && !g.departments.some((d) => String(d.id) === selectedDeptId)) {
+          return false;
+        }
+        if (selectedLevelId !== "ALL") {
+          if (selectedLevelId === "UNSET") {
+            if (g.jobLevels.length > 0) return false;
+          } else if (!g.jobLevels.some((l) => String(l.id) === selectedLevelId)) {
+            return false;
+          }
+        }
+        if (selectedCatId !== "ALL") {
+          if (selectedCatId === "UNSET") {
+            return false;
+          } else if (String(g.category.id) !== selectedCatId) {
+            return false;
+          }
+        }
+        if (selectedStatus === "MAPPED" && g.positionCount === 0) return false;
+        if (selectedStatus === "UNMAPPED" && g.positionCount > 0 && g.isFullyMapped) return false;
+
+        if (q) {
+          const matchCat = g.category.name.toLowerCase().includes(q) || (g.category.code || "").toLowerCase().includes(q);
+          const matchDesc = (g.category.description || "").toLowerCase().includes(q);
+          const matchDept = g.departments.some(
+            (d) => d.code.toLowerCase().includes(q) || d.name.toLowerCase().includes(q)
+          );
+          const matchPos = g.positions.some(
+            (p) => p.positionName.toLowerCase().includes(q) || (p.positionCode || "").toLowerCase().includes(q)
+          );
+          if (!matchCat && !matchDesc && !matchDept && !matchPos) return false;
+        }
+
+        return true;
+      })
+      .sort((a, b) => {
+        let cmp = 0;
+        if (catSortField === "name") {
+          cmp = a.category.name.localeCompare(b.category.name);
+        } else if (catSortField === "code") {
+          cmp = (a.category.code || "").localeCompare(b.category.code || "");
+        } else if (catSortField === "positions") {
+          cmp = a.positionCount - b.positionCount;
+        } else if (catSortField === "employees") {
+          cmp = a.employeeCount - b.employeeCount;
+        }
+        return catSortAsc ? cmp : -cmp;
+      });
+  }, [categoryData, searchQuery, selectedDeptId, selectedLevelId, selectedCatId, selectedStatus, catSortField, catSortAsc]);
+
+  const totalCatPages = Math.ceil(filteredCategoryGroups.length / catPageSize) || 1;
+  const paginatedCategoryGroups = useMemo(() => {
+    const start = (currentCatPage - 1) * catPageSize;
+    return filteredCategoryGroups.slice(start, start + catPageSize);
+  }, [filteredCategoryGroups, currentCatPage, catPageSize]);
+
+  const toggleExpandCategory = (catId: number) => {
+    setExpandedCatIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(catId)) next.delete(catId);
+      else next.add(catId);
+      return next;
+    });
+  };
+
+  const handleExpandAll = () => {
+    setExpandedCatIds(new Set(filteredCategoryGroups.map((g) => g.category.id)));
+  };
+
+  const handleCollapseAll = () => {
+    setExpandedCatIds(new Set());
+  };
+
+  const handleCatSort = (field: "name" | "code" | "positions" | "employees") => {
+    if (catSortField === field) {
+      setCatSortAsc(!catSortAsc);
+    } else {
+      setCatSortField(field);
+      setCatSortAsc(true);
+    }
+  };
+
   // Filtered employees inside Category Employees Modal
   const filteredCategoryEmployees = useMemo(() => {
     if (!categoryEmployeeModalData) return [];
@@ -266,6 +417,19 @@ export function JobPositionMappingTableClient({
     setFormPosCode("");
     setFormLevelId(usableJobLevels[0]?.id ? String(usableJobLevels[0].id) : "");
     setFormCatId("");
+    setFormNotes("");
+    setIsAddModalOpen(true);
+  };
+
+  // Open Add Modal pre-filled with a specific Job Category
+  const handleOpenAddForCategory = (categoryId: number) => {
+    setEditingItem(null);
+    setFormDeptId(departments[0]?.id || 0);
+    setFormPosId(0);
+    setFormPosName("");
+    setFormPosCode("");
+    setFormLevelId(usableJobLevels[0]?.id ? String(usableJobLevels[0].id) : "");
+    setFormCatId(String(categoryId));
     setFormNotes("");
     setIsAddModalOpen(true);
   };
@@ -514,85 +678,157 @@ export function JobPositionMappingTableClient({
     }
   };
 
+  // Clean category code helper: hides ugly raw slugs like DRIVER___TRANSPORT or exact duplicates
+  const getCleanCategoryCode = (name: string, code: string | null) => {
+    if (!code) return null;
+    const trimmed = code.trim();
+    if (trimmed.toUpperCase() === name.trim().toUpperCase()) return null;
+    if (trimmed.includes("___") || trimmed.replace(/_/g, " ").toLowerCase() === name.trim().toLowerCase()) return null;
+    return trimmed;
+  };
+
   return (
-    <div className="space-y-3.5 text-slate-800">
-      {/* 1. SUMMARY STATS & STATUS DETECTION BANNER */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {/* Total Job Positions */}
-        <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs flex items-center justify-between">
-          <div>
-            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide block">
-              Total Job Position
-            </span>
-            <span className="text-xl font-bold text-slate-900 mt-0.5 block">{stats.total}</span>
+    <div className="space-y-3 text-slate-800">
+      {/* 1. SUMMARY METRICS (CLEAN & MINIMAL) */}
+      <div className="bg-white rounded-xl border border-slate-200/90 px-4 py-3 shadow-2xs">
+        <div className="grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-slate-100 gap-y-2.5 sm:gap-y-0">
+          <div className="sm:px-3">
+            <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider block">Job Category</span>
+            <div className="flex items-baseline gap-1.5 mt-0.5">
+              <span className="text-xl font-bold text-slate-900">{jobCategories.length}</span>
+              <span className="text-xs text-slate-500">kategori</span>
+            </div>
           </div>
-          <div className="h-9 w-9 rounded-lg bg-slate-100 flex items-center justify-center text-slate-600 font-bold text-xs">
-            {stats.total}
+          <div className="sm:px-3 pt-2 sm:pt-0">
+            <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider block">Job Position</span>
+            <div className="flex items-baseline gap-1.5 mt-0.5">
+              <span className="text-xl font-bold text-slate-900">{stats.total}</span>
+              <span className="text-xs text-slate-500">posisi</span>
+            </div>
           </div>
-        </div>
-
-        {/* Sudah Dimapping */}
-        <div
-          onClick={() => setSelectedStatus(selectedStatus === "MAPPED" ? "ALL" : "MAPPED")}
-          className={`bg-white rounded-xl border p-3.5 shadow-2xs flex items-center justify-between cursor-pointer transition ${
-            selectedStatus === "MAPPED" ? "border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-50/20" : "border-slate-200 hover:border-slate-300"
-          }`}
-        >
-          <div>
-            <span className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide block">
-              Sudah Lengkap Dimapping
-            </span>
-            <span className="text-xl font-bold text-emerald-800 mt-0.5 block">{stats.mapped}</span>
+          <div className="sm:px-3 pt-2 sm:pt-0">
+            <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider block">Lengkap Dimapping</span>
+            <div className="flex items-baseline gap-1.5 mt-0.5">
+              <span className="text-xl font-bold text-slate-900">{stats.mapped}</span>
+              <span className="text-xs text-emerald-600 font-medium">({Math.round((stats.mapped / (stats.total || 1)) * 100)}%)</span>
+            </div>
           </div>
-          <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800">
-            {stats.total > 0 ? `${Math.round((stats.mapped / stats.total) * 100)}%` : "0%"}
-          </span>
-        </div>
-
-        {/* Belum Dimapping (Warning Detection) */}
-        <div
-          onClick={() => setSelectedStatus(selectedStatus === "UNMAPPED" ? "ALL" : "UNMAPPED")}
-          className={`bg-white rounded-xl border p-3.5 shadow-2xs flex items-center justify-between cursor-pointer transition ${
-            stats.unmapped > 0
-              ? selectedStatus === "UNMAPPED"
-                ? "border-amber-500 ring-2 ring-amber-500/20 bg-amber-50/30"
-                : "border-amber-300 bg-amber-50/20 hover:border-amber-400"
-              : "border-slate-200"
-          }`}
-        >
-          <div>
-            <span className="text-[11px] font-semibold text-amber-800 uppercase tracking-wide block">
-              Belum Lengkap Dimapping
-            </span>
-            <span className="text-xl font-bold text-amber-900 mt-0.5 block">{stats.unmapped}</span>
+          <div className="sm:px-3 pt-2 sm:pt-0">
+            <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider block">Belum Dimapping</span>
+            <div className="flex items-baseline gap-1.5 mt-0.5">
+              <span className={`text-xl font-bold ${stats.unmapped > 0 ? "text-amber-600" : "text-slate-900"}`}>{stats.unmapped}</span>
+              <span className="text-xs text-slate-400">{stats.unmapped === 0 ? "semua lengkap" : "perlu dipetakan"}</span>
+            </div>
           </div>
-          {stats.unmapped > 0 ? (
-            <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-200/80 text-amber-900 animate-pulse">
-              Perlu Dipetakan
-            </span>
-          ) : (
-            <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800">
-              100% Selesai
-            </span>
-          )}
         </div>
       </div>
 
-      {/* 2. TOOLBAR FILTER, SEARCH & ACTION BUTTONS */}
-      <div className="bg-white rounded-xl border border-slate-200 p-3 shadow-2xs space-y-2.5">
-        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-2.5">
-          {/* Search Box */}
-          <div className="relative flex-1 min-w-[220px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+      {/* Peringatan Job Position Belum Memiliki Kategori (Jika Ada) */}
+      {categoryData.unmapped.length > 0 && (
+        <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3 flex items-center justify-between gap-3 text-xs">
+          <span className="font-medium text-amber-900">
+            Terdapat <strong>{categoryData.unmapped.length}</strong> Job Position belum dipetakan ke Job Category.
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setViewMode("POSITION");
+              setSelectedStatus("UNMAPPED");
+            }}
+            className="px-2.5 py-1 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white rounded-lg transition shrink-0 cursor-pointer"
+          >
+            Petakan Sekarang
+          </button>
+        </div>
+      )}
+
+      {/* 2. TOOLBAR: SWITCHER, ACTIONS, SEARCH & FILTER */}
+      <div className="bg-white rounded-xl border border-slate-200/90 p-3 shadow-2xs space-y-3">
+        {/* Row 1: Mode Switcher + Action Buttons */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+          {/* Segmented View Switcher */}
+          <div className="inline-flex p-0.5 bg-slate-100 rounded-lg border border-slate-200/70 self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => {
+                setViewMode("CATEGORY");
+                setCurrentCatPage(1);
+              }}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition cursor-pointer ${
+                viewMode === "CATEGORY"
+                  ? "bg-white text-slate-900 shadow-2xs font-bold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Per Job Category ({jobCategories.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setViewMode("POSITION");
+                setCurrentPage(1);
+              }}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition cursor-pointer ${
+                viewMode === "POSITION"
+                  ? "bg-white text-slate-900 shadow-2xs font-bold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Per Job Position ({initialMappings.length})
+            </button>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+            <button
+              type="button"
+              onClick={() => setIsCategoryModalOpen(true)}
+              className="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition cursor-pointer"
+            >
+              Kelola Kategori
+            </button>
+
+            <button
+              type="button"
+              onClick={() => exportJobPositionMappingsToExcel(filteredItems)}
+              className="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition cursor-pointer"
+            >
+              Export
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsImportModalOpen(true)}
+              className="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition cursor-pointer"
+            >
+              Import Excel
+            </button>
+
+            <button
+              type="button"
+              onClick={handleOpenAdd}
+              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition cursor-pointer shadow-2xs"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Tambah Mapping</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Row 2: Search Box & Filters */}
+        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 pt-2 border-t border-slate-100">
+          <div className="relative sm:col-span-6">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value);
                 setCurrentPage(1);
+                setCurrentCatPage(1);
               }}
-              placeholder="Cari Job Position, Departemen, atau Job Category..."
-              className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 hover:bg-white focus:bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 transition"
+              placeholder="Cari kategori, posisi, atau departemen..."
+              className="w-full pl-8 pr-7 py-1.5 text-xs bg-slate-50 hover:bg-white focus:bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 transition"
             />
             {searchQuery && (
               <button
@@ -605,62 +841,13 @@ export function JobPositionMappingTableClient({
             )}
           </div>
 
-          {/* Action Buttons Right */}
-          <div className="flex items-center gap-1.5 flex-wrap justify-end">
-            {/* Kelola Master Job Category */}
-            <button
-              type="button"
-              onClick={() => setIsCategoryModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs transition cursor-pointer"
-              title="Kelola Master Kategori Job Dinamis"
-            >
-              <Settings className="w-3.5 h-3.5 text-slate-500" />
-              <span>Kelola Kategori ({jobCategories.length})</span>
-            </button>
-
-            {/* Export Excel */}
-            <button
-              type="button"
-              onClick={() => exportJobPositionMappingsToExcel(filteredItems)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs transition cursor-pointer"
-              title="Export data mapping saat ini ke Excel"
-            >
-              <Download className="w-3.5 h-3.5 text-slate-500" />
-              <span>Export</span>
-            </button>
-
-            {/* Import Excel */}
-            <button
-              type="button"
-              onClick={() => setIsImportModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs transition cursor-pointer"
-              title="Import data mapping massal dari file Excel"
-            >
-              <Upload className="w-3.5 h-3.5 text-slate-500" />
-              <span>Import Excel</span>
-            </button>
-
-            {/* + Tambah Mapping */}
-            <button
-              type="button"
-              onClick={handleOpenAdd}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-lg shadow-2xs transition cursor-pointer active:scale-98"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Tambah Mapping</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Filter Dropdowns Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 pt-2 border-t border-slate-100 text-xs">
-          {/* 1. Filter Departemen */}
-          <div>
+          <div className="sm:col-span-3">
             <select
               value={selectedDeptId}
               onChange={(e) => {
                 setSelectedDeptId(e.target.value);
                 setCurrentPage(1);
+                setCurrentCatPage(1);
               }}
               className="w-full py-1.5 px-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:border-slate-400 cursor-pointer"
             >
@@ -673,262 +860,530 @@ export function JobPositionMappingTableClient({
             </select>
           </div>
 
-          {/* 2. Filter Job Level (Staff vs Non Staff) */}
-          <div>
+          <div className="sm:col-span-3">
             <select
               value={selectedLevelId}
               onChange={(e) => {
                 setSelectedLevelId(e.target.value);
                 setCurrentPage(1);
+                setCurrentCatPage(1);
               }}
               className="w-full py-1.5 px-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:border-slate-400 cursor-pointer"
             >
               <option value="ALL">Semua Job Level</option>
               {usableJobLevels.map((lvl) => (
                 <option key={lvl.id} value={lvl.id}>
-                  Level: {lvl.name} ({lvl.code})
+                  {lvl.name} ({lvl.code})
                 </option>
               ))}
-              <option value="UNSET">Level Belum Dipetakan</option>
-            </select>
-          </div>
-
-          {/* 3. Filter Job Category */}
-          <div>
-            <select
-              value={selectedCatId}
-              onChange={(e) => {
-                setSelectedCatId(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full py-1.5 px-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:border-slate-400 cursor-pointer"
-            >
-              <option value="ALL">Semua Job Category ({jobCategories.length})</option>
-              {jobCategories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  Kategori: {c.name}
-                </option>
-              ))}
-              <option value="UNSET">Kategori Belum Dipetakan</option>
-            </select>
-          </div>
-
-          {/* 4. Filter Status Mapping */}
-          <div>
-            <select
-              value={selectedStatus}
-              onChange={(e) => {
-                setSelectedStatus(e.target.value as "ALL" | "MAPPED" | "UNMAPPED");
-                setCurrentPage(1);
-              }}
-              className="w-full py-1.5 px-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:border-slate-400 cursor-pointer font-medium"
-            >
-              <option value="ALL">Status: Semua ({initialMappings.length})</option>
-              <option value="UNMAPPED">Status: Belum Lengkap ({stats.unmapped})</option>
-              <option value="MAPPED">Status: Sudah Lengkap ({stats.mapped})</option>
+              <option value="UNSET">Belum Dipetakan</option>
             </select>
           </div>
         </div>
+
+        {viewMode === "CATEGORY" && (
+          <div className="flex items-center justify-between pt-1 text-xs text-slate-500">
+            <span>Menampilkan {filteredCategoryGroups.length} kelompok kategori</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleExpandAll}
+                className="hover:text-slate-900 transition cursor-pointer"
+              >
+                Buka Semua
+              </button>
+              <span className="text-slate-300">·</span>
+              <button
+                type="button"
+                onClick={handleCollapseAll}
+                className="hover:text-slate-900 transition cursor-pointer"
+              >
+                Tutup Semua
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* 3. TABLE MAPPING JOB POSITION (Clean, High Contrast, 5 Kolom Sesuai Permintaan) */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50/90 text-slate-600 font-semibold select-none">
-                <th className="py-2.5 px-3.5 text-center w-12 border-r border-slate-200/80">No</th>
-                <th
-                  onClick={() => handleSort("dept")}
-                  className="py-2.5 px-3.5 border-r border-slate-200/80 cursor-pointer hover:bg-slate-100 transition"
-                >
-                  <div className="flex items-center gap-1.5">
-                    <span>Departemen</span>
-                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSort("position")}
-                  className="py-2.5 px-3.5 border-r border-slate-200/80 cursor-pointer hover:bg-slate-100 transition"
-                >
-                  <div className="flex items-center gap-1.5">
-                    <span>Job Position</span>
-                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSort("level")}
-                  className="py-2.5 px-3.5 border-r border-slate-200/80 cursor-pointer hover:bg-slate-100 transition w-36 text-center"
-                >
-                  <div className="flex items-center justify-center gap-1.5">
+      {/* 3. TABLE MAPPING: TAMPILAN PER JOB CATEGORY (DEFAULT) vs PER JOB POSITION */}
+      {viewMode === "CATEGORY" ? (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50/80 text-slate-600 font-semibold select-none">
+                  <th className="py-2.5 px-3 text-center w-12 border-r border-slate-200/80">No</th>
+                  <th
+                    onClick={() => handleCatSort("name")}
+                    className="py-2.5 px-3.5 border-r border-slate-200/80 cursor-pointer hover:bg-slate-100 transition"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>Job Category</span>
+                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    </div>
+                  </th>
+                  <th className="py-2.5 px-3 border-r border-slate-200/80 text-center w-32">
                     <span>Job Level</span>
-                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSort("category")}
-                  className="py-2.5 px-3.5 border-r border-slate-200/80 cursor-pointer hover:bg-slate-100 transition w-44 text-center"
-                >
-                  <div className="flex items-center justify-center gap-1.5">
-                    <span>Job Category</span>
-                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
-                  </div>
-                </th>
-                <th className="py-2.5 px-3.5 text-center w-28">Aksi</th>
-              </tr>
-            </thead>
-
-            <tbody className="divide-y divide-slate-100">
-              {paginatedItems.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="py-12 px-4 text-center text-slate-400 italic">
-                    Tidak ada data Job Position yang cocok dengan filter atau kata kunci pencarian.
-                  </td>
+                  </th>
+                  <th
+                    onClick={() => handleCatSort("positions")}
+                    className="py-2.5 px-3 border-r border-slate-200/80 cursor-pointer hover:bg-slate-100 transition text-center w-28"
+                  >
+                    <div className="flex items-center justify-center gap-1.5">
+                      <span>Posisi</span>
+                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    </div>
+                  </th>
+                  <th className="py-2.5 px-3.5 border-r border-slate-200/80 text-left">
+                    <span>Departemen Terkait</span>
+                  </th>
+                  <th
+                    onClick={() => handleCatSort("employees")}
+                    className="py-2.5 px-3 border-r border-slate-200/80 cursor-pointer hover:bg-slate-100 transition text-center w-28"
+                  >
+                    <div className="flex items-center justify-center gap-1.5">
+                      <span>Karyawan</span>
+                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    </div>
+                  </th>
+                  <th className="py-2.5 px-3 text-center w-24">Aksi</th>
                 </tr>
-              ) : (
-                paginatedItems.map((item, idx) => {
-                  const rowNumber = (currentPage - 1) * pageSize + idx + 1;
-                  const isUnmapped = !item.isMapped;
+              </thead>
 
-                  return (
-                    <tr
-                      key={item.jobPositionId}
-                      className={`hover:bg-slate-50/80 transition-colors ${
-                        isUnmapped ? "bg-amber-50/15" : "bg-white"
-                      }`}
-                    >
-                      {/* No */}
-                      <td className="py-2.5 px-3.5 text-center text-slate-400 font-mono text-[11px] align-middle border-r border-slate-100">
-                        {rowNumber}
-                      </td>
+              <tbody className="divide-y divide-slate-100">
+                {paginatedCategoryGroups.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-12 px-4 text-center text-slate-400 italic">
+                      Tidak ada data Job Category yang cocok dengan filter atau kata kunci pencarian.
+                    </td>
+                  </tr>
+                ) : (
+                  paginatedCategoryGroups.map((group, idx) => {
+                    const rowNumber = (currentCatPage - 1) * catPageSize + idx + 1;
+                    const isExpanded = expandedCatIds.has(group.category.id);
+                    const cleanCode = getCleanCategoryCode(group.category.name, group.category.code);
 
-                      {/* Departemen */}
-                      <td className="py-2.5 px-3.5 align-middle border-r border-slate-100">
-                        <div className="flex items-center gap-2">
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-100 text-slate-700 border border-slate-200 shrink-0">
-                            {item.departmentCode}
-                          </span>
-                          <span className="font-medium text-slate-800 text-xs truncate max-w-[200px]" title={item.departmentName}>
-                            {item.departmentName}
-                          </span>
-                        </div>
-                      </td>
+                    return (
+                      <React.Fragment key={group.category.id}>
+                        <tr
+                          className={`hover:bg-slate-50/70 transition-colors ${
+                            isExpanded ? "bg-slate-50/50" : "bg-white"
+                          }`}
+                        >
+                          {/* No */}
+                          <td className="py-2.5 px-3 text-center text-slate-400 font-mono text-[11px] align-middle border-r border-slate-100">
+                            {rowNumber}
+                          </td>
 
-                      {/* Job Position */}
-                      <td className="py-2.5 px-3.5 align-middle border-r border-slate-100">
-                        <div className="flex flex-col">
+                          {/* Job Category with inline Chevron toggle */}
+                          <td className="py-2.5 px-3.5 align-middle border-r border-slate-100">
+                            <div
+                              onClick={() => toggleExpandCategory(group.category.id)}
+                              className="cursor-pointer group flex items-start gap-2"
+                            >
+                              <span className="mt-0.5 text-slate-400 group-hover:text-slate-700 transition">
+                                {isExpanded ? (
+                                  <ChevronUp className="w-4 h-4 text-slate-700" />
+                                ) : (
+                                  <ChevronDown className="w-4 h-4" />
+                                )}
+                              </span>
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-semibold text-slate-900 group-hover:text-blue-700 transition text-xs">
+                                    {group.category.name}
+                                  </span>
+                                  {cleanCode && (
+                                    <span className="text-[10px] font-mono text-slate-400">
+                                      ({cleanCode})
+                                    </span>
+                                  )}
+                                </div>
+                                {group.category.description && (
+                                  <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
+                                    {group.category.description}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Job Level Terkait */}
+                          <td className="py-2.5 px-3 text-center align-middle border-r border-slate-100">
+                            {group.jobLevels.length === 0 ? (
+                              <span className="text-[11px] text-slate-400">-</span>
+                            ) : (
+                              <div className="flex items-center justify-center gap-1 flex-wrap">
+                                {group.jobLevels.map((lvl) => (
+                                  <span
+                                    key={lvl.id}
+                                    className="px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-700"
+                                  >
+                                    {lvl.name}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Job Position Count */}
+                          <td className="py-2.5 px-3 text-center align-middle border-r border-slate-100">
+                            <button
+                              type="button"
+                              onClick={() => toggleExpandCategory(group.category.id)}
+                              className="text-xs font-semibold text-slate-800 hover:text-blue-700 transition cursor-pointer"
+                            >
+                              {group.positionCount} posisi
+                            </button>
+                          </td>
+
+                          {/* Departemen Terkait (Clean comma-separated list) */}
+                          <td className="py-2.5 px-3.5 align-middle border-r border-slate-100">
+                            {group.departments.length === 0 ? (
+                              <span className="text-[11px] text-slate-400">-</span>
+                            ) : (
+                              <div className="text-xs text-slate-700 font-medium truncate max-w-[280px]">
+                                {group.departments.slice(0, 4).map((d) => d.code).join(", ")}
+                                {group.departments.length > 4 && (
+                                  <span className="text-slate-400 font-normal ml-1">
+                                    (+{group.departments.length - 4} lainnya)
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Total Karyawan */}
+                          <td className="py-2.5 px-3 text-center align-middle border-r border-slate-100">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenCategoryEmployees(group.category)}
+                              disabled={isLoadingCategoryEmployees}
+                              className="text-xs font-semibold text-slate-800 hover:text-blue-700 transition cursor-pointer underline-offset-2 hover:underline disabled:opacity-40"
+                              title={`Lihat ${group.employeeCount} karyawan kategori ${group.category.name}`}
+                            >
+                              {group.employeeCount} orang
+                            </button>
+                          </td>
+
+                          {/* Aksi */}
+                          <td className="py-2.5 px-3 text-center align-middle">
+                            <button
+                              type="button"
+                              onClick={() => toggleExpandCategory(group.category.id)}
+                              className="px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 rounded-md transition cursor-pointer"
+                            >
+                              {isExpanded ? "Tutup" : "Lihat"}
+                            </button>
+                          </td>
+                        </tr>
+
+                        {/* Expanded Inner Table */}
+                        {isExpanded && (
+                          <tr>
+                            <td colSpan={7} className="bg-slate-50/70 p-3 border-b border-slate-200">
+                              <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-2xs">
+                                <div className="px-3.5 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs">
+                                  <div className="font-semibold text-slate-800">
+                                    Daftar Posisi: {group.category.name} ({group.positions.length} posisi)
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenAddForCategory(group.category.id)}
+                                    className="text-xs font-medium text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 px-2 py-0.5 rounded border border-slate-200 transition cursor-pointer"
+                                  >
+                                    + Tambah Posisi
+                                  </button>
+                                </div>
+
+                                {group.positions.length === 0 ? (
+                                  <div className="py-6 text-center text-slate-400 italic text-xs">
+                                    Belum ada Job Position yang dipetakan ke kategori ini.
+                                  </div>
+                                ) : (
+                                  <table className="w-full text-xs text-left">
+                                    <thead className="bg-slate-50/50 border-b border-slate-100 text-slate-500 font-semibold text-[11px]">
+                                      <tr>
+                                        <th className="py-2 px-3 w-10 text-center">No</th>
+                                        <th className="py-2 px-3">Job Position</th>
+                                        <th className="py-2 px-3">Departemen</th>
+                                        <th className="py-2 px-3 text-center">Job Level</th>
+                                        <th className="py-2 px-3 text-center">Karyawan</th>
+                                        <th className="py-2 px-3 text-right w-20">Aksi</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                      {group.positions.map((pos, pIdx) => (
+                                        <tr key={pos.jobPositionId} className="hover:bg-slate-50/60 transition">
+                                          <td className="py-2 px-3 text-center text-slate-400 font-mono text-[11px]">
+                                            {pIdx + 1}
+                                          </td>
+                                          <td className="py-2 px-3 font-medium text-slate-900">
+                                            {pos.positionName}
+                                          </td>
+                                          <td className="py-2 px-3 text-slate-600">
+                                            [{pos.departmentCode}] {pos.departmentName}
+                                          </td>
+                                          <td className="py-2 px-3 text-center">
+                                            <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-700">
+                                              {pos.jobLevelName || "Belum"}
+                                            </span>
+                                          </td>
+                                          <td className="py-2 px-3 text-center text-slate-600">
+                                            {pos.employeeCount} orang
+                                          </td>
+                                          <td className="py-2 px-3 text-right">
+                                            <button
+                                              type="button"
+                                              onClick={() => handleOpenEdit(pos)}
+                                              className="text-xs font-medium text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 px-2 py-0.5 rounded border border-slate-200 transition cursor-pointer"
+                                            >
+                                              Atur
+                                            </button>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination Footer Category View */}
+          <div className="px-4 py-3 bg-slate-50/70 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+            <div className="text-slate-500">
+              Menampilkan <span className="font-semibold text-slate-800">{paginatedCategoryGroups.length}</span> dari{" "}
+              <span className="font-semibold text-slate-800">{filteredCategoryGroups.length}</span> Job Category
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={currentCatPage <= 1}
+                onClick={() => setCurrentCatPage((p) => Math.max(1, p - 1))}
+                className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+                title="Halaman Sebelumnya"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+
+              <span className="px-2 text-xs font-medium text-slate-700">
+                Halaman {currentCatPage} / {totalCatPages}
+              </span>
+
+              <button
+                type="button"
+                disabled={currentCatPage >= totalCatPages}
+                onClick={() => setCurrentCatPage((p) => Math.min(totalCatPages, p + 1))}
+                className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+                title="Halaman Selanjutnya"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* TAMPILAN PER JOB POSITION (353 ROW FLAT TABLE) */
+        <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50/90 text-slate-600 font-semibold select-none">
+                  <th className="py-2.5 px-3.5 text-center w-12 border-r border-slate-200/80">No</th>
+                  <th
+                    onClick={() => handleSort("dept")}
+                    className="py-2.5 px-3.5 border-r border-slate-200/80 cursor-pointer hover:bg-slate-100 transition"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>Departemen</span>
+                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort("position")}
+                    className="py-2.5 px-3.5 border-r border-slate-200/80 cursor-pointer hover:bg-slate-100 transition"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>Job Position</span>
+                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort("level")}
+                    className="py-2.5 px-3.5 border-r border-slate-200/80 cursor-pointer hover:bg-slate-100 transition w-36 text-center"
+                  >
+                    <div className="flex items-center justify-center gap-1.5">
+                      <span>Job Level</span>
+                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort("category")}
+                    className="py-2.5 px-3.5 border-r border-slate-200/80 cursor-pointer hover:bg-slate-100 transition w-44 text-center"
+                  >
+                    <div className="flex items-center justify-center gap-1.5">
+                      <span>Job Category</span>
+                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                    </div>
+                  </th>
+                  <th className="py-2.5 px-3.5 text-center w-28">Aksi</th>
+                </tr>
+              </thead>
+
+              <tbody className="divide-y divide-slate-100">
+                {paginatedItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-12 px-4 text-center text-slate-400 italic">
+                      Tidak ada data Job Position yang cocok dengan filter atau kata kunci pencarian.
+                    </td>
+                  </tr>
+                ) : (
+                  paginatedItems.map((item, idx) => {
+                    const rowNumber = (currentPage - 1) * pageSize + idx + 1;
+                    const isUnmapped = !item.isMapped;
+
+                    return (
+                      <tr
+                        key={item.jobPositionId}
+                        className={`hover:bg-slate-50/80 transition-colors ${
+                          isUnmapped ? "bg-amber-50/15" : "bg-white"
+                        }`}
+                      >
+                        {/* No */}
+                        <td className="py-2.5 px-3.5 text-center text-slate-400 font-mono text-[11px] align-middle border-r border-slate-100">
+                          {rowNumber}
+                        </td>
+
+                        {/* Departemen */}
+                        <td className="py-2.5 px-3.5 align-middle border-r border-slate-100">
                           <div className="flex items-center gap-2">
-                            <span className="font-bold text-slate-900 text-xs">
-                              {item.positionName}
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-100 text-slate-700 border border-slate-200 shrink-0">
+                              {item.departmentCode}
                             </span>
-                            {item.employeeCount > 0 && (
-                              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200" title={`${item.employeeCount} karyawan aktif di posisi ini`}>
-                                {item.employeeCount} Karyawan
+                            <span className="font-medium text-slate-800 text-xs truncate max-w-[200px]" title={item.departmentName}>
+                              {item.departmentName}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* Job Position */}
+                        <td className="py-2.5 px-3.5 align-middle border-r border-slate-100">
+                          <div className="flex flex-col">
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-slate-900 text-xs">
+                                {item.positionName}
+                              </span>
+                              {item.employeeCount > 0 && (
+                                <span className="text-[11px] text-slate-400">
+                                  ({item.employeeCount} orang)
+                                </span>
+                              )}
+                            </div>
+                            {item.positionCode && (
+                              <span className="text-[10px] font-mono text-slate-400">
+                                {item.positionCode}
                               </span>
                             )}
                           </div>
-                          {item.positionCode && (
-                            <span className="text-[10px] font-mono text-slate-400 mt-0.5">
-                              {item.positionCode}
+                        </td>
+
+                        {/* Job Level (Staff / Non Staff) */}
+                        <td className="py-2.5 px-3.5 text-center align-middle border-r border-slate-100">
+                          {item.jobLevelName ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-700">
+                              {item.jobLevelName}
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-amber-600 font-medium">
+                              Belum Dipetakan
                             </span>
                           )}
-                        </div>
-                      </td>
+                        </td>
 
-                      {/* Job Level (Staff / Non Staff dari Master Job Level) */}
-                      <td className="py-2.5 px-3.5 text-center align-middle border-r border-slate-100">
-                        {item.jobLevelName ? (
-                          <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
-                              item.jobLevelName.toLowerCase().includes("non")
-                                ? "bg-slate-100 text-slate-700 border-slate-200"
-                                : "bg-sky-50 text-sky-800 border-sky-200"
-                            }`}
-                          >
-                            {item.jobLevelName}
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10.5px] font-medium bg-amber-50 text-amber-800 border border-amber-200">
-                            Belum Dipetakan
-                          </span>
-                        )}
-                      </td>
+                        {/* Job Category */}
+                        <td className="py-2.5 px-3.5 text-center align-middle border-r border-slate-100">
+                          {item.jobCategoryName ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const found = jobCategories.find((c) => c.id === item.jobCategoryId);
+                                if (found) handleOpenCategoryEmployees(found);
+                              }}
+                              className="text-xs font-medium text-slate-800 hover:text-blue-700 hover:underline cursor-pointer"
+                              title={`Lihat karyawan kategori ${item.jobCategoryName}`}
+                            >
+                              {item.jobCategoryName}
+                            </button>
+                          ) : (
+                            <span className="text-[11px] text-slate-400">
+                              -
+                            </span>
+                          )}
+                        </td>
 
-                      {/* Job Category (Dinamis: SPV, Admin, Foreman, dll.) */}
-                      <td className="py-2.5 px-3.5 text-center align-middle border-r border-slate-100">
-                        {item.jobCategoryName ? (
+                        {/* Aksi */}
+                        <td className="py-2.5 px-3.5 text-center align-middle">
                           <button
                             type="button"
-                            onClick={() => {
-                              const found = jobCategories.find((c) => c.id === item.jobCategoryId);
-                              if (found) handleOpenCategoryEmployees(found);
-                            }}
-                            className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 transition cursor-pointer"
-                            title={`Klik untuk melihat list employee kategori ${item.jobCategoryName}`}
+                            onClick={() => handleOpenEdit(item)}
+                            className="px-2.5 py-1 text-xs font-medium text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 rounded-md transition cursor-pointer"
                           >
-                            <span>{item.jobCategoryName}</span>
+                            Atur
                           </button>
-                        ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10.5px] font-medium bg-rose-50 text-rose-800 border border-rose-200">
-                            Belum Dipetakan
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Aksi */}
-                      <td className="py-2.5 px-3.5 text-center align-middle">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenEdit(item)}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs transition cursor-pointer active:scale-95"
-                          title={`Atur mapping ${item.positionName}`}
-                        >
-                          <Pencil className="w-3 h-3 text-slate-500" />
-                          <span>Atur</span>
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Pagination Footer */}
-        <div className="px-4 py-3 bg-slate-50/70 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-          <div className="text-slate-500">
-            Menampilkan <span className="font-semibold text-slate-800">{paginatedItems.length}</span> dari{" "}
-            <span className="font-semibold text-slate-800">{filteredItems.length}</span> Job Position
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              disabled={currentPage <= 1}
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
-              title="Halaman Sebelumnya"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
+          {/* Pagination Footer Position View */}
+          <div className="px-4 py-3 bg-slate-50/70 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+            <div className="text-slate-500">
+              Menampilkan <span className="font-semibold text-slate-800">{paginatedItems.length}</span> dari{" "}
+              <span className="font-semibold text-slate-800">{filteredItems.length}</span> Job Position
+            </div>
 
-            <span className="px-2 text-xs font-medium text-slate-700">
-              Halaman {currentPage} / {totalPages}
-            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={currentPage <= 1}
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                title="Halaman Sebelumnya"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
 
-            <button
-              type="button"
-              disabled={currentPage >= totalPages}
-              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-              className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
-              title="Halaman Selanjutnya"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
+              <span className="px-2 text-xs font-medium text-slate-700">
+                Halaman {currentPage} / {totalPages}
+              </span>
+
+              <button
+                type="button"
+                disabled={currentPage >= totalPages}
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                title="Halaman Selanjutnya"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* ========================================================= */}
       {/* 4. MODAL EDIT MAPPING JOB POSITION                        */}

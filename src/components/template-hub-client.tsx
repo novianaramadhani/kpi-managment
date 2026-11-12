@@ -164,7 +164,7 @@ export function TemplateHubClient({
         backLabel="Kembali ke Admin Menu"
         actions={
           <div
-            data-tour="step-1-template-tabs"
+            data-tour="step-3-template-tabs"
             className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200"
           >
             <button

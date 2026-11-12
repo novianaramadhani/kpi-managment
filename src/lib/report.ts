@@ -1,8 +1,77 @@
 import { db } from "@/db";
-import { appraisals, departments, employees, jobLevels, kpiPeriods, kpiTemplates } from "@/db/schema";
-import { and, asc, desc, eq } from "drizzle-orm";
+import {
+  appraisals,
+  departments,
+  employees,
+  jobLevels,
+  kpiAssessorAssignments,
+  kpiCategories,
+  kpiPeriods,
+  kpiTemplates,
+} from "@/db/schema";
+import { and, asc, desc, eq, isNull, notInArray, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { gradeOf, formatDateMedium, formatTenureExact, fmtPct } from "./scoring";
+
+interface PeriodAssessorAssignment {
+  templateId: number;
+  assessorId: number;
+  assessorName: string;
+  scopeType: string;
+  targetEmployeeId: number | null;
+  targetDepartmentId: number | null;
+  roleAssessor: string | null;
+}
+
+const ASSESSOR_ROLE_ORDER: Record<string, number> = {
+  PENILAI_1: 1,
+  ATASAN_LANGSUNG: 2,
+  PENILAI_2: 3,
+};
+
+/**
+ * Nama penilai diambil dari fitur Penugasan Asesor KPI dengan prioritas
+ * INDIVIDUAL (per karyawan) > DEPARTMENT (per template) > GLOBAL (per template).
+ * Mengembalikan null bila belum ada penugasan sehingga pemanggil bisa memakai fallback.
+ */
+function resolveAssessorNames(
+  assignments: PeriodAssessorAssignment[],
+  target: { employeeId: number; departmentId: number; templateId: number | null }
+): string | null {
+  const individual = assignments.filter(
+    (a) => a.scopeType === "INDIVIDUAL" && a.targetEmployeeId === target.employeeId
+  );
+
+  const sameTemplate = (a: PeriodAssessorAssignment) =>
+    target.templateId !== null && a.templateId === target.templateId;
+
+  const department = assignments.filter(
+    (a) =>
+      a.scopeType === "DEPARTMENT" &&
+      sameTemplate(a) &&
+      (a.targetDepartmentId === null || a.targetDepartmentId === target.departmentId)
+  );
+
+  const global = assignments.filter((a) => a.scopeType === "GLOBAL" && sameTemplate(a));
+
+  const matched = [individual, department, global].find((list) => list.length > 0);
+  if (!matched) return null;
+
+  const seen = new Set<number>();
+  const ordered = [...matched]
+    .sort((a, b) => {
+      const ra = ASSESSOR_ROLE_ORDER[a.roleAssessor ?? ""] ?? 99;
+      const rb = ASSESSOR_ROLE_ORDER[b.roleAssessor ?? ""] ?? 99;
+      return ra - rb || a.assessorName.localeCompare(b.assessorName);
+    })
+    .filter((a) => {
+      if (seen.has(a.assessorId)) return false;
+      seen.add(a.assessorId);
+      return true;
+    });
+
+  return ordered.map((a) => a.assessorName).join(", ");
+}
 
 export interface SummaryKpiRow {
   id: number;
@@ -60,6 +129,8 @@ export async function getReport(periodId?: number) {
   const rawRows = await db
     .select({
       id: appraisals.id,
+      employeeId: employees.id,
+      templateId: appraisals.templateId,
       nik: employees.nik,
       name: employees.name,
       jobPosition: employees.jobPosition,
@@ -92,6 +163,34 @@ export async function getReport(periodId?: number) {
 
   const targetEvalDate = period.evaluationDate || undefined;
 
+  // Penugasan asesor aktif pada periode ini (stage persetujuan Head Dept/Manager/HR tidak dihitung sebagai penilai)
+  const assessorAssignments: PeriodAssessorAssignment[] =
+    rawRows.length === 0
+      ? []
+      : await db
+          .select({
+            templateId: kpiCategories.templateId,
+            assessorId: kpiAssessorAssignments.assessorEmployeeId,
+            assessorName: employees.name,
+            scopeType: kpiAssessorAssignments.scopeType,
+            targetEmployeeId: kpiAssessorAssignments.targetEmployeeId,
+            targetDepartmentId: kpiAssessorAssignments.targetDepartmentId,
+            roleAssessor: kpiAssessorAssignments.roleAssessor,
+          })
+          .from(kpiAssessorAssignments)
+          .innerJoin(kpiCategories, eq(kpiAssessorAssignments.categoryId, kpiCategories.id))
+          .innerJoin(employees, eq(kpiAssessorAssignments.assessorEmployeeId, employees.id))
+          .where(
+            and(
+              eq(kpiAssessorAssignments.periodId, period.id),
+              eq(kpiAssessorAssignments.isActive, true),
+              or(
+                isNull(kpiAssessorAssignments.stage),
+                notInArray(kpiAssessorAssignments.stage, ["HEAD_DEPT", "MANAGER", "HR"])
+              )
+            )
+          );
+
   const rows: SummaryKpiRow[] = rawRows.map((r) => {
     const f = Number(r.finalScore ?? 0);
     const isFinal = true;
@@ -102,7 +201,14 @@ export async function getReport(periodId?: number) {
         ? `${(f * 100).toFixed(1)}%`
         : "-";
 
+    const assignedAssessor = resolveAssessorNames(assessorAssignments, {
+      employeeId: r.employeeId,
+      departmentId: r.deptId || 0,
+      templateId: r.templateId,
+    });
+
     const resolvedAppraiser =
+      assignedAssessor ||
       r.appraiserName ||
       r.headDeptApproverName ||
       r.empAppraiserName ||

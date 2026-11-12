@@ -149,7 +149,16 @@ export function normalizeOperatingUnit(raw: string): string {
   ) {
     return "JO-IC";
   }
-  if (up === "WS89" || up === "WS-89" || up === "SITE WS89" || up === "SITE WS-89") return "WS89";
+  if (
+    up === "WS89" ||
+    up === "WS 89" ||
+    up === "WS-89" ||
+    up === "SITE WS89" ||
+    up === "SITE WS 89" ||
+    up === "SITE WS-89"
+  ) {
+    return "WS89";
+  }
   return trimmed;
 }
 

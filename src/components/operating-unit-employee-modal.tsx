@@ -4,6 +4,7 @@ import React, { useState, useMemo } from "react";
 import type { Employee, Department } from "@/db/schema";
 import { Table, td, th } from "./ui";
 import { getRoleBadgeInfo } from "@/lib/role-badge";
+import { matchesOperatingUnit } from "@/lib/department-mapping-utils";
 
 interface OperatingUnitEmployeeModalProps {
   isOpen: boolean;
@@ -24,9 +25,8 @@ export function OperatingUnitEmployeeModal({
 
   const unitEmployees = useMemo(() => {
     if (!unit) return [];
-    const target = unit.name.toUpperCase();
     return employees.filter(
-      (e) => e.isActive !== false && (e.operatingUnit || "HO").toUpperCase() === target
+      (e) => e.isActive !== false && matchesOperatingUnit(e.operatingUnit, unit.name, unit.id)
     );
   }, [unit, employees]);
 
@@ -144,11 +144,10 @@ export function OperatingUnitEmployeeModal({
                   </td>
                   <td className={td}>
                     <span
-                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                        emp.isActive
-                          ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                          : "bg-slate-100 text-slate-500 border border-slate-200"
-                      }`}
+                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${emp.isActive
+                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        : "bg-slate-100 text-slate-500 border border-slate-200"
+                        }`}
                     >
                       {emp.isActive ? "Active" : "Inactive"}
                     </span>

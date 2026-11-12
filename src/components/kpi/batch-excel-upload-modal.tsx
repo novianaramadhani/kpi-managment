@@ -32,12 +32,22 @@ import {
   type SheetParseResult,
   type BatchPreviewItem,
   type IndicatorMatchingTarget,
+  type GenericScoringRule,
 } from "@/lib/excel-batch-assessment";
+import { formatCriteriaExcel } from "@/lib/excel-template-kpi";
 import { saveBatchExcelAssessmentAction } from "@/lib/monthly-assessment-actions";
 import { saveBatchDepartmentKpisFromExcelAction } from "@/lib/actions";
 import { normalizeWeight } from "@/lib/scoring";
 import { EvidenceViewerModal } from "./evidence-viewer-modal";
 import type { AppraisalEvidenceItem } from "@/types/monthly-assessment";
+
+function renderBandLabel(rule: GenericScoringRule, unit?: string | null): string {
+  if (rule.label && rule.label.trim()) return rule.label.trim();
+  if (rule.operator && (rule.minValue !== null || rule.maxValue !== null)) {
+    return formatCriteriaExcel(rule.label || "", rule.operator, rule.minValue, rule.maxValue, unit);
+  }
+  return String(rule.score);
+}
 
 export interface BatchExcelUploadModalProps {
   isOpen: boolean;
@@ -75,6 +85,25 @@ export function BatchExcelUploadModal({
 
   // 1. State Modal Detail Pembacaan Excel
   const [viewingDetailItem, setViewingDetailItem] = useState<BatchPreviewItem | null>(null);
+
+  // Helper menggabungkan nilai Target/Realisasi dengan Satuan
+  const formatWithUnit = (valStr: string | number | null | undefined, unit: string) => {
+    if (valStr === null || valStr === undefined || valStr === "") return "-";
+    const s = String(valStr).trim();
+    if (s === "-" || s === "") return "-";
+    if (!unit || unit === "-") return s;
+
+    if (unit === "%" || unit.toLowerCase() === "persen") {
+      return s.endsWith("%") ? s : `${s}%`;
+    }
+    if (unit.toLowerCase() === "rp" || unit.toLowerCase() === "rupiah") {
+      return s.toLowerCase().startsWith("rp") ? s : `Rp ${s}`;
+    }
+    if (s.toLowerCase().includes(unit.toLowerCase())) {
+      return s;
+    }
+    return `${s} ${unit}`;
+  };
 
   // 2. State Fitur Attach File (Lampiran Dokumen Bukti)
   const [isEvidenceModalOpen, setIsEvidenceModalOpen] = useState(false);
@@ -605,6 +634,79 @@ export function BatchExcelUploadModal({
     0
   );
 
+  interface ReviewCategoryGroup {
+    categoryNumber: number;
+    categoryName: string;
+    parameterWeightStr?: string;
+    items: Array<{
+      item: BatchPreviewItem;
+      displayNumber: string;
+    }>;
+  }
+
+  const reviewCategoryGroups: ReviewCategoryGroup[] = (() => {
+    const groupMap = new Map<string, ReviewCategoryGroup>();
+    const categoryOrder: string[] = [];
+
+    // 1. Seed categories from availableIndicators to match the official 5-parameter form structure
+    for (const ind of availableIndicators) {
+      const cName = ind.categoryName || "Target Kerja";
+      if (!groupMap.has(cName)) {
+        const catNum = ind.categoryNumber || (categoryOrder.length + 1);
+        const weightVal = ind.parameterWeight ? normalizeWeight(ind.parameterWeight) : null;
+        const weightStr = weightVal !== null ? `${(weightVal * 100).toFixed(0)}%` : undefined;
+        groupMap.set(cName, {
+          categoryNumber: catNum,
+          categoryName: cName,
+          parameterWeightStr: weightStr,
+          items: [],
+        });
+        categoryOrder.push(cName);
+      }
+    }
+
+    // 2. Fallback for any item category not in availableIndicators
+    for (const it of selectedItems) {
+      const cName = it.matchedIndicator?.categoryName || "Target Kerja";
+      if (!groupMap.has(cName)) {
+        groupMap.set(cName, {
+          categoryNumber: categoryOrder.length + 1,
+          categoryName: cName,
+          parameterWeightStr: undefined,
+          items: [],
+        });
+        categoryOrder.push(cName);
+      }
+    }
+
+    // 3. Put selectedItems into their respective groups
+    for (const it of selectedItems) {
+      const cName = it.matchedIndicator?.categoryName || "Target Kerja";
+      const grp = groupMap.get(cName);
+      if (grp) {
+        grp.items.push({ item: it, displayNumber: "" });
+      }
+    }
+
+    // 4. Filter only groups that have items
+    const activeGroups = categoryOrder
+      .map((name) => groupMap.get(name)!)
+      .filter((g) => g && g.items.length > 0);
+
+    // 5. Assign clean hierarchical numbering:
+    // If group has > 1 items (e.g. Target Kerja): 1.1, 1.2, 1.3...
+    // If group has 1 item: 2., 3., 4., 5.
+    activeGroups.forEach((g) => {
+      const catNum = g.categoryNumber;
+      const isMulti = g.items.length > 1;
+      g.items.forEach((entry, iIdx) => {
+        entry.displayNumber = isMulti ? `${catNum}.${iIdx + 1}` : `${catNum}.`;
+      });
+    });
+
+    return activeGroups;
+  })();
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto"
@@ -635,11 +737,10 @@ export function BatchExcelUploadModal({
                 <button
                   type="button"
                   onClick={() => setModalStep("mapping")}
-                  className={`px-3 py-1.5 rounded-lg font-semibold transition ${
-                    modalStep === "mapping"
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition ${modalStep === "mapping"
                       ? "bg-white text-sky-800 shadow-2xs border border-slate-200/80 font-bold"
                       : "text-slate-600 hover:text-slate-900 cursor-pointer"
-                  }`}
+                    }`}
                 >
                   1. Pemetaan
                 </button>
@@ -649,11 +750,10 @@ export function BatchExcelUploadModal({
                     if (selectedCount > 0) handleProceedToReview();
                   }}
                   disabled={selectedCount === 0}
-                  className={`px-3 py-1.5 rounded-lg font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed ${
-                    modalStep === "review"
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed ${modalStep === "review"
                       ? "bg-white text-sky-800 shadow-2xs border border-slate-200/80 font-bold"
                       : "text-slate-600 hover:text-slate-900 cursor-pointer"
-                  }`}
+                    }`}
                 >
                   2. Review ({selectedCount})
                 </button>
@@ -695,11 +795,10 @@ export function BatchExcelUploadModal({
                   }
                 }}
                 onClick={() => fileInputRef.current?.click()}
-                className={`group border-2 border-dashed rounded-2xl py-14 px-8 text-center cursor-pointer transition-all ${
-                  isParsing
+                className={`group border-2 border-dashed rounded-2xl py-14 px-8 text-center cursor-pointer transition-all ${isParsing
                     ? "border-emerald-400 bg-emerald-50/40 cursor-wait"
                     : "border-slate-300 hover:border-emerald-500 hover:bg-emerald-50/20 bg-slate-50/50"
-                }`}
+                  }`}
               >
                 <input
                   ref={fileInputRef}
@@ -866,11 +965,10 @@ export function BatchExcelUploadModal({
                           return (
                             <tr
                               key={item.key}
-                              className={`transition-colors ${
-                                item.isSelected
+                              className={`transition-colors ${item.isSelected
                                   ? "bg-white hover:bg-slate-50/80"
                                   : "bg-slate-50/40 text-slate-400 hover:bg-slate-50"
-                              } ${item.isDuplicate ? "bg-rose-50/40" : ""}`}
+                                } ${item.isDuplicate ? "bg-rose-50/40" : ""}`}
                             >
                               <td className="p-3 text-center">
                                 <input
@@ -953,13 +1051,12 @@ export function BatchExcelUploadModal({
                                     const val = e.target.value ? Number(e.target.value) : null;
                                     handleMappingChange(item.key, val);
                                   }}
-                                  className={`w-full text-xs rounded-lg px-2.5 py-1.5 border transition-colors cursor-pointer ${
-                                    !item.selectedAppraisalItemId
+                                  className={`w-full text-xs rounded-lg px-2.5 py-1.5 border transition-colors cursor-pointer ${!item.selectedAppraisalItemId
                                       ? "border-rose-300 bg-rose-50/50 text-rose-800 font-semibold"
                                       : isExact
-                                      ? "border-slate-300 bg-white text-slate-800"
-                                      : "border-amber-300 bg-amber-50/30 text-amber-900"
-                                  } focus:outline-hidden focus:ring-2 focus:ring-sky-500`}
+                                        ? "border-slate-300 bg-white text-slate-800"
+                                        : "border-amber-300 bg-amber-50/30 text-amber-900"
+                                    } focus:outline-hidden focus:ring-2 focus:ring-sky-500`}
                                 >
                                   <option value="">-- Pilih Indikator Master --</option>
                                   {availableIndicators.map((ind) => (
@@ -1100,110 +1197,201 @@ export function BatchExcelUploadModal({
                 </div>
               </div>
 
-              {/* Review Table */}
+              {/* Review Table (Format Penilaian KPI Sesuai Excel - 6 Kolom Bersih) */}
               <div className="rounded-xl border border-slate-200 overflow-hidden shadow-xs bg-white">
-                <div className="px-4 py-2.5 bg-slate-100/90 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+                <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-800">
-                    Rincian Nilai & Skor dari Excel ({selectedItems.length} Indikator)
-                  </span>
-                  <span className="text-[11px] text-slate-500">
-                    Target, realisasi, dan skor otomatis sesuai lembar kerja Excel
+                    Rincian Penilaian KPI ({selectedItems.length} Indikator)
                   </span>
                 </div>
 
-                <div className="max-h-[58vh] overflow-y-auto">
+                <div className="max-h-[60vh] overflow-y-auto">
                   <table className="w-full text-xs text-left">
                     <thead className="bg-slate-50 text-slate-700 font-semibold sticky top-0 z-10 border-b border-slate-200 shadow-xs">
                       <tr>
-                        <th className="p-3 w-10 text-center text-slate-400">No</th>
-                        <th className="p-3 min-w-[200px]">Indikator Master KPI</th>
-                        <th className="p-3 min-w-[160px] text-slate-500">Parameter di Excel</th>
-                        <th className="p-3 text-center">Satuan</th>
-                        <th className="p-3 text-right">Target Excel</th>
-                        <th className="p-3 text-right">Realisasi Excel</th>
-                        <th className="p-3 text-right">% Capaian</th>
-                        <th className="p-3 min-w-[140px]">Kriteria / Band</th>
-                        <th className="p-3 text-center">Skor</th>
-                        <th className="p-3 text-right">Nilai Akhir (%)</th>
+                        <th className="py-2.5 px-3 text-left w-2/5">Parameter</th>
+                        <th className="py-2.5 px-3 text-left min-w-[170px]">Kriteria Penilaian</th>
+                        <th className="py-2.5 px-3 text-right w-24">Realisasi</th>
+                        <th className="py-2.5 px-3 text-center w-20">Skor</th>
+                        <th className="py-2.5 px-3 text-right w-20">Bobot</th>
+                        <th className="py-2.5 px-3 text-right w-24">Skor Akhir</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 font-sans">
-                      {selectedItems.map((item, idx) => {
-                        const ind = item.matchedIndicator;
-                        const unit = item.excelUnit || ind?.unit || "-";
-
-                        return (
-                          <tr key={item.key} className="hover:bg-slate-50/80 transition-colors">
-                            <td className="p-3 text-center font-mono text-slate-400 text-[11px]">
-                              {idx + 1}
-                            </td>
-                            <td className="p-3">
-                              <div className="flex flex-col">
-                                <span className="font-bold text-slate-900">
-                                  {ind?.name || item.rawTitle}
-                                </span>
-                                <div className="flex items-center gap-1.5 mt-0.5">
-                                  {ind?.categoryName && (
-                                    <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 border border-slate-200">
-                                      {ind.categoryName}
-                                    </span>
-                                  )}
-                                  {ind?.indicatorWeight && (
-                                    <span className="text-[10.5px] text-slate-400 font-mono">
-                                      Bobot: {(normalizeWeight(ind.indicatorWeight) * 100).toFixed(0)}%
+                      {reviewCategoryGroups.map((group) => (
+                        <React.Fragment key={`cat-${group.categoryNumber}-${group.categoryName}`}>
+                          {/* Parameter Header Row following the 5-Parameter KPI Form */}
+                          <tr className="bg-slate-100/90 border-y border-slate-200">
+                            <td colSpan={6} className="py-2 px-3">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-slate-900 text-xs tracking-tight">
+                                    {group.categoryNumber}. {group.categoryName.toUpperCase()}
+                                  </span>
+                                  {group.parameterWeightStr && (
+                                    <span className="text-[11px] font-semibold text-slate-500 font-mono">
+                                      (Bobot: {group.parameterWeightStr})
                                     </span>
                                   )}
                                 </div>
+                                <span className="text-[11px] font-medium text-slate-500">
+                                  {group.items.length} {group.items.length > 1 ? "Indikator" : "Indikator Utama"}
+                                </span>
                               </div>
                             </td>
-                            <td className="p-3 text-slate-600 font-medium">
-                              {item.rawTitle}
-                            </td>
-                            <td className="p-3 text-center">
-                              <span className="px-1.5 py-0.5 rounded text-[10.5px] font-mono font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                                {unit}
-                              </span>
-                            </td>
-                            <td className="p-3 text-right font-mono text-slate-800">
-                              {item.targetDisplay || (item.effectiveTarget !== null ? item.effectiveTarget : "-")}
-                            </td>
-                            <td className="p-3 text-right font-mono font-bold text-slate-900">
-                              {item.realizationDisplay || (item.effectiveRealization !== null ? item.effectiveRealization : "-")}
-                            </td>
-                            <td className="p-3 text-right font-mono font-semibold text-slate-700">
-                              {item.realizationPctDisplay || "-"}
-                            </td>
-                            <td className="p-3">
-                              {item.bandLabel ? (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-800 border border-slate-200">
-                                  {item.bandLabel}
-                                </span>
-                              ) : (
-                                <span className="text-slate-400 text-[11px]">-</span>
-                              )}
-                            </td>
-                            <td className="p-3 text-center">
-                              {item.score !== null ? (
-                                <span className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-lg font-bold text-xs bg-sky-100 text-sky-800 border border-sky-200 font-mono">
-                                  {item.score}
-                                </span>
-                              ) : (
-                                <span className="text-slate-400 font-mono">-</span>
-                              )}
-                            </td>
-                            <td className="p-3 text-right font-mono font-bold text-sky-900">
-                              {item.weightedScoreDisplay || `${item.weightedScorePct.toFixed(2)}%`}
-                            </td>
                           </tr>
-                        );
-                      })}
+
+                          {/* Indicators in this parameter group */}
+                          {group.items.map(({ item, displayNumber }) => {
+                            const ind = item.matchedIndicator;
+                            const unit = item.excelUnit || ind?.unit || "-";
+                            const targetWithUnit = formatWithUnit(
+                              item.targetDisplay || (item.effectiveTarget !== null ? item.effectiveTarget : "-"),
+                              unit
+                            );
+                            const realWithUnit = formatWithUnit(
+                              item.realizationDisplay || (item.effectiveRealization !== null ? item.effectiveRealization : "-"),
+                              unit
+                            );
+                            const indWeightStr = ind?.indicatorWeight
+                              ? `${(normalizeWeight(ind.indicatorWeight) * 100).toFixed(0)}%`
+                              : ind?.parameterWeight
+                                ? `${(normalizeWeight(ind.parameterWeight) * 100).toFixed(0)}%`
+                                : "100%";
+
+                            const rawBands = ind?.scoringRules || [];
+                            const bands = [...rawBands].sort(
+                              (a, b) => (Number(b.score) || 0) - (Number(a.score) || 0)
+                            );
+
+                            const hasMonthly =
+                              item.excelMonthlyActuals.some((v) => v !== null) ||
+                              item.excelMonthlyTargets.some((v) => v !== null);
+
+                            return (
+                              <tr key={item.key} className="hover:bg-slate-50/60 transition-colors">
+                                {/* 1. Parameter */}
+                                <td className="py-2.5 px-3 align-top pl-4 sm:pl-5">
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-slate-500 font-bold font-mono text-xs mt-0.5 shrink-0 min-w-[24px]">
+                                      {displayNumber}
+                                    </span>
+                                    <div className="flex flex-col min-w-0">
+                                      <span className="font-bold text-slate-900 text-xs">
+                                        {ind?.name || item.rawTitle}
+                                      </span>
+                                      <span className="text-[10.5px] text-slate-500 font-mono mt-0.5">
+                                        Target: {targetWithUnit}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </td>
+
+                                {/* 2. Kriteria Penilaian (Menampilkan Seluruh Rentang Kriteria) */}
+                                <td className="py-2 px-3 align-top">
+                                  {bands.length > 0 ? (
+                                    <div className="space-y-1 py-0.5">
+                                      {bands.map((b, bIdx) => {
+                                        const isMatched =
+                                          item.score !== null && Number(b.score) === Number(item.score);
+                                        const critText = renderBandLabel(b, unit);
+                                        return (
+                                          <div
+                                            key={bIdx}
+                                            className={`text-xs px-2 py-0.5 rounded flex items-center justify-between transition-colors ${isMatched
+                                                ? "bg-emerald-50 text-emerald-900 font-semibold border border-emerald-200 shadow-2xs"
+                                                : "text-slate-600"
+                                              }`}
+                                          >
+                                            <span className="truncate">{critText}</span>
+                                            {isMatched && (
+                                              <span
+                                                className="text-[10px] text-emerald-600 font-bold shrink-0 ml-1.5"
+                                                title="Kriteria Tercapai"
+                                              >
+                                                ✓
+                                              </span>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <span className="text-xs text-slate-400 font-mono">-</span>
+                                  )}
+                                </td>
+
+                                {/* 3. Realisasi (Hasil Konversi Skor & Pengukuran Aktual) */}
+                                <td className="py-2 px-3 text-right align-top">
+                                  <div className="py-0.5">
+                                    <span className="font-mono font-bold text-slate-900 text-sm block">
+                                      {item.score !== null ? item.score : "-"}
+                                    </span>
+                                    {realWithUnit && realWithUnit !== "-" && (
+                                      hasMonthly ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => setViewingDetailItem(item)}
+                                          className="text-[10.5px] text-sky-700 hover:text-sky-900 hover:underline font-mono block mt-0.5 ml-auto cursor-pointer"
+                                          title="Klik untuk melihat rincian capaian bulanan (Jan - Des)"
+                                        >
+                                          ({realWithUnit})
+                                        </button>
+                                      ) : (
+                                        <span className="text-[10.5px] text-slate-500 font-mono block mt-0.5">
+                                          ({realWithUnit})
+                                        </span>
+                                      )
+                                    )}
+                                  </div>
+                                </td>
+
+                                {/* 4. Skor (Menampilkan Semua Nilai Skor Sesuai Kriteria) */}
+                                <td className="py-2 px-3 text-center align-top">
+                                  {bands.length > 0 ? (
+                                    <div className="space-y-1 py-0.5">
+                                      {bands.map((b, bIdx) => {
+                                        const isMatched =
+                                          item.score !== null && Number(b.score) === Number(item.score);
+                                        return (
+                                          <div
+                                            key={bIdx}
+                                            className={`text-xs px-2 py-0.5 rounded font-mono text-center transition-colors ${isMatched
+                                                ? "bg-emerald-100 text-emerald-900 font-bold border border-emerald-300 shadow-2xs"
+                                                : "text-slate-500"
+                                              }`}
+                                          >
+                                            {b.score}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <span className="text-xs text-slate-400 font-mono">-</span>
+                                  )}
+                                </td>
+
+                                {/* 5. Bobot */}
+                                <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-700 text-xs align-top">
+                                  {indWeightStr}
+                                </td>
+
+                                {/* 6. Skor Akhir */}
+                                <td className="py-2.5 px-3 text-right font-mono font-bold text-sky-900 text-xs align-top">
+                                  {item.weightedScoreDisplay || `${item.weightedScorePct.toFixed(2)}%`}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </React.Fragment>
+                      ))}
                     </tbody>
                     <tfoot className="bg-slate-100 text-slate-800 font-bold border-t border-slate-200">
                       <tr>
-                        <td colSpan={9} className="p-3 text-right text-xs uppercase tracking-wider">
-                          Total Estimasi Nilai Akhir:
+                        <td colSpan={5} className="py-2.5 px-3 text-right text-xs uppercase tracking-wider">
+                          Total Estimasi Skor Akhir:
                         </td>
-                        <td className="p-3 text-right font-mono text-sm text-sky-700">
+                        <td className="py-2.5 px-3 text-right font-mono text-sm text-sky-700">
                           {totalEstimatedWeightedPct.toFixed(2)}%
                         </td>
                       </tr>
@@ -1300,10 +1488,6 @@ export function BatchExcelUploadModal({
           "Januari", "Februari", "Maret", "April", "Mei", "Juni",
           "Juli", "Agustus", "September", "Oktober", "November", "Desember"
         ];
-        const monthCols = [
-          "Kolom I", "Kolom J", "Kolom K", "Kolom L", "Kolom M", "Kolom N",
-          "Kolom O", "Kolom P", "Kolom Q", "Kolom R", "Kolom S", "Kolom T"
-        ];
 
         const unit = item.matchedIndicator?.unit || "";
         const filledActualCount = item.excelMonthlyActuals.filter((v) => v !== null).length;
@@ -1337,16 +1521,14 @@ export function BatchExcelUploadModal({
                   </div>
                   <div className="min-w-0">
                     <h3 id="detail-excel-modal-title" className="text-base font-bold text-slate-900 truncate">
-                      Rincian Pembacaan Excel: {item.rawTitle}
+                      Rincian Capaian Bulanan: {item.matchedIndicator?.name || item.rawTitle}
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5 truncate">
-                      Indikator Master:{" "}
+                      Kategori:{" "}
                       <span className="font-semibold text-slate-800">
-                        {item.matchedIndicator?.name || "Belum Terpetakan"}
+                        {item.matchedIndicator?.categoryName || "Target Kerja"}
                       </span>
-                      {item.matchedIndicator?.categoryName ? ` (${item.matchedIndicator.categoryName})` : ""}
                       {" · "}Sheet: <span className="font-semibold text-slate-700">{activeSheet?.sheetName}</span>
-                      {" · "}Baris Excel: <span className="font-mono text-slate-700">Baris {item.excelRowNumber}</span>
                     </p>
                   </div>
                 </div>
@@ -1368,16 +1550,13 @@ export function BatchExcelUploadModal({
                   <div className="flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                     <span className="font-semibold text-emerald-900">
-                      Status Kelengkapan Excel:
+                      Status Kelengkapan Data:
                     </span>
                     <span className="text-emerald-800">
                       {filledActualCount} dari 12 bulan aktual terbaca
                       {filledTargetCount > 0 ? ` · ${filledTargetCount} bulan target terdefinisi` : ""}
                     </span>
                   </div>
-                  <span className="inline-flex items-center gap-1 font-mono text-[11px] text-emerald-800 bg-white/80 px-2 py-0.5 rounded border border-emerald-300">
-                    Sumber: Kolom I s/d T & Kolom U
-                  </span>
                 </div>
 
                 {/* 12-Month Breakdown Table */}
@@ -1397,12 +1576,11 @@ export function BatchExcelUploadModal({
                       <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 sticky top-0 z-10">
                         <tr>
                           <th className="p-2.5 text-center w-12 text-slate-400">No</th>
-                          <th className="p-2.5 min-w-[110px]">Bulan</th>
-                          <th className="p-2.5 min-w-[120px] text-slate-500">Kolom Excel</th>
+                          <th className="p-2.5 min-w-[120px]">Bulan</th>
                           <th className="p-2.5 text-right min-w-[110px]">Target</th>
                           <th className="p-2.5 text-right min-w-[120px]">Actual (Realisasi)</th>
                           <th className="p-2.5 text-right min-w-[90px]">% Capaian</th>
-                          <th className="p-2.5 text-center min-w-[120px]">Status Pembacaan</th>
+                          <th className="p-2.5 text-center min-w-[120px]">Status</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-sans">
@@ -1422,18 +1600,14 @@ export function BatchExcelUploadModal({
                           return (
                             <tr
                               key={mName}
-                              className={`hover:bg-slate-50/80 transition-colors ${
-                                hasAct ? "bg-white" : "bg-slate-50/30 text-slate-400"
-                              }`}
+                              className={`hover:bg-slate-50/80 transition-colors ${hasAct ? "bg-white" : "bg-slate-50/30 text-slate-400"
+                                }`}
                             >
                               <td className="p-2.5 text-center font-mono text-slate-400 text-[11px]">
                                 {mIdx + 1}
                               </td>
                               <td className="p-2.5 font-semibold text-slate-800">
                                 {mName}
-                              </td>
-                              <td className="p-2.5 font-mono text-[11px] text-slate-500">
-                                {monthCols[mIdx]}
                               </td>
                               <td className="p-2.5 text-right font-mono text-slate-700">
                                 {formatVal(tgtVal)}
@@ -1471,11 +1645,11 @@ export function BatchExcelUploadModal({
                   </div>
                 </div>
 
-                {/* Total & Agregasi Tahunan (Kolom U) */}
+                {/* Total & Agregasi Tahunan */}
                 <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                      Total & Agregasi Tahunan (Kolom U Excel)
+                      Total & Agregasi Tahunan
                     </span>
                     <span className="text-[11px] text-slate-500">
                       Formula: {item.matchedIndicator?.aggregation || "AVERAGE"} · Basis: {item.matchedIndicator?.compareBasis || "ACTUAL"}
@@ -1488,7 +1662,7 @@ export function BatchExcelUploadModal({
                       <span className="text-sm font-bold text-slate-800 font-mono">
                         {item.targetDisplay || formatVal(item.excelAnnualTarget)}
                       </span>
-                      <span className="text-[10px] text-slate-400 block mt-0.5">Kolom U (Baris Target)</span>
+                      <span className="text-[10px] text-slate-400 block mt-0.5">Target Terdefinisi</span>
                     </div>
 
                     <div className="p-3 rounded-lg bg-white border border-slate-200 shadow-2xs">
@@ -1496,7 +1670,7 @@ export function BatchExcelUploadModal({
                       <span className="text-sm font-bold text-emerald-700 font-mono">
                         {item.realizationDisplay || formatVal(item.excelAnnualActual)}
                       </span>
-                      <span className="text-[10px] text-slate-400 block mt-0.5">Kolom U (Baris Actual)</span>
+                      <span className="text-[10px] text-slate-400 block mt-0.5">Realisasi Akumulatif</span>
                     </div>
 
                     <div className="p-3 rounded-lg bg-white border border-slate-200 shadow-2xs">
@@ -1504,7 +1678,7 @@ export function BatchExcelUploadModal({
                       <span className="text-sm font-bold text-slate-800 font-mono">
                         {item.realizationPctDisplay || "-"}
                       </span>
-                      <span className="text-[10px] text-slate-400 block mt-0.5">Kolom V / Formula KPI</span>
+                      <span className="text-[10px] text-slate-400 block mt-0.5">Persentase Capaian</span>
                     </div>
 
                     <div className="p-3 rounded-lg bg-white border border-slate-200 shadow-2xs">
@@ -1526,7 +1700,7 @@ export function BatchExcelUploadModal({
               {/* Footer */}
               <div className="flex items-center justify-between px-6 py-3.5 border-t border-slate-200 bg-slate-50 shrink-0">
                 <span className="text-xs text-slate-500">
-                  Data dibaca langsung dari hasil parsing lembar kerja Excel (tanpa perlu upload ulang).
+                  Rincian nilai capaian bulanan dan akumulasi tahunan untuk penilaian karyawan.
                 </span>
                 <button
                   type="button"
@@ -1642,11 +1816,10 @@ export function BatchExcelUploadModal({
                 {/* Dropzone / Upload button */}
                 <div
                   onClick={() => evidenceFileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-all ${
-                    isUploadingEvidence
+                  className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-all ${isUploadingEvidence
                       ? "border-sky-300 bg-sky-50/50 cursor-wait"
                       : "border-slate-300 hover:border-sky-500 hover:bg-sky-50/30 bg-white"
-                  }`}
+                    }`}
                 >
                   <input
                     ref={evidenceFileInputRef}

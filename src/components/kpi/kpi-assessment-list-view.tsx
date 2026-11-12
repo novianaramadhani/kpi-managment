@@ -11,6 +11,7 @@ import {
   generateAppraisalsBatchAction,
   getBatchAssessmentExportDataAction,
 } from "@/lib/actions";
+import { submitAppraisalToHeadDeptAction } from "@/lib/approval-actions";
 import { exportCombinedBatchKpiExcel } from "@/lib/excel-batch-export";
 import type { EmployeeProgressItem } from "@/types/monthly-assessment";
 import { HeaderFilterSelect } from "@/components/ui/header-filter-select";
@@ -500,6 +501,76 @@ export function KpiAssessmentListView({
     }
   };
 
+  const handleSubmitSingle = async (emp: EmployeeProgressItem, targetUrl: string) => {
+    if (!emp.appraisalId) {
+      router.push(targetUrl);
+      return;
+    }
+
+    const result = await Swal.fire({
+      title: "Submit Penilaian KPI?",
+      html: `
+        <div class="text-left text-sm space-y-2 text-slate-600">
+          <p>Penilaian untuk <b>${emp.name}</b> (${emp.nik}) telah terisi <b>100%</b>.</p>
+          <p class="text-xs text-slate-500">Anda dapat langsung mengajukan penilaian ini ke tahap berikutnya (Review/Atasan) atau membuka lembar KPI terlebih dahulu untuk memeriksa kembali.</p>
+        </div>
+      `,
+      icon: "question",
+      showCancelButton: true,
+      showDenyButton: true,
+      confirmButtonText: "Ya, Submit Sekarang",
+      denyButtonText: "Buka Lembar KPI",
+      cancelButtonText: "Batal",
+      confirmButtonColor: "#059669",
+      denyButtonColor: "#2563eb",
+      cancelButtonColor: "#64748b",
+    });
+
+    if (result.isConfirmed) {
+      Swal.fire({
+        title: "Mengajukan Penilaian...",
+        text: "Mohon tunggu sebentar",
+        allowOutsideClick: false,
+        didOpen: () => {
+          Swal.showLoading();
+        },
+      });
+
+      try {
+        const res = await submitAppraisalToHeadDeptAction({
+          appraisalId: emp.appraisalId,
+        });
+
+        if (res.success) {
+          await Swal.fire({
+            icon: "success",
+            title: "Berhasil Diajukan!",
+            text: res.message || `Penilaian untuk ${emp.name} berhasil diajukan ke tahap berikutnya.`,
+            confirmButtonColor: "#059669",
+            timer: 2000,
+          });
+          router.refresh();
+        } else {
+          Swal.fire({
+            icon: "error",
+            title: "Gagal Mengajukan",
+            text: res.error || "Terjadi kesalahan sistem saat mengajukan penilaian.",
+            confirmButtonColor: "#2563eb",
+          });
+        }
+      } catch (err: unknown) {
+        Swal.fire({
+          icon: "error",
+          title: "Kesalahan Sistem",
+          text: (err as Error)?.message || "Gagal menghubungi server.",
+          confirmButtonColor: "#2563eb",
+        });
+      }
+    } else if (result.isDenied) {
+      router.push(targetUrl);
+    }
+  };
+
   const handleBatchDelete = async () => {
     if (selectedEmployees.length === 0) return;
     const appraisalIds = selectedEmployees
@@ -909,6 +980,16 @@ export function KpiAssessmentListView({
                       actionBtnClass = activeConfig.actionClass;
                     }
 
+                    const isReadyToSubmit =
+                      (rowStage === "DRAFT" || emp.appraisalStatus === "DRAFT") &&
+                      progressPercent >= 100 &&
+                      Boolean(emp.appraisalId);
+
+                    if (isReadyToSubmit) {
+                      actionLabel = "Submit";
+                      actionBtnClass = "border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold shadow-2xs";
+                    }
+
                     const targetUrl = `/input-kpi?employeeId=${emp.employeeId}&year=${currentYear}${
                       selectedMonth !== "ALL" ? `&month=${selectedMonth}` : ""
                     }`;
@@ -987,14 +1068,24 @@ export function KpiAssessmentListView({
                         </td>
 
                         {/* Aksi Sesuai Staging */}
-                        <td className="px-4 py-4 text-center">
-                          <div className="inline-flex items-center gap-2 justify-center">
-                            <Link
-                              href={targetUrl}
-                              className={`inline-flex items-center justify-center rounded-xl border px-3.5 py-1.5 text-xs font-bold transition active:scale-95 shadow-2xs ${actionBtnClass}`}
-                            >
-                              {actionLabel}
-                            </Link>
+                        <td className="px-3 py-3 text-center whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1.5 justify-center">
+                            {isReadyToSubmit ? (
+                              <button
+                                type="button"
+                                onClick={() => handleSubmitSingle(emp, targetUrl)}
+                                className={`inline-flex items-center justify-center rounded-lg border px-2.5 py-1 text-xs font-semibold whitespace-nowrap transition active:scale-95 shadow-2xs cursor-pointer ${actionBtnClass}`}
+                              >
+                                {actionLabel}
+                              </button>
+                            ) : (
+                              <Link
+                                href={targetUrl}
+                                className={`inline-flex items-center justify-center rounded-lg border px-2.5 py-1 text-xs font-semibold whitespace-nowrap transition active:scale-95 shadow-2xs ${actionBtnClass}`}
+                              >
+                                {actionLabel}
+                              </Link>
+                            )}
 
                             {/* Tombol Hapus Langsung */}
                             {Boolean(emp.appraisalId) && (userRole === "ADMIN" || userRole === "HR" || userRole === "ASSESSOR") && (
@@ -1004,11 +1095,11 @@ export function KpiAssessmentListView({
                                   e.stopPropagation();
                                   handleDeleteSingle(emp);
                                 }}
-                                className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 transition shadow-2xs cursor-pointer active:scale-95"
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 transition shadow-2xs cursor-pointer active:scale-95"
                                 title={`Hapus data penilaian ${emp.name}`}
                                 aria-label={`Hapus data penilaian ${emp.name}`}
                               >
-                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
                                 </svg>
                               </button>
@@ -1073,6 +1164,16 @@ export function KpiAssessmentListView({
                 if (activeStaging !== "ALL") {
                   actionLabel = activeConfig.actionText;
                   actionBtnClass = activeConfig.actionClass;
+                }
+
+                const isReadyToSubmit =
+                  (rowStage === "DRAFT" || emp.appraisalStatus === "DRAFT") &&
+                  progressPercent >= 100 &&
+                  Boolean(emp.appraisalId);
+
+                if (isReadyToSubmit) {
+                  actionLabel = "Submit";
+                  actionBtnClass = "border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold shadow-2xs";
                 }
 
                 const targetUrl = `/input-kpi?employeeId=${emp.employeeId}&year=${currentYear}${
@@ -1141,12 +1242,22 @@ export function KpiAssessmentListView({
 
                     {/* Tombol Aksi Sentuh Besar */}
                     <div className="pt-1 flex items-center gap-2">
-                      <Link
-                        href={targetUrl}
-                        className={`flex-1 flex items-center justify-center py-2.5 px-4 rounded-xl text-xs font-bold shadow-2xs transition active:scale-95 ${actionBtnClass}`}
-                      >
-                        {actionLabel}
-                      </Link>
+                      {isReadyToSubmit ? (
+                        <button
+                          type="button"
+                          onClick={() => handleSubmitSingle(emp, targetUrl)}
+                          className={`flex-1 flex items-center justify-center py-2 px-3 rounded-lg text-xs font-semibold shadow-2xs transition active:scale-95 cursor-pointer whitespace-nowrap ${actionBtnClass}`}
+                        >
+                          {actionLabel}
+                        </button>
+                      ) : (
+                        <Link
+                          href={targetUrl}
+                          className={`flex-1 flex items-center justify-center py-2 px-3 rounded-lg text-xs font-semibold shadow-2xs transition active:scale-95 whitespace-nowrap ${actionBtnClass}`}
+                        >
+                          {actionLabel}
+                        </Link>
+                      )}
 
                       {Boolean(emp.appraisalId) && (userRole === "ADMIN" || userRole === "HR" || userRole === "ASSESSOR") && (
                         <button
@@ -1155,7 +1266,7 @@ export function KpiAssessmentListView({
                             e.stopPropagation();
                             handleDeleteSingle(emp);
                           }}
-                          className="h-10 w-10 flex items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 transition shadow-2xs cursor-pointer active:scale-95 shrink-0"
+                          className="h-8.5 w-8.5 flex items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-400 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 transition shadow-2xs cursor-pointer active:scale-95 shrink-0"
                           title={`Hapus data penilaian ${emp.name}`}
                           aria-label={`Hapus data penilaian ${emp.name}`}
                         >

@@ -132,6 +132,13 @@ export const SYSTEM_PERMISSIONS: SystemPermissionItem[] = [
     defaultRoles: ["ADMIN", "HR"],
   },
   {
+    code: "master.employee.edit_nik",
+    name: "Ubah NIK Karyawan",
+    description: "Mengubah Nomor Induk Karyawan (NIK) sebagai identitas unik pegawai",
+    module: "MASTER_DATA",
+    defaultRoles: ["ADMIN", "HR"],
+  },
+  {
     code: "master.employee.delete",
     name: "Hapus / Nonaktifkan Karyawan",
     description: "Menghapus atau mengubah status keaktifan akun karyawan",
@@ -422,4 +429,23 @@ export function getPermissionsGroupedByModule(): Record<
     }
   }
   return grouped;
+}
+
+/**
+ * Mengecek apakah user / role memiliki kode permission tertentu
+ */
+export function hasUserPermission(
+  user: { role?: string | null; isCustomRole?: boolean | null; customPermissions?: unknown } | null | undefined,
+  permissionCode: string
+): boolean {
+  if (!user) return false;
+  const role = (user.role || "").toUpperCase();
+  if (role === "ADMIN" || role === "SUPERADMIN") return true;
+
+  if (user.isCustomRole && Array.isArray(user.customPermissions)) {
+    return (user.customPermissions as string[]).includes(permissionCode);
+  }
+
+  const defaultPerms = getDefaultPermissionsForRole(role);
+  return defaultPerms.includes(permissionCode);
 }

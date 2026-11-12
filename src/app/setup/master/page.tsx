@@ -176,7 +176,7 @@ export default async function MasterDataPage({
 
       {/* Navigation Tabs (Soft Light-Blue Active State) */}
       <div
-        data-tour="step-3-master-tabs"
+        data-tour="step-1-master-tabs"
         className="flex flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-white p-1"
       >
         {tabs.map(([k, l]) => (
@@ -297,6 +297,7 @@ export default async function MasterDataPage({
           sites={siteList}
           availableSites={siteList.map((s) => s.code)}
           departments={deps}
+          employees={emps}
           createAction={createPitAction}
           updateAction={updatePitAction}
           deleteAction={deletePitAction}
