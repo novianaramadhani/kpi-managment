@@ -1210,7 +1210,7 @@ export async function upsertEmployee(fd: FormData) {
 
   if (id) {
     const [existingCurrent] = await db
-      .select({ id: employees.id, nik: employees.nik })
+      .select({ id: employees.id, nik: employees.nik, password: employees.password })
       .from(employees)
       .where(eq(employees.id, id))
       .limit(1);
@@ -1231,13 +1231,50 @@ export async function upsertEmployee(fd: FormData) {
       if (!hasUserPermission(actorData, "master.employee.edit_nik")) {
         throw new Error("Akses ditolak: Anda tidak memiliki otoritas RBAC (master.employee.edit_nik) untuk mengubah NIK karyawan.");
       }
+
+      // Jika password tidak diinput manual baru dan akun masih memakai default password (NIK lama atau belum ganti password),
+      // otomatis update password default ke NIK baru agar karyawan tidak terkunci
+      if (!rawPassword) {
+        const oldNik = existingCurrent.nik.trim();
+        const currentPass = existingCurrent.password || "";
+        let isDefaultPassword = false;
+        if (!currentPass || currentPass === oldNik) {
+          isDefaultPassword = true;
+        } else if (currentPass.startsWith("$2a$") || currentPass.startsWith("$2b$")) {
+          try {
+            isDefaultPassword = await bcrypt.compare(oldNik, currentPass);
+          } catch {
+            isDefaultPassword = false;
+          }
+        }
+
+        if (!isDefaultPassword) {
+          const [userRec] = await db
+            .select({ id: users.id, mustChangePassword: users.mustChangePassword })
+            .from(users)
+            .where(eq(users.employeeId, id))
+            .limit(1);
+          if (userRec?.mustChangePassword) {
+            isDefaultPassword = true;
+          }
+        }
+
+        if (isDefaultPassword) {
+          const newHashed = await bcrypt.hash(data.nik, 10);
+          data.password = newHashed;
+        }
+      }
     }
 
     await db.update(employees).set(data).where(eq(employees.id, id));
 
     // Sinkronkan ke tabel users dan userOnboarding jika NIK diubah
     if (isNikChanged) {
-      await db.update(users).set({ nik: data.nik }).where(eq(users.employeeId, id));
+      const userUpdate: Record<string, any> = { nik: data.nik };
+      if (data.password) {
+        userUpdate.password = data.password;
+      }
+      await db.update(users).set(userUpdate).where(eq(users.employeeId, id));
       await db.update(userOnboarding).set({ nik: data.nik }).where(eq(userOnboarding.employeeId, id));
     }
 

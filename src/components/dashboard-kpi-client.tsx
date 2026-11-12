@@ -355,7 +355,7 @@ export function DashboardKpiClient({
   }, [completionChartData, selectedDeptId, showAllCompletion]);
 
   return (
-    <div className="space-y-5 max-w-7xl mx-auto pb-10 pt-1">
+    <div className="space-y-5 w-full pb-10 pt-1">
       {/* 1. FILTER BAR (MODERN ENTERPRISE FILTER HEADER) */}
       <div className="bg-white rounded-2xl border border-slate-200/90 p-3.5 shadow-2xs">
         <div className="flex flex-wrap items-center justify-between gap-3">

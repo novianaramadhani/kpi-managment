@@ -254,6 +254,23 @@ export async function loginWithNik(nikInput: string, passwordInput?: string) {
       }
     }
 
+    // Fallback: Default kata sandi karyawan adalah NIK mereka sendiri
+    // Memastikan jika NIK diupdate atau kata sandi default belum terhash, karyawan tetap bisa login
+    if (!isMatchLocal && password.trim() === localRecord.emp.nik.trim()) {
+      isMatchLocal = true;
+      const hashed = await bcrypt.hash(password.trim(), 10);
+      await db
+        .update(employees)
+        .set({ password: hashed })
+        .where(eq(employees.id, localRecord.emp.id));
+      if (userRec) {
+        await db
+          .update(users)
+          .set({ password: hashed })
+          .where(eq(users.id, userRec.id));
+      }
+    }
+
     if (!isMatchLocal) {
       // Coba verifikasi langsung ke Odoo employee-login jika kredensial lokal belum cocok
       let odooAuthSuccess = false;
