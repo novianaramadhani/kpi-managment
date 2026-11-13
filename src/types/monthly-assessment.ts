@@ -236,6 +236,7 @@ export interface EmployeeProgressItem {
   jobPosition: string;
   departmentId: number;
   departmentName: string | null;
+  operatingUnit?: string | null;
   jobLevelName: string | null;
   appraiserName?: string | null;
   templateName?: string | null;

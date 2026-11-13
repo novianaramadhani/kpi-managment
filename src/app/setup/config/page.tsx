@@ -1,11 +1,24 @@
 import { getConfig, getSystemDate, updateConfig } from "@/lib/actions";
 import { Card, PageHeader } from "@/components/ui";
 import { ConfigClockForm, ConfigCompanyForm, ConfigKpiLimitForm } from "@/components/master-forms";
+import { getCurrentUser } from "@/lib/auth";
+import { hasUserPermission } from "@/lib/rbac-catalog";
+import { redirect } from "next/navigation";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
 export default async function ConfigSetupPage() {
+  const currentUser = await getCurrentUser();
+  if (!currentUser) redirect("/login");
+  const canAccess =
+    currentUser.role === "ADMIN" ||
+    currentUser.isCustomRole ||
+    hasUserPermission(currentUser, "system.config");
+  if (!canAccess) {
+    redirect("/dashboard");
+  }
+
   const systemDate = await getSystemDate();
   const maxKpiWeight = await getConfig("max_kpi_category_weight", "115");
 

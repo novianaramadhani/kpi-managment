@@ -3,6 +3,8 @@ import { db } from "@/db";
 import { appraisals, departments, kpiPeriods } from "@/db/schema";
 import { desc, eq } from "drizzle-orm";
 import { getCurrentUser } from "@/lib/auth";
+import { getSitesAction } from "@/lib/site-actions";
+import { hasUserPermission, getUserAllowedOperatingUnits } from "@/lib/rbac-catalog";
 import {
   getMonthlyAssessmentEmployees,
   getMonthlyAssessmentDetail,
@@ -26,6 +28,7 @@ interface PageProps {
     id?: string;
     month?: string;
     year?: string;
+    unit?: string;
   }>;
 }
 
@@ -48,20 +51,32 @@ export default async function InputKpiPage({ searchParams }: PageProps) {
 
   const currentYear = sp.year ? Number(sp.year) : defaultYear;
   const currentMonth = sp.month ? Number(sp.month) : 1;
+  const selectedUnit = sp.unit || "ALL";
 
-  // 2. Dapatkan currentUser dan Master Departemen
-  const currentUser = await getCurrentUser();
-  const deps = await db
-    .select({ id: departments.id, name: departments.name })
-    .from(departments)
-    .orderBy(departments.name);
+  // 2. Dapatkan currentUser, Master Departemen, dan Master Sites (OU)
+  const [currentUser, deps, siteList] = await Promise.all([
+    getCurrentUser(),
+    db
+      .select({ id: departments.id, name: departments.name })
+      .from(departments)
+      .orderBy(departments.name),
+    getSitesAction(),
+  ]);
 
   const userDeptName = deps.find((d) => d.id === currentUser?.departmentId)?.name;
+  const allowedOuInfo = getUserAllowedOperatingUnits(currentUser);
+  const canAccessAllOu =
+    allowedOuInfo.isAll ||
+    currentUser?.role === "ADMIN" ||
+    currentUser?.role === "HR" ||
+    hasUserPermission(currentUser, "ou.view_all") ||
+    hasUserPermission(currentUser, "assessment.view_all");
 
-  // 3. Dapatkan daftar karyawan untuk tahun ini sesuai scoping user penilai
+  // 3. Dapatkan daftar karyawan untuk tahun ini sesuai scoping user penilai & filter unit
   const rawEmployees = await getMonthlyAssessmentEmployees({
     year: currentYear,
     month: currentMonth,
+    operatingUnit: selectedUnit !== "ALL" ? selectedUnit : undefined,
     currentUser,
   });
 
@@ -74,6 +89,7 @@ export default async function InputKpiPage({ searchParams }: PageProps) {
     jobPosition: e.jobPosition ?? "-",
     departmentId: e.departmentId,
     departmentName: e.departmentName ?? "-",
+    operatingUnit: e.operatingUnit,
     jobLevelName: e.jobLevelName ?? "-",
     month: e.month,
     totalIndicators: e.totalIndicators,
@@ -115,6 +131,10 @@ export default async function InputKpiPage({ searchParams }: PageProps) {
           departments={deps}
           userRole={currentUser?.role || "ADMIN"}
           userDeptName={userDeptName}
+          sites={siteList}
+          selectedUnit={selectedUnit}
+          canAccessAllOu={canAccessAllOu}
+          allowedUnits={allowedOuInfo.units}
         />
       </div>
     );

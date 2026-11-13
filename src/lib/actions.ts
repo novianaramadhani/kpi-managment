@@ -1183,6 +1183,16 @@ export async function upsertEmployee(fd: FormData) {
   if (!data.jobLevelId) throw new Error("Job level wajib dipilih!");
   if (!data.jobPosition) throw new Error("Jabatan (Job Title) wajib diisi / dipilih!");
 
+  // Validasi wewenang Operating Unit (CRUD hanya untuk OU sendiri jika belum ada izin ou.view_all)
+  const canManageAllOu = hasUserPermission(currentUser, "ou.view_all");
+  const userOu = (currentUser.operatingUnit || "HO").toUpperCase();
+
+  if (!canManageAllOu) {
+    if (data.operatingUnit && (data.operatingUnit || "HO").toUpperCase() !== userOu) {
+      throw new Error(`Akses ditolak: Anda hanya berwenang mengelola data pada Operating Unit Anda (${userOu}). Dibutuhkan otoritas 'ou.view_all' untuk mengelola unit lain.`);
+    }
+  }
+
   // Validasi duplikasi NIK (unik case-insensitive dan trim)
   const existingEmployee = await db
     .select({
@@ -1210,10 +1220,21 @@ export async function upsertEmployee(fd: FormData) {
 
   if (id) {
     const [existingCurrent] = await db
-      .select({ id: employees.id, nik: employees.nik, password: employees.password })
+      .select({
+        id: employees.id,
+        nik: employees.nik,
+        password: employees.password,
+        operatingUnit: employees.operatingUnit,
+      })
       .from(employees)
       .where(eq(employees.id, id))
       .limit(1);
+
+    if (!canManageAllOu && existingCurrent) {
+      if ((existingCurrent.operatingUnit || "HO").toUpperCase() !== userOu) {
+        throw new Error(`Akses ditolak: Karyawan ini berada di luar Operating Unit Anda (${userOu}). Dibutuhkan otoritas 'ou.view_all' untuk mengubah data karyawan unit lain.`);
+      }
+    }
 
     const isNikChanged = existingCurrent && existingCurrent.nik.trim().toLowerCase() !== data.nik.toLowerCase();
     if (isNikChanged) {
@@ -1495,6 +1516,16 @@ export async function assignAppraiser(fd: FormData) {
 export async function deleteEmployee(fd: FormData) {
   const currentUser = await requireAdminOrHr();
   const id = i(fd, "id");
+  const canManageAllOu = hasUserPermission(currentUser, "ou.view_all");
+  const userOu = (currentUser.operatingUnit || "HO").toUpperCase();
+
+  if (!canManageAllOu) {
+    const [targetEmp] = await db.select({ operatingUnit: employees.operatingUnit }).from(employees).where(eq(employees.id, id)).limit(1);
+    if (targetEmp && (targetEmp.operatingUnit || "HO").toUpperCase() !== userOu) {
+      throw new Error(`Akses ditolak: Anda hanya dapat menonaktifkan karyawan di Operating Unit Anda (${userOu}). Dibutuhkan otoritas 'ou.view_all' untuk unit lain.`);
+    }
+  }
+
   await db.update(employees).set({ isActive: false }).where(eq(employees.id, id));
   await audit("employee", id, "DEACTIVATE", { isActive: false }, currentUser.name);
   revalidateAll();
@@ -1504,6 +1535,16 @@ export async function deleteEmployee(fd: FormData) {
 export async function reactivateEmployee(fd: FormData) {
   const currentUser = await requireAdminOrHr();
   const id = i(fd, "id");
+  const canManageAllOu = hasUserPermission(currentUser, "ou.view_all");
+  const userOu = (currentUser.operatingUnit || "HO").toUpperCase();
+
+  if (!canManageAllOu) {
+    const [targetEmp] = await db.select({ operatingUnit: employees.operatingUnit }).from(employees).where(eq(employees.id, id)).limit(1);
+    if (targetEmp && (targetEmp.operatingUnit || "HO").toUpperCase() !== userOu) {
+      throw new Error(`Akses ditolak: Anda hanya dapat mengaktifkan kembali karyawan di Operating Unit Anda (${userOu}). Dibutuhkan otoritas 'ou.view_all' untuk unit lain.`);
+    }
+  }
+
   await db.update(employees).set({ isActive: true }).where(eq(employees.id, id));
   await audit("employee", id, "REACTIVATE", { isActive: true }, currentUser.name);
   revalidateAll();

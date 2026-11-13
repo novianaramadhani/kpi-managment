@@ -10,6 +10,7 @@ import {
 } from "@/lib/actions";
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
+import { hasUserPermission } from "@/lib/rbac-catalog";
 import { redirect } from "next/navigation";
 import { HakAksesTableClient } from "@/components/hak-akses-table-client";
 import { ApprovalTableClient } from "@/components/master-tables-client";
@@ -30,7 +31,7 @@ export default async function AccessSetupPage({
 }) {
   const currentUser = await getCurrentUser();
   if (!currentUser) redirect("/login");
-  if (currentUser.role !== "ADMIN") {
+  if (currentUser.role !== "ADMIN" && !currentUser.isCustomRole && !hasUserPermission(currentUser, "rbac.manage")) {
     redirect("/admin");
   }
 

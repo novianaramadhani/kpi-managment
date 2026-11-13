@@ -9,9 +9,15 @@ import { fmtPct, formatTenureYearsFromMonths, gradeOf } from "@/lib/scoring";
 
 interface ReportPageClientProps {
   reportData: Awaited<ReturnType<typeof getReport>>;
+  canViewAllOu?: boolean;
+  userOu?: string;
 }
 
-export function ReportPageClient({ reportData }: ReportPageClientProps) {
+export function ReportPageClient({
+  reportData,
+  canViewAllOu = true,
+  userOu = "HO",
+}: ReportPageClientProps) {
   const [activeTab, setActiveTab] = useState<"summary" | "analytics">("summary");
   const { period, periods, rows, byDept, byLevel, distribution, avg, scoredCount } = reportData;
   const maxDist = Math.max(1, ...distribution.map((d) => d.count));
@@ -103,6 +109,8 @@ export function ReportPageClient({ reportData }: ReportPageClientProps) {
           period={period}
           periods={periods}
           selectedPeriodId={period?.id}
+          canViewAllOu={canViewAllOu}
+          userOu={userOu}
         />
       )}
 

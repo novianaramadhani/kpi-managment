@@ -1,6 +1,7 @@
 import * as XLSXStyle from "xlsx-js-style";
 import { getReport } from "@/lib/report";
 import { getCurrentUser } from "@/lib/auth";
+import { hasUserPermission } from "@/lib/rbac-catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -125,7 +126,9 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const periodId = searchParams.get("periodId");
-  const targetOu = (searchParams.get("ou") || "ALL").toUpperCase();
+  const canViewAllOu = hasUserPermission(currentUser, "ou.view_all");
+  const requestedOu = (searchParams.get("ou") || "ALL").toUpperCase();
+  const targetOu = canViewAllOu ? requestedOu : (currentUser.operatingUnit || "HO").toUpperCase();
 
   const r = await getReport(periodId ? Number(periodId) : undefined);
   const periodName = r.period?.name || (r.period?.year ? String(r.period?.year) : "All_Period");

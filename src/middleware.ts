@@ -82,13 +82,23 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(loginUrl);
     }
 
-    if (user.role !== "ADMIN" && user.role !== "HR") {
-      if (pathname.startsWith("/api/")) {
+    // Untuk API admin, tolak jika bukan admin, hr, atau tidak punya custom role/permissions
+    if (pathname.startsWith("/api/admin")) {
+      const isAllowedAdminApi =
+        user.role === "ADMIN" ||
+        user.role === "HR" ||
+        Boolean(user.isCustomRole) ||
+        (Array.isArray(user.customPermissions) && user.customPermissions.length > 0);
+
+      if (!isAllowedAdminApi) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
-      return NextResponse.redirect(new URL("/dashboard", request.url));
     }
 
+    // Untuk halaman frontend (/setup, /admin, /master, /audit):
+    // Biarkan request pengguna terotentikasi diteruskan ke Server Component.
+    // Server Component masing-masing halaman memverifikasi wewenang secara real-time
+    // langsung dari database (via getCurrentUser()) termasuk status isCustomRole dan permission list.
     return NextResponse.next();
   }
 

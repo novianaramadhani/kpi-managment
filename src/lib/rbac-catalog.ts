@@ -181,6 +181,13 @@ export const SYSTEM_PERMISSIONS: SystemPermissionItem[] = [
     defaultRoles: ["ADMIN", "HR"],
   },
   {
+    code: "ou.view_all",
+    name: "Akses & Kelola Data Semua OU (All Sites CRUD)",
+    description: "Melihat, menambah, mengubah, dan mengelola (CRUD) seluruh data karyawan, penilaian, serta laporan di semua Operating Unit (HO, Site GAM, Site AKP)",
+    module: "MASTER_DATA",
+    defaultRoles: ["ADMIN", "HR"],
+  },
+  {
     code: "master.approval_hierarchy.manage",
     name: "Kelola Hirarki Penilai",
     description: "Mengatur pemetaan atasan penilai langsung (Appraiser 1 & 2)",
@@ -293,6 +300,13 @@ export const SYSTEM_PERMISSIONS: SystemPermissionItem[] = [
   },
 
   // 6. REVIEW & APPROVAL
+  {
+    code: "assessment.view_all",
+    name: "Lihat Semua Formulir Penilaian KPI",
+    description: "Melihat dan memantau formulir penilaian KPI karyawan lintas unit atau unit yang dipilih",
+    module: "REVIEW_APPROVAL",
+    defaultRoles: ["ADMIN", "HR"],
+  },
   {
     code: "review.view",
     name: "Akses Antrean Review & Approval",
@@ -431,6 +445,36 @@ export function getPermissionsGroupedByModule(): Record<
   return grouped;
 }
 
+const PERMISSION_ALIASES: Record<string, string[]> = {
+  "master.dept.manage": ["master.department.manage"],
+  "master.department.manage": ["master.dept.manage"],
+  "master.site.manage": ["master.operating_unit.manage"],
+  "master.operating_unit.manage": ["master.site.manage"],
+  "master.hierarchy.manage": ["master.approval_hierarchy.manage"],
+  "master.approval_hierarchy.manage": ["master.hierarchy.manage"],
+  "param.view": ["parameter.view"],
+  "parameter.view": ["param.view"],
+  "param.create": ["parameter.create"],
+  "parameter.create": ["param.create"],
+  "param.edit": ["parameter.edit"],
+  "parameter.edit": ["param.edit"],
+  "param.delete": ["parameter.delete"],
+  "parameter.delete": ["param.delete"],
+  "config.rbac.manage": ["rbac.manage"],
+  "rbac.manage": ["config.rbac.manage"],
+  "config.audit.view": ["audit.view"],
+  "audit.view": ["config.audit.view"],
+  "config.period.manage": ["period.manage"],
+  "period.manage": ["config.period.manage"],
+  "master.employee.reset_pass": ["master.employee.reset_password"],
+  "master.employee.reset_password": ["master.employee.reset_pass"],
+  "review.approve": ["approval.approve"],
+  "approval.approve": ["review.approve"],
+  "review.reject": ["approval.reject"],
+  "approval.reject": ["review.reject"],
+  "input.fill": ["assessment.input_self", "assessment.input_team"],
+};
+
 /**
  * Mengecek apakah user / role memiliki kode permission tertentu
  */
@@ -442,10 +486,45 @@ export function hasUserPermission(
   const role = (user.role || "").toUpperCase();
   if (role === "ADMIN" || role === "SUPERADMIN") return true;
 
+  const codesToCheck = [permissionCode, ...(PERMISSION_ALIASES[permissionCode] || [])];
+
   if (user.isCustomRole && Array.isArray(user.customPermissions)) {
-    return (user.customPermissions as string[]).includes(permissionCode);
+    const userPerms = user.customPermissions as string[];
+    return codesToCheck.some((c) => userPerms.includes(c));
   }
 
   const defaultPerms = getDefaultPermissionsForRole(role);
-  return defaultPerms.includes(permissionCode);
+  return codesToCheck.some((c) => defaultPerms.includes(c));
+}
+
+/**
+ * Mengambil status dan daftar Operating Unit yang diizinkan untuk pengguna
+ */
+export function getUserAllowedOperatingUnits(
+  user: { role?: string | null; isCustomRole?: boolean | null; customPermissions?: unknown; operatingUnit?: string | null } | null | undefined
+): { isAll: boolean; units: string[] } {
+  if (!user) return { isAll: false, units: [] };
+  const role = (user.role || "").toUpperCase();
+  if (role === "ADMIN" || role === "SUPERADMIN") return { isAll: true, units: [] };
+
+  const perms = (Array.isArray(user.customPermissions) ? user.customPermissions : []) as string[];
+
+  // Jika memiliki ou.view_all atau assessment.ou:ALL
+  if (perms.includes("ou.view_all") || perms.includes("assessment.ou:ALL")) {
+    return { isAll: true, units: [] };
+  }
+
+  // Cari permission berpola assessment.ou:<unit> atau ou.view:<unit>
+  const specificUnits = perms
+    .filter((p) => p.startsWith("assessment.ou:") || p.startsWith("ou.view:"))
+    .map((p) => p.split(":")[1].trim().toUpperCase())
+    .filter(Boolean);
+
+  if (specificUnits.length > 0) {
+    return { isAll: false, units: Array.from(new Set(specificUnits)) };
+  }
+
+  // Default: Unit tempat user bertugas
+  const defaultOu = (user.operatingUnit || "HO").trim().toUpperCase();
+  return { isAll: false, units: [defaultOu] };
 }

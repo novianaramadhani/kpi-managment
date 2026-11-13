@@ -30,6 +30,8 @@ export interface UserSession {
   jobPosition: string;
   operatingUnit: string;
   mustChangePassword?: boolean;
+  isCustomRole?: boolean;
+  customPermissions?: string[];
 }
 
 const COOKIE_NAME = "kpi_user_session";
@@ -55,6 +57,8 @@ export async function getCurrentUser(): Promise<UserSession | null> {
         jobPosition: employees.jobPosition,
         operatingUnit: employees.operatingUnit,
         isActive: employees.isActive,
+        isCustomRole: employees.isCustomRole,
+        customPermissions: employees.customPermissions,
       })
       .from(employees)
       .where(eq(employees.nik, jwtPayload.nik))
@@ -72,6 +76,8 @@ export async function getCurrentUser(): Promise<UserSession | null> {
       departmentId: emp.departmentId,
       jobPosition: emp.jobPosition || jwtPayload.jobPosition,
       operatingUnit: emp.operatingUnit || jwtPayload.operatingUnit,
+      isCustomRole: emp.isCustomRole ?? false,
+      customPermissions: (emp.customPermissions as string[]) || [],
     };
   } catch {
     return null;
@@ -345,6 +351,8 @@ export async function loginWithNik(nikInput: string, passwordInput?: string) {
       jobPosition: localRecord.emp.jobPosition,
       operatingUnit: localRecord.emp.operatingUnit || "HO",
       mustChangePassword,
+      isCustomRole: localRecord.emp.isCustomRole ?? false,
+      customPermissions: (localRecord.emp.customPermissions as string[]) || [],
     };
   }
 
@@ -439,15 +447,40 @@ export async function switchDemoRole(_role: RoleType, _customNik?: string) {
 /**
  * Server Action: Mengubah kata sandi mandiri oleh pengguna yang sedang login
  */
-export async function changeUserPasswordAction(newPassword: string) {
-  const currentUser = await getCurrentUser();
+export async function changeUserPasswordAction(newPassword: string, nikFallback?: string) {
+  let currentUser = await getCurrentUser();
+  if (!currentUser && nikFallback) {
+    const [emp] = await db
+      .select({
+        emp: employees,
+        dept: departments,
+      })
+      .from(employees)
+      .leftJoin(departments, eq(employees.departmentId, departments.id))
+      .where(eq(employees.nik, nikFallback.trim()))
+      .limit(1);
+
+    if (emp) {
+      currentUser = {
+        id: emp.emp.id,
+        nik: emp.emp.nik,
+        name: emp.emp.name,
+        role: (emp.emp.role as RoleType) || "KARYAWAN",
+        departmentId: emp.emp.departmentId || 0,
+        departmentName: emp.dept?.name || "General",
+        jobPosition: emp.emp.jobPosition,
+        operatingUnit: emp.emp.operatingUnit || "HO",
+      };
+    }
+  }
+
   if (!currentUser) {
     return { success: false, error: "Sesi Anda telah kedaluwarsa. Silakan login kembali." };
   }
 
   const cleanPass = (newPassword || "").trim();
-  if (!cleanPass || cleanPass.length < 8) {
-    return { success: false, error: "Kata sandi baru minimal harus 8 karakter." };
+  if (!cleanPass || cleanPass.length < 4) {
+    return { success: false, error: "Kata sandi baru minimal harus 4 karakter." };
   }
 
   try {

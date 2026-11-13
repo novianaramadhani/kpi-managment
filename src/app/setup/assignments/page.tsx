@@ -12,6 +12,7 @@ import { asc, eq, desc } from "drizzle-orm";
 import { PageHeader } from "@/components/ui";
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
+import { hasUserPermission } from "@/lib/rbac-catalog";
 import { redirect } from "next/navigation";
 import { AssessorMatrixManager } from "@/components/assignment/assessor-matrix-manager";
 import { DelegationManager } from "@/components/assignment/delegation-manager";
@@ -27,6 +28,16 @@ export default async function AssignmentsPage({
 }) {
   const currentUser = await getCurrentUser();
   if (!currentUser) redirect("/login");
+
+  const canAccess =
+    currentUser.role === "ADMIN" ||
+    currentUser.role === "HR" ||
+    currentUser.isCustomRole ||
+    hasUserPermission(currentUser, "template.assign") ||
+    hasUserPermission(currentUser, "master.approval_hierarchy.manage");
+  if (!canAccess) {
+    redirect("/dashboard");
+  }
 
   const { tab = "asesor" } = await searchParams;
 

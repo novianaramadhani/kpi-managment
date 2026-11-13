@@ -45,6 +45,8 @@ import {
 } from "@/lib/department-mapping-actions";
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
+import { hasUserPermission } from "@/lib/rbac-catalog";
+import { matchesOperatingUnit } from "@/lib/department-mapping-utils";
 import { redirect } from "next/navigation";
 import { EmployeeListTable } from "@/components/employee-list-table";
 import {
@@ -88,7 +90,13 @@ export default async function MasterDataPage({
 
   const currentUser = await getCurrentUser();
   if (!currentUser) redirect("/login");
-  if (currentUser.role !== "ADMIN" && currentUser.role !== "HR") {
+  const canAccessMaster =
+    currentUser.role === "ADMIN" ||
+    currentUser.role === "HR" ||
+    currentUser.isCustomRole ||
+    hasUserPermission(currentUser, "ou.view_all") ||
+    hasUserPermission(currentUser, "master.employee.view");
+  if (!canAccessMaster) {
     redirect("/dashboard");
   }
 
@@ -111,11 +119,16 @@ export default async function MasterDataPage({
       getJobPositionMappingsWithDetailsAction(),
     ]);
 
-  // Sanitasi data karyawan agar kolom password tidak terkirim ke klien
-  const emps = rawEmps.map(({ password: _pwd, ...rest }) => ({
-    ...rest,
-    password: null,
-  }));
+  const canViewAllOu = hasUserPermission(currentUser, "ou.view_all");
+  const userOu = (currentUser.operatingUnit || "HO").toUpperCase();
+
+  // Sanitasi data karyawan agar kolom password tidak terkirim ke klien (dibatasi sesuai izin ou.view_all)
+  const emps = rawEmps
+    .filter((e) => (canViewAllOu ? true : matchesOperatingUnit(e.operatingUnit, userOu)))
+    .map(({ password: _pwd, ...rest }) => ({
+      ...rest,
+      password: null,
+    }));
 
   let savedUnits: { id: string; name: string; status: string }[] | undefined = undefined;
   if (savedOUsJson) {
@@ -204,7 +217,7 @@ export default async function MasterDataPage({
           jobPositions={positions}
           templates={tpls}
           systemDate={systemDate}
-          initialUnit={unit}
+          initialUnit={canViewAllOu ? unit : userOu}
           mappings={mappings}
           pits={pitList}
           assignAppraiserAction={assignAppraiser}

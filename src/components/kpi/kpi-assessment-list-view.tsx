@@ -28,6 +28,10 @@ interface KpiAssessmentListViewProps {
   departments: { id: number; name: string }[];
   userRole?: string;
   userDeptName?: string;
+  sites?: { id: number; code: string; name: string }[];
+  selectedUnit?: string;
+  canAccessAllOu?: boolean;
+  allowedUnits?: string[];
 }
 
 interface StagingConfig {
@@ -151,11 +155,16 @@ export function KpiAssessmentListView({
   departments,
   userRole = "ADMIN",
   userDeptName,
+  sites = [],
+  selectedUnit = "ALL",
+  canAccessAllOu = true,
+  allowedUnits = [],
 }: KpiAssessmentListViewProps) {
   const router = useRouter();
 
   // Primary Tab: Penilaian Departemen vs Penilaian Employee
   const [mainTab, setMainTab] = useState<"EMPLOYEE" | "DEPARTMENT">("EMPLOYEE");
+  const [selectedUnitState, setSelectedUnitState] = useState<string>(selectedUnit);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -175,6 +184,19 @@ export function KpiAssessmentListView({
 
   const handleSwitchToEmployeeTab = () => {
     setMainTab("EMPLOYEE");
+  };
+
+  const handleUnitChange = (newUnit: string) => {
+    setSelectedUnitState(newUnit);
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      if (newUnit === "ALL") {
+        sp.delete("unit");
+      } else {
+        sp.set("unit", newUnit);
+      }
+      router.push(`/input-kpi?${sp.toString()}`);
+    }
   };
 
   // State Filter & Staging
@@ -214,7 +236,7 @@ export function KpiAssessmentListView({
   // Reset page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeStaging, searchQuery, selectedDept, selectedMonth]);
+  }, [activeStaging, searchQuery, selectedDept, selectedMonth, selectedUnitState]);
 
   // Hitung jumlah karyawan per staging tab
   const stagingCounts = useMemo(() => {
@@ -249,6 +271,13 @@ export function KpiAssessmentListView({
         return false;
       }
 
+      // Filter 2b: Operating Unit
+      if (selectedUnitState !== "ALL" && emp.operatingUnit) {
+        if (emp.operatingUnit.trim().toUpperCase() !== selectedUnitState.toUpperCase()) {
+          return false;
+        }
+      }
+
       // Filter 3: Search Query (Nama, NIK, Jabatan, Departemen)
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -261,7 +290,7 @@ export function KpiAssessmentListView({
 
       return true;
     });
-  }, [employees, activeStaging, selectedDept, searchQuery]);
+  }, [employees, activeStaging, selectedDept, selectedUnitState, searchQuery]);
 
   // Pagination Slice
   const totalItems = filteredEmployees.length;
@@ -677,8 +706,30 @@ export function KpiAssessmentListView({
             </p>
           </div>
 
-          <div className="self-start sm:self-auto shrink-0">
-            {userRole === "ADMIN" ? (
+          <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto shrink-0">
+            {/* Filter Operating Unit (Site) */}
+            {sites && sites.length > 0 && (canAccessAllOu || (allowedUnits && allowedUnits.length > 0)) && (
+              <div className="relative">
+                <select
+                  value={selectedUnitState}
+                  onChange={(e) => handleUnitChange(e.target.value)}
+                  aria-label="Filter Operating Unit"
+                  className="h-10 rounded-xl border border-slate-200 bg-white pl-3.5 pr-8 text-xs font-semibold text-slate-700 shadow-2xs hover:border-slate-300 focus:border-blue-600 focus:outline-none transition cursor-pointer"
+                >
+                  {canAccessAllOu && <option value="ALL">Semua Site (OU)</option>}
+                  {sites
+                    .filter((s) => canAccessAllOu || (allowedUnits && allowedUnits.includes(s.code.toUpperCase())))
+                    .map((s) => (
+                      <option key={s.id} value={s.code.toUpperCase()}>
+                        {s.name} ({s.code})
+                      </option>
+                    ))}
+                </select>
+              </div>
+            )}
+
+            {/* Filter Department */}
+            {userRole === "ADMIN" || userRole === "HR" || canAccessAllOu || (allowedUnits && allowedUnits.length > 0) ? (
               <div className="relative">
                 <select
                   value={selectedDept}

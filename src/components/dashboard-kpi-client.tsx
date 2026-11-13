@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo } from "react";
 import type { UserSession } from "@/lib/auth";
+import { hasUserPermission } from "@/lib/rbac-catalog";
 import {
   Users,
   CheckCircle2,
@@ -133,7 +134,16 @@ export function DashboardKpiClient({
   const [selectedPeriodId, setSelectedPeriodId] = useState<number>(activePeriod.id);
   const [selectedMonth, setSelectedMonth] = useState<string>("ALL");
   const [showAllCompletion, setShowAllCompletion] = useState<boolean>(false);
+  const canViewCompany =
+    currentUser?.role === "ADMIN" ||
+    currentUser?.role === "HR" ||
+    hasUserPermission(currentUser, "dashboard.view_company") ||
+    hasUserPermission(currentUser, "ou.view_all");
+
   const [selectedDeptId, setSelectedDeptId] = useState<string>(() => {
+    if (canViewCompany) {
+      return "ALL";
+    }
     if (currentUser?.departmentName) {
       const match = departments.find(
         (d) => d.name.toLowerCase() === currentUser.departmentName?.toLowerCase()

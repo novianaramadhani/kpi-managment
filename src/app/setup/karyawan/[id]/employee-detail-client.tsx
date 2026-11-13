@@ -55,6 +55,7 @@ interface Props {
   permission?: JobLevelPermission | null;
   auditLogs?: UnifiedLogItem[];
   canEditNik?: boolean;
+  operatingUnits?: { id: number; code: string; name: string }[];
   upsertAction: (fd: FormData) => Promise<{ success: boolean; error?: string } | void>;
   resetPasswordAction: (
     employeeId: number
@@ -71,6 +72,7 @@ export function EmployeeDetailClient({
   permission,
   auditLogs = [],
   canEditNik = true,
+  operatingUnits = [],
   upsertAction,
   resetPasswordAction,
 }: Props) {
@@ -1096,44 +1098,139 @@ export function EmployeeDetailClient({
                         const isChecked = effectivePermissions.includes(item.code);
 
                         return (
-                          <label
-                            key={item.code}
-                            className={`flex items-center justify-between gap-2 py-1 px-1.5 rounded transition-colors cursor-pointer select-none text-xs ${
-                              isChecked
-                                ? "bg-indigo-50/30 hover:bg-indigo-50/50"
-                                : "hover:bg-slate-50"
-                            }`}
-                          >
-                            <div className="flex items-center gap-2 min-w-0">
-                              <input
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={() => handleTogglePermission(item.code)}
-                                className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600 shrink-0"
-                              />
-                              <span
-                                className={`truncate ${
-                                  isChecked
-                                    ? "font-semibold text-slate-900"
-                                    : "font-normal text-slate-600"
-                                }`}
-                              >
-                                {item.name}
-                              </span>
-                            </div>
+                          <React.Fragment key={item.code}>
+                            <label
+                              className={`flex items-center justify-between gap-2 py-1 px-1.5 rounded transition-colors cursor-pointer select-none text-xs ${
+                                isChecked
+                                  ? "bg-indigo-50/30 hover:bg-indigo-50/50"
+                                  : "hover:bg-slate-50"
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => handleTogglePermission(item.code)}
+                                  className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600 shrink-0"
+                                />
+                                <span
+                                  className={`truncate ${
+                                    isChecked
+                                      ? "font-semibold text-slate-900"
+                                      : "font-normal text-slate-600"
+                                  }`}
+                                >
+                                  {item.name}
+                                </span>
+                              </div>
 
-                            <div className="shrink-0 flex items-center gap-1 pl-2">
-                              {isChecked ? (
-                                <span className="text-[10px] font-bold text-emerald-600">
-                                  Aktif
-                                </span>
-                              ) : (
-                                <span className="text-[10px] font-medium text-slate-400">
-                                  Off
-                                </span>
-                              )}
-                            </div>
-                          </label>
+                              <div className="shrink-0 flex items-center gap-1 pl-2">
+                                {isChecked ? (
+                                  <span className="text-[10px] font-bold text-emerald-600">
+                                    Aktif
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] font-medium text-slate-400">
+                                    Off
+                                  </span>
+                                )}
+                              </div>
+                            </label>
+
+                            {/* Sub-Panel Interaktif Bersarang untuk 'assessment.view_all' */}
+                            {item.code === "assessment.view_all" && isChecked && (
+                              <div className="ml-5 my-1.5 p-2.5 rounded-lg border border-sky-200 bg-sky-50/60 space-y-2">
+                                <div className="text-[11px] font-bold text-sky-900 flex items-center gap-1.5">
+                                  <svg className="w-3.5 h-3.5 text-sky-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                                  </svg>
+                                  Cakupan Operating Unit (OU) yang Dapat Dilihat:
+                                </div>
+
+                                <div className="flex flex-col gap-1.5">
+                                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-800">
+                                    <input
+                                      type="radio"
+                                      name="ou_scope_mode"
+                                      checked={!effectivePermissions.some((p) => p.startsWith("assessment.ou:") && p !== "assessment.ou:ALL")}
+                                      onChange={() => {
+                                        setIsCustomRole(true);
+                                        setCustomPermissions((prev) => [
+                                          ...prev.filter((p) => !p.startsWith("assessment.ou:")),
+                                          "assessment.ou:ALL",
+                                        ]);
+                                      }}
+                                      className="h-3.5 w-3.5 text-sky-600 focus:ring-sky-500 accent-sky-600 cursor-pointer"
+                                    />
+                                    <span>Seluruh Operating Unit (Global / All Sites)</span>
+                                  </label>
+
+                                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-800">
+                                    <input
+                                      type="radio"
+                                      name="ou_scope_mode"
+                                      checked={effectivePermissions.some((p) => p.startsWith("assessment.ou:") && p !== "assessment.ou:ALL")}
+                                      onChange={() => {
+                                        setIsCustomRole(true);
+                                        const curOu = (operatingUnit || "HO").trim().toUpperCase();
+                                        setCustomPermissions((prev) => [
+                                          ...prev.filter((p) => !p.startsWith("assessment.ou:")),
+                                          `assessment.ou:${curOu}`,
+                                        ]);
+                                      }}
+                                      className="h-3.5 w-3.5 text-sky-600 focus:ring-sky-500 accent-sky-600 cursor-pointer"
+                                    />
+                                    <span>Pilih Unit Tertentu (Custom Sites):</span>
+                                  </label>
+                                </div>
+
+                                {effectivePermissions.some((p) => p.startsWith("assessment.ou:") && p !== "assessment.ou:ALL") && (
+                                  <div className="ml-5 pt-1.5 grid grid-cols-2 gap-1.5 border-t border-sky-200/70">
+                                    {(operatingUnits && operatingUnits.length > 0
+                                      ? operatingUnits
+                                      : [
+                                          { id: 1, code: "HO", name: "Head Office" },
+                                          { id: 2, code: "GAM", name: "Site GAM" },
+                                          { id: 3, code: "AKP", name: "Site AKP" },
+                                        ]
+                                    ).map((u) => {
+                                      const permCode = `assessment.ou:${u.code.toUpperCase()}`;
+                                      const isOuChecked = effectivePermissions.includes(permCode);
+                                      return (
+                                        <label
+                                          key={u.code}
+                                          className={`flex items-center gap-1.5 p-1 rounded border text-[11px] cursor-pointer transition select-none ${
+                                            isOuChecked
+                                              ? "bg-sky-100 border-sky-300 text-sky-950 font-bold"
+                                              : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 font-medium"
+                                          }`}
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={isOuChecked}
+                                            onChange={() => {
+                                              setIsCustomRole(true);
+                                              setCustomPermissions((prev) => {
+                                                const withoutAll = prev.filter((p) => p !== "assessment.ou:ALL");
+                                                if (isOuChecked) {
+                                                  const res = withoutAll.filter((p) => p !== permCode);
+                                                  return res.length > 0 ? res : [`assessment.ou:${u.code.toUpperCase()}`];
+                                                } else {
+                                                  return [...withoutAll, permCode];
+                                                }
+                                              });
+                                            }}
+                                            className="h-3 w-3 text-sky-600 rounded border-slate-300 focus:ring-sky-500 accent-sky-600 cursor-pointer"
+                                          />
+                                          <span className="truncate">{u.name} ({u.code})</span>
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </React.Fragment>
                         );
                       })}
                     </div>

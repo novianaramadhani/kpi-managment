@@ -4,11 +4,25 @@ import { desc } from "drizzle-orm";
 import { PageHeader } from "@/components/ui";
 import { createPeriod, deletePeriod, setPeriodStatus } from "@/lib/actions";
 import { PeriodTableClient } from "@/components/master-tables-client";
+import { getCurrentUser } from "@/lib/auth";
+import { hasUserPermission } from "@/lib/rbac-catalog";
+import { redirect } from "next/navigation";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
 export default async function PeriodeSetupPage() {
+  const currentUser = await getCurrentUser();
+  if (!currentUser) redirect("/login");
+  const canAccess =
+    currentUser.role === "ADMIN" ||
+    currentUser.role === "HR" ||
+    currentUser.isCustomRole ||
+    hasUserPermission(currentUser, "period.manage");
+  if (!canAccess) {
+    redirect("/dashboard");
+  }
+
   const periods = await db.select().from(kpiPeriods).orderBy(desc(kpiPeriods.year));
 
   return (

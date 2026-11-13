@@ -2,10 +2,23 @@ import { db } from "@/db";
 import { auditLogs } from "@/db/schema";
 import { desc } from "drizzle-orm";
 import { Badge, Card, PageHeader, Table, td, th } from "@/components/ui";
+import { getCurrentUser } from "@/lib/auth";
+import { hasUserPermission } from "@/lib/rbac-catalog";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
 export default async function AuditPage() {
+  const currentUser = await getCurrentUser();
+  if (!currentUser) redirect("/login");
+  const canAccess =
+    currentUser.role === "ADMIN" ||
+    currentUser.isCustomRole ||
+    hasUserPermission(currentUser, "audit.view");
+  if (!canAccess) {
+    redirect("/dashboard");
+  }
+
   const logs = await db.select().from(auditLogs).orderBy(desc(auditLogs.createdAt)).limit(200);
   return (
     <div>

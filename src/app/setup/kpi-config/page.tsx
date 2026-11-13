@@ -8,6 +8,7 @@ import { asc } from "drizzle-orm";
 import { PageHeader } from "@/components/ui";
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
+import { hasUserPermission } from "@/lib/rbac-catalog";
 import { redirect } from "next/navigation";
 import { MeasurementTypeManager } from "@/components/kpi-config/measurement-type-manager";
 import { KpiDirectionManager } from "@/components/kpi-config/kpi-direction-manager";
@@ -25,6 +26,15 @@ export default async function KpiConfigPage({
 }) {
   const currentUser = await getCurrentUser();
   if (!currentUser) redirect("/login");
+
+  const canAccess =
+    currentUser.role === "ADMIN" ||
+    currentUser.role === "HR" ||
+    currentUser.isCustomRole ||
+    hasUserPermission(currentUser, "parameter.view");
+  if (!canAccess) {
+    redirect("/dashboard");
+  }
 
   const { tab = "measurement" } = await searchParams;
 

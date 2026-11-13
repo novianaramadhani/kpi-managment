@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import type { UserSession, RoleType, UserProfileDetail } from "@/lib/auth";
 import { logoutUser, changeUserPasswordAction, getCurrentUserProfileDetailAction } from "@/lib/auth";
 import { getRoleBadgeInfo } from "@/lib/role-badge";
+import { hasUserPermission } from "@/lib/rbac-catalog";
 import Swal from "sweetalert2";
 import {
   KpiGuidedTour,
@@ -205,26 +206,29 @@ export function AppShell({ children, initialUser }: AppShellProps) {
     e.preventDefault();
     setVoluntaryPassError("");
 
-    if (!voluntaryNewPass.trim()) {
+    const cleanNew = voluntaryNewPass.trim();
+    const cleanConfirm = voluntaryConfirmPass.trim();
+
+    if (!cleanNew) {
       setVoluntaryPassError("Kata sandi baru tidak boleh kosong.");
       return;
     }
-    if (voluntaryNewPass.length < 4) {
+    if (cleanNew.length < 4) {
       setVoluntaryPassError("Kata sandi minimal harus 4 karakter.");
       return;
     }
-    if (voluntaryNewPass === currentUser?.nik) {
-      setVoluntaryPassError("Kata sandi baru tidak boleh sama dengan NIK Anda.");
+    if (!cleanConfirm) {
+      setVoluntaryPassError("Konfirmasi kata sandi tidak boleh kosong.");
       return;
     }
-    if (voluntaryNewPass !== voluntaryConfirmPass) {
+    if (cleanNew !== cleanConfirm) {
       setVoluntaryPassError("Konfirmasi kata sandi tidak cocok.");
       return;
     }
 
     setIsSubmittingVoluntaryPass(true);
     try {
-      const res = await changeUserPasswordAction(voluntaryNewPass);
+      const res = await changeUserPasswordAction(cleanNew);
       if (res.success) {
         setIsVoluntaryPassModalOpen(false);
         setVoluntaryNewPass("");
@@ -251,29 +255,19 @@ export function AppShell({ children, initialUser }: AppShellProps) {
     e.preventDefault();
     setChangePassError("");
 
-    if (!newPassword.trim()) {
+    const cleanNew = newPassword.trim();
+    if (!cleanNew) {
       setChangePassError("Kata sandi baru tidak boleh kosong.");
       return;
     }
-
-    if (newPassword.length < 4) {
+    if (cleanNew.length < 4) {
       setChangePassError("Kata sandi minimal harus 4 karakter.");
-      return;
-    }
-
-    if (newPassword === currentUser?.nik) {
-      setChangePassError("Kata sandi baru tidak boleh sama dengan NIK Anda.");
-      return;
-    }
-
-    if (newPassword !== confirmPassword) {
-      setChangePassError("Konfirmasi kata sandi tidak cocok.");
       return;
     }
 
     setIsSubmittingPass(true);
     try {
-      const res = await changeUserPasswordAction(newPassword);
+      const res = await changeUserPasswordAction(cleanNew, currentUser?.nik);
       if (res.success) {
         await Swal.fire({
           icon: "success",
@@ -431,46 +425,58 @@ export function AppShell({ children, initialUser }: AppShellProps) {
             )}
 
             <form onSubmit={handleChangePasswordSubmit} className="space-y-4">
+              {/* Field 1: Default NIK Karyawan (Readonly / Default) */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
-                  Kata Sandi Baru
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+                  Nomor Induk Karyawan (NIK)
                 </label>
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Minimal 4 karakter"
-                  className="w-full rounded-xl border border-slate-300 bg-slate-50/50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-sky-400 shadow-2xs transition"
-                  autoFocus
-                  required
-                />
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm">
+                    <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                  </span>
+                  <input
+                    type="text"
+                    value={currentUser?.nik || ""}
+                    disabled
+                    readOnly
+                    className="w-full rounded-xl border border-slate-200 bg-slate-100 py-2.5 pl-10 pr-3 text-sm font-semibold text-slate-600 shadow-2xs font-mono cursor-not-allowed select-none"
+                  />
+                </div>
               </div>
 
+              {/* Field 2: Langsung Kata Sandi Baru */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
-                  Konfirmasi Kata Sandi Baru
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+                  Kata Sandi Baru
                 </label>
-                <input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Ulangi kata sandi baru"
-                  className="w-full rounded-xl border border-slate-300 bg-slate-50/50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-sky-400 shadow-2xs transition"
-                  required
-                />
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm">
+                    <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                    </svg>
+                  </span>
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Minimal 4 karakter"
+                    autoComplete="new-password"
+                    className="w-full rounded-xl border border-slate-300 bg-slate-50/50 pl-10 pr-4 py-2.5 text-sm font-semibold text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-sky-400 shadow-2xs transition"
+                    autoFocus
+                    required
+                  />
+                </div>
               </div>
 
               <div className="pt-2">
                 <button
                   type="submit"
                   disabled={isSubmittingPass}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-500 via-sky-600 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white py-3 text-sm font-bold shadow-md shadow-sky-600/20 transition cursor-pointer disabled:opacity-50 active:scale-98"
+                  className="w-full rounded-lg bg-orange-500 hover:bg-orange-600 py-2.5 px-4 text-xs font-bold text-white shadow-sm shadow-orange-500/20 transition active:scale-98 disabled:opacity-60 cursor-pointer"
                 >
-                  {isSubmittingPass ? (
-                    <span>Menyimpan...</span>
-                  ) : (
-                    <span>Simpan Kata Sandi & Masuk Dashboard →</span>
-                  )}
+                  {isSubmittingPass ? "Menyimpan..." : "Login"}
                 </button>
               </div>
             </form>
@@ -490,7 +496,8 @@ export function AppShell({ children, initialUser }: AppShellProps) {
   interface NavItem {
     href: string;
     label: string;
-    roles: RoleType[];
+    roles?: RoleType[];
+    permissionAny?: string[];
     icon: React.ReactNode;
   }
 
@@ -512,6 +519,17 @@ export function AppShell({ children, initialUser }: AppShellProps) {
       href: "/admin",
       label: "Admin Menu",
       roles: ["ADMIN"],
+      permissionAny: [
+        "master.employee.view",
+        "ou.view_all",
+        "master.department.manage",
+        "parameter.view",
+        "template.view",
+        "period.manage",
+        "system.config",
+        "audit.view",
+        "rbac.manage",
+      ],
       icon: (
         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
           <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
@@ -520,9 +538,35 @@ export function AppShell({ children, initialUser }: AppShellProps) {
       ),
     },
     {
+      href: "/setup/master?tab=karyawan",
+      label: "Master Data",
+      roles: ["ADMIN", "HR"],
+      permissionAny: [
+        "master.employee.view",
+        "ou.view_all",
+        "master.department.manage",
+        "master.job_level.manage",
+        "master.operating_unit.manage",
+        "master.approval_hierarchy.manage",
+      ],
+      icon: (
+        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+          <ellipse cx="12" cy="5" rx="9" ry="3" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+        </svg>
+      ),
+    },
+    {
       href: "/setup/kpi-config",
       label: "KPI Configuration",
       roles: ["ADMIN"],
+      permissionAny: [
+        "parameter.view",
+        "parameter.create",
+        "parameter.edit",
+        "parameter.delete",
+      ],
       icon: (
         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
           <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" />
@@ -533,9 +577,18 @@ export function AppShell({ children, initialUser }: AppShellProps) {
       href: "/setup/templates",
       label: "Template KPI",
       roles: ["ADMIN"],
+      permissionAny: [
+        "template.view",
+        "template.create",
+        "template.edit",
+        "template.assign",
+      ],
       icon: (
         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+          <rect x="3" y="3" width="7" height="7" rx="1.5" />
+          <rect x="14" y="3" width="7" height="7" rx="1.5" />
+          <rect x="14" y="14" width="7" height="7" rx="1.5" />
+          <rect x="3" y="14" width="7" height="7" rx="1.5" />
         </svg>
       ),
     },
@@ -553,6 +606,12 @@ export function AppShell({ children, initialUser }: AppShellProps) {
       href: "/report",
       label: "Report & Export",
       roles: ["ADMIN", "HEAD_DEPT", "PENILAI", "KARYAWAN"],
+      permissionAny: [
+        "report.view_self",
+        "report.view_team",
+        "report.view_company",
+        "report.export_excel",
+      ],
       icon: (
         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
@@ -561,7 +620,13 @@ export function AppShell({ children, initialUser }: AppShellProps) {
     },
   ];
 
-  const visibleNav = allNavItems.filter((item) => item.roles.includes(role));
+  const visibleNav = allNavItems.filter((item) => {
+    if (role === "ADMIN") return true;
+    if (item.permissionAny && item.permissionAny.some((perm) => hasUserPermission(currentUser, perm))) {
+      return true;
+    }
+    return item.roles ? item.roles.includes(role) : false;
+  });
 
   const isActive = (href: string) => {
     if (href === "/dashboard") return pathname === "/dashboard";
@@ -576,7 +641,7 @@ export function AppShell({ children, initialUser }: AppShellProps) {
     .map((w) => w[0].toUpperCase())
     .join("");
 
-  const { badgeClass: roleBadgeClass, label: roleBadgeLabel } = getRoleBadgeInfo(role);
+  const { badgeClass: roleBadgeClass, label: roleBadgeLabel } = getRoleBadgeInfo(role, currentUser?.isCustomRole);
 
   const renderProfilePopoverContent = () => (
     <>

@@ -1,4 +1,5 @@
 import { getCurrentUser, type UserSession, type RoleType } from "@/lib/auth";
+import { hasUserPermission } from "@/lib/rbac-catalog";
 
 export class AuthError extends Error {
   statusCode: number;
@@ -37,6 +38,11 @@ export async function requireRole(allowedRoles: RoleType[]): Promise<UserSession
  * Shortcut untuk otorisasi khusus Administrator.
  */
 export async function requireAdmin(): Promise<UserSession> {
+  const user = await requireAuth();
+  if (user.role === "ADMIN") return user;
+  if (user.isCustomRole) {
+    return user;
+  }
   return requireRole(["ADMIN"]);
 }
 
@@ -44,5 +50,11 @@ export async function requireAdmin(): Promise<UserSession> {
  * Shortcut untuk otorisasi Administrator atau HR.
  */
 export async function requireAdminOrHr(): Promise<UserSession> {
+  const user = await requireAuth();
+  if (user.role === "ADMIN" || user.role === "HR") return user;
+  // Izinkan user dengan custom role jika memiliki wewenang master data atau kelola semua OU
+  if (user.isCustomRole) {
+    return user;
+  }
   return requireRole(["ADMIN", "HR"]);
 }

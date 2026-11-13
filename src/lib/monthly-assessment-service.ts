@@ -38,6 +38,7 @@ import {
   type GenericScoringRule,
   type KpiScoreResult,
 } from "./scoring";
+import { hasUserPermission, getUserAllowedOperatingUnits } from "./rbac-catalog";
 
 import {
   getAuthorizedAssessorIds,
@@ -1176,14 +1177,17 @@ export async function getMonthlyAssessmentEmployees(params: {
   year: number;
   month: number;
   departmentId?: number;
+  operatingUnit?: string;
   currentUser?: {
     id: number;
     role: string;
     departmentId?: number;
     operatingUnit?: string;
+    isCustomRole?: boolean;
+    customPermissions?: unknown;
   } | null;
 }): Promise<EmployeeProgressItem[]> {
-  const { year, month, departmentId, currentUser } = params;
+  const { year, month, departmentId, operatingUnit, currentUser } = params;
 
   const [period] = await db
     .select()
@@ -1212,95 +1216,118 @@ export async function getMonthlyAssessmentEmployees(params: {
   const userDeptId = currentUser?.departmentId;
   const userId = currentUser?.id;
 
-  if (userId && userRole !== "ADMIN" && userRole !== "HR") {
-    const today = new Date().toISOString().split("T")[0];
+  const canViewAllAssessments =
+    userRole === "ADMIN" ||
+    userRole === "HR" ||
+    hasUserPermission(currentUser, "assessment.view_all") ||
+    hasUserPermission(currentUser, "ou.view_all");
 
-    // 1. Delegasi aktif yang menunjuk currentUser sebagai delegatee
-    const delegations = await db
-      .select({ delegatorId: kpiAssessorDelegations.delegatorEmployeeId })
-      .from(kpiAssessorDelegations)
-      .where(
-        and(
-          eq(kpiAssessorDelegations.periodId, period.id),
-          eq(kpiAssessorDelegations.delegateeEmployeeId, userId),
-          eq(kpiAssessorDelegations.isActive, true),
-          sql`${kpiAssessorDelegations.startDate} <= ${today}`,
-          sql`${kpiAssessorDelegations.endDate} >= ${today}`
+  const allowedOuInfo = getUserAllowedOperatingUnits(currentUser);
+
+  // Filter Operating Unit berdasarkan parameter filter atau batasan hak akses user
+  if (operatingUnit && operatingUnit !== "ALL") {
+    conditions.push(eq(employees.operatingUnit, operatingUnit));
+  } else if (!allowedOuInfo.isAll && allowedOuInfo.units.length > 0 && canViewAllAssessments) {
+    conditions.push(inArray(employees.operatingUnit, allowedOuInfo.units));
+  }
+
+  // Jika user TIDAK memiliki izin melihat semua formulir penilaian (bukan Admin, bukan HR, dan tidak punya assessment.view_all / ou.view_all):
+  if (userId && !canViewAllAssessments) {
+    const canViewOwnOuTeam = hasUserPermission(currentUser, "assessment.view_team");
+
+    if (canViewOwnOuTeam) {
+      const userOu = (currentUser?.operatingUnit || "HO").trim().toUpperCase();
+      conditions.push(eq(employees.operatingUnit, userOu));
+    } else {
+      const today = new Date().toISOString().split("T")[0];
+
+      // 1. Delegasi aktif yang menunjuk currentUser sebagai delegatee
+      const delegations = await db
+        .select({ delegatorId: kpiAssessorDelegations.delegatorEmployeeId })
+        .from(kpiAssessorDelegations)
+        .where(
+          and(
+            eq(kpiAssessorDelegations.periodId, period.id),
+            eq(kpiAssessorDelegations.delegateeEmployeeId, userId),
+            eq(kpiAssessorDelegations.isActive, true),
+            sql`${kpiAssessorDelegations.startDate} <= ${today}`,
+            sql`${kpiAssessorDelegations.endDate} >= ${today}`
+          )
+        );
+
+      const effectiveAssessorIds = [userId, ...delegations.map((d) => d.delegatorId)];
+
+      // 2. Penugasan penilai template aktif di periode ini
+      const userAssignments = await db
+        .select({
+          categoryId: kpiAssessorAssignments.categoryId,
+          scopeType: kpiAssessorAssignments.scopeType,
+          targetEmployeeId: kpiAssessorAssignments.targetEmployeeId,
+          assessorDeptId: kpiAssessorAssignments.assessorDeptId,
+        })
+        .from(kpiAssessorAssignments)
+        .where(
+          and(
+            eq(kpiAssessorAssignments.periodId, period.id),
+            inArray(kpiAssessorAssignments.assessorEmployeeId, effectiveAssessorIds),
+            eq(kpiAssessorAssignments.isActive, true)
+          )
+        );
+
+      const individualEmpIds = userAssignments
+        .filter((a) => a.scopeType === "INDIVIDUAL" && a.targetEmployeeId)
+        .map((a) => a.targetEmployeeId as number);
+
+      const assignedCategoryIds = userAssignments.map((a) => a.categoryId).filter(Boolean);
+
+      let templateIdsFromCategories: number[] = [];
+      if (assignedCategoryIds.length > 0) {
+        const cats = await db
+          .select({ templateId: kpiCategories.templateId })
+          .from(kpiCategories)
+          .where(inArray(kpiCategories.id, assignedCategoryIds));
+        templateIdsFromCategories = Array.from(
+          new Set(cats.map((c) => c.templateId).filter((id): id is number => typeof id === "number"))
+        );
+      }
+
+      const assignedDeptIds = Array.from(
+        new Set(
+          userAssignments
+            .map((a) => a.assessorDeptId)
+            .filter((d): d is number => typeof d === "number")
         )
       );
 
-    const effectiveAssessorIds = [userId, ...delegations.map((d) => d.delegatorId)];
+      const scopingOrConditions = [
+        eq(employees.id, userId), // Selalu izinkan melihat penilaian diri sendiri
+        eq(employees.appraiserId, userId),
+        eq(appraisals.appraiserId, userId),
+        eq(employees.headDeptId, userId),
+        eq(appraisals.headDeptId, userId),
+        eq(employees.managerId, userId),
+        eq(appraisals.managerId, userId),
+      ];
 
-    // 2. Penugasan penilai template aktif di periode ini
-    const userAssignments = await db
-      .select({
-        categoryId: kpiAssessorAssignments.categoryId,
-        scopeType: kpiAssessorAssignments.scopeType,
-        targetEmployeeId: kpiAssessorAssignments.targetEmployeeId,
-        assessorDeptId: kpiAssessorAssignments.assessorDeptId,
-      })
-      .from(kpiAssessorAssignments)
-      .where(
-        and(
-          eq(kpiAssessorAssignments.periodId, period.id),
-          inArray(kpiAssessorAssignments.assessorEmployeeId, effectiveAssessorIds),
-          eq(kpiAssessorAssignments.isActive, true)
-        )
-      );
-
-    const individualEmpIds = userAssignments
-      .filter((a) => a.scopeType === "INDIVIDUAL" && a.targetEmployeeId)
-      .map((a) => a.targetEmployeeId as number);
-
-    const assignedCategoryIds = userAssignments.map((a) => a.categoryId).filter(Boolean);
-
-    let templateIdsFromCategories: number[] = [];
-    if (assignedCategoryIds.length > 0) {
-      const cats = await db
-        .select({ templateId: kpiCategories.templateId })
-        .from(kpiCategories)
-        .where(inArray(kpiCategories.id, assignedCategoryIds));
-      templateIdsFromCategories = Array.from(
-        new Set(cats.map((c) => c.templateId).filter((id): id is number => typeof id === "number"))
-      );
-    }
-
-    const assignedDeptIds = Array.from(
-      new Set(
-        userAssignments
-          .map((a) => a.assessorDeptId)
-          .filter((d): d is number => typeof d === "number")
-      )
-    );
-
-    const scopingOrConditions = [
-      eq(employees.id, userId), // Selalu izinkan melihat penilaian diri sendiri
-      eq(employees.appraiserId, userId),
-      eq(appraisals.appraiserId, userId),
-      eq(employees.headDeptId, userId),
-      eq(appraisals.headDeptId, userId),
-      eq(employees.managerId, userId),
-      eq(appraisals.managerId, userId),
-    ];
-
-    if (userRole === "HEAD_DEPT" || userRole === "MANAGER" || userRole === "PENILAI") {
-      if (userDeptId) {
-        scopingOrConditions.push(eq(employees.departmentId, userDeptId));
+      if (userRole === "HEAD_DEPT" || userRole === "MANAGER" || userRole === "PENILAI") {
+        if (userDeptId) {
+          scopingOrConditions.push(eq(employees.departmentId, userDeptId));
+        }
+        if (assignedDeptIds.length > 0) {
+          scopingOrConditions.push(inArray(employees.departmentId, assignedDeptIds));
+        }
       }
-      if (assignedDeptIds.length > 0) {
-        scopingOrConditions.push(inArray(employees.departmentId, assignedDeptIds));
+
+      if (individualEmpIds.length > 0) {
+        scopingOrConditions.push(inArray(employees.id, individualEmpIds));
       }
-    }
 
-    if (individualEmpIds.length > 0) {
-      scopingOrConditions.push(inArray(employees.id, individualEmpIds));
-    }
+      if (templateIdsFromCategories.length > 0) {
+        scopingOrConditions.push(inArray(appraisals.templateId, templateIdsFromCategories));
+      }
 
-    if (templateIdsFromCategories.length > 0) {
-      scopingOrConditions.push(inArray(appraisals.templateId, templateIdsFromCategories));
+      conditions.push(or(...scopingOrConditions)!);
     }
-
-    conditions.push(or(...scopingOrConditions)!);
   }
 
   const baseQuery = db
@@ -1316,6 +1343,7 @@ export async function getMonthlyAssessmentEmployees(params: {
       jobPosition: employees.jobPosition,
       departmentId: employees.departmentId,
       departmentName: departments.name,
+      operatingUnit: employees.operatingUnit,
       jobLevelId: employees.jobLevelId,
       jobLevelName: jobLevels.name,
       appraiserName: sql<string | null>`COALESCE(${appraisalAppraiser.name}, ${appraiser.name})`,
@@ -1485,6 +1513,7 @@ export async function getMonthlyAssessmentEmployees(params: {
       jobPosition: row.jobPosition ?? "-",
       departmentId: row.departmentId,
       departmentName: row.departmentName ?? "-",
+      operatingUnit: row.operatingUnit ?? null,
       jobLevelName: row.jobLevelName ?? "-",
       appraiserName: row.appraiserName ?? "Atasan Langsung",
       templateName:

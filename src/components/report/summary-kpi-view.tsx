@@ -11,6 +11,8 @@ interface SummaryKpiViewProps {
   period: KpiPeriod | null;
   periods: KpiPeriod[];
   selectedPeriodId?: number;
+  canViewAllOu?: boolean;
+  userOu?: string;
 }
 
 type SortField = "no" | "name" | "hireDate" | "score" | "pola" | "status";
@@ -21,8 +23,11 @@ export function SummaryKpiView({
   period,
   periods,
   selectedPeriodId,
+  canViewAllOu = true,
+  userOu = "HO",
 }: SummaryKpiViewProps) {
-  const [selectedUnit, setSelectedUnit] = useState<string>("ALL"); // Default ALL agar seluruh unit (HO, GAM, AKP) langsung muncul
+  const defaultOu = canViewAllOu ? "ALL" : userOu.toUpperCase();
+  const [selectedUnit, setSelectedUnit] = useState<string>(defaultOu);
   const [selectedDept, setSelectedDept] = useState<string>("ALL");
   const [selectedPola, setSelectedPola] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -122,24 +127,31 @@ export function SummaryKpiView({
       <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
         <div className="flex flex-wrap items-center gap-2">
           {/* Operating Unit Switcher Buttons */}
-          <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1 text-xs font-semibold">
-            {(["ALL", "HO", "GAM", "AKP"] as const).map((ou) => {
-              const active = selectedUnit === ou;
-              return (
-                <button
-                  key={ou}
-                  type="button"
-                  onClick={() => setSelectedUnit(ou)}
-                  className={`rounded-md px-3 py-1 transition cursor-pointer ${
-                    active
-                      ? "bg-white text-slate-900 shadow-2xs font-bold border border-slate-200/80"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                >
-                  {ou === "ALL" ? "Semua Unit" : ou}
-                </button>
-              );
-            })}
+          <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-1 text-xs font-semibold gap-1">
+            {(["ALL", "HO", "GAM", "AKP"] as const)
+              .filter((ou) => (canViewAllOu ? true : ou === userOu.toUpperCase()))
+              .map((ou) => {
+                const active = selectedUnit === ou;
+                return (
+                  <button
+                    key={ou}
+                    type="button"
+                    onClick={() => setSelectedUnit(ou)}
+                    className={`rounded-md px-3 py-1 transition cursor-pointer ${
+                      active
+                        ? "bg-white text-slate-900 shadow-2xs font-bold border border-slate-200/80"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    {ou === "ALL" ? "Semua Unit" : ou}
+                  </button>
+                );
+              })}
+            {!canViewAllOu && (
+              <span className="text-[10px] text-slate-400 font-medium px-2 py-0.5">
+                🔒 Site Terkunci (RBAC)
+              </span>
+            )}
           </div>
 
           {/* Status Indicator Badge */}

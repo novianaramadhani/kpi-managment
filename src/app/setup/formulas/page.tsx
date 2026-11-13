@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
+import { hasUserPermission } from "@/lib/rbac-catalog";
 import { getCalculationRulesAction } from "@/lib/formula-rules-actions";
 import { FormulaRulesClient } from "@/components/formula-rules/formula-rules-client";
 
@@ -18,7 +19,7 @@ export default async function FormulaRulesPage() {
   }
 
   // Admin access check
-  if (currentUser.role !== "ADMIN") {
+  if (currentUser.role !== "ADMIN" && !currentUser.isCustomRole && !hasUserPermission(currentUser, "parameter.edit")) {
     redirect("/dashboard");
   }
 

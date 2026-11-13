@@ -17,8 +17,6 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [showNewPassword, setShowNewPassword] = useState(false);
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [isPending, startTransition] = useTransition();
 
@@ -42,6 +40,7 @@ export default function LoginPage() {
         if (res.success && res.session) {
           if (res.session.mustChangePassword) {
             setLoggedInUser(res.session);
+            setNewPassword("");
             setLoginStep("CHANGE_PASSWORD");
             setErrorMessage("");
             return;
@@ -63,6 +62,10 @@ export default function LoginPage() {
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Terjadi kesalahan saat login";
+        if (msg.includes("Server Action") && msg.includes("was not found")) {
+          window.location.reload();
+          return;
+        }
         setErrorMessage(msg);
       }
     });
@@ -72,26 +75,19 @@ export default function LoginPage() {
     e.preventDefault();
     setErrorMessage("");
 
-    if (!newPassword.trim()) {
+    const cleanNew = newPassword.trim();
+    if (!cleanNew) {
       setErrorMessage("Kata sandi baru tidak boleh kosong.");
       return;
     }
-    if (newPassword.length < 4) {
+    if (cleanNew.length < 4) {
       setErrorMessage("Kata sandi baru minimal harus 4 karakter.");
-      return;
-    }
-    if (newPassword === loggedInUser?.nik) {
-      setErrorMessage("Kata sandi baru tidak boleh sama dengan NIK Anda.");
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setErrorMessage("Konfirmasi kata sandi tidak cocok.");
       return;
     }
 
     startTransition(async () => {
       try {
-        const res = await changeUserPasswordAction(newPassword);
+        const res = await changeUserPasswordAction(cleanNew, loggedInUser?.nik || nik);
         if (res.success) {
           void Swal.fire({
             icon: "success",
@@ -108,6 +104,10 @@ export default function LoginPage() {
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Terjadi kesalahan";
+        if (msg.includes("Server Action") && msg.includes("was not found")) {
+          window.location.reload();
+          return;
+        }
         setErrorMessage(msg);
       }
     });
@@ -229,24 +229,52 @@ export default function LoginPage() {
                 <button
                   type="submit"
                   disabled={isPending}
-                  className="w-full rounded-lg bg-emerald-500 hover:bg-emerald-600 py-2.5 px-4 text-xs font-bold text-white shadow-sm shadow-emerald-500/20 transition active:scale-98 disabled:opacity-60 cursor-pointer"
+                  className="w-full rounded-lg bg-gradient-to-r from-sky-500 via-sky-600 to-blue-600 hover:from-sky-600 hover:to-blue-700 py-2.5 px-4 text-xs font-bold text-white shadow-sm shadow-sky-600/20 transition active:scale-98 disabled:opacity-60 cursor-pointer"
                 >
                   {isPending ? "Memverifikasi NIK..." : "Login"}
                 </button>
               </form>
             ) : (
               <form onSubmit={handleChangePassword} className="space-y-4">
+                {/* Field 1: Default NIK Karyawan (Readonly / Default) */}
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+                    Nomor Induk Karyawan (NIK)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm">
+                      <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    </span>
+                    <input
+                      type="text"
+                      value={loggedInUser?.nik || nik}
+                      disabled
+                      readOnly
+                      className="w-full rounded-xl border border-slate-200 bg-slate-100 py-2.5 pl-10 pr-3 text-sm font-semibold text-slate-600 shadow-2xs font-mono cursor-not-allowed select-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Field 2: Langsung Kata Sandi Baru */}
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
                     Kata Sandi Baru
                   </label>
                   <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm">
+                      <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                      </svg>
+                    </span>
                     <input
                       type={showNewPassword ? "text" : "password"}
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
                       placeholder="Minimal 4 karakter"
-                      className="w-full rounded-xl border border-slate-300 bg-slate-50/50 pl-3.5 pr-10 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-sky-400 shadow-2xs"
+                      autoComplete="new-password"
+                      className="w-full rounded-xl border border-slate-300 bg-slate-50/50 pl-10 pr-10 py-2.5 text-sm font-semibold text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-sky-400 shadow-2xs transition"
                       autoFocus
                       required
                     />
@@ -262,35 +290,10 @@ export default function LoginPage() {
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
-                    Konfirmasi Kata Sandi Baru
-                  </label>
-                  <div className="relative">
-                    <input
-                      type={showConfirmPassword ? "text" : "password"}
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      placeholder="Ulangi kata sandi baru"
-                      className="w-full rounded-xl border border-slate-300 bg-slate-50/50 pl-3.5 pr-10 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-sky-400 shadow-2xs"
-                      required
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowConfirmPassword((prev) => !prev)}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-none transition p-0.5 rounded cursor-pointer"
-                      tabIndex={-1}
-                      aria-label={showConfirmPassword ? "Sembunyikan kata sandi" : "Tampilkan kata sandi"}
-                    >
-                      {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-
                 <button
                   type="submit"
                   disabled={isPending}
-                  className="w-full rounded-lg bg-emerald-500 hover:bg-emerald-600 py-2 px-4 text-xs font-bold text-white shadow-sm shadow-emerald-500/20 transition active:scale-98 disabled:opacity-60 cursor-pointer"
+                  className="w-full rounded-lg bg-orange-500 hover:bg-orange-600 py-2.5 px-4 text-xs font-bold text-white shadow-sm shadow-orange-500/20 transition active:scale-98 disabled:opacity-60 cursor-pointer"
                 >
                   {isPending ? "Menyimpan..." : "Login"}
                 </button>

@@ -35,6 +35,9 @@ import {
 } from "@/lib/actions";
 import { TemplateHubClient } from "@/components/template-hub-client";
 import { getTemplateAssignmentsOverview } from "@/lib/template-assignment-service";
+import { getCurrentUser } from "@/lib/auth";
+import { hasUserPermission } from "@/lib/rbac-catalog";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +47,17 @@ export default async function TemplatesPage({
   searchParams: Promise<{ view?: string; dept?: string }>;
 }) {
   const { view, dept } = await searchParams;
+
+  const currentUser = await getCurrentUser();
+  if (!currentUser) redirect("/login");
+  const canAccess =
+    currentUser.role === "ADMIN" ||
+    currentUser.role === "HR" ||
+    currentUser.isCustomRole ||
+    hasUserPermission(currentUser, "template.view");
+  if (!canAccess) {
+    redirect("/dashboard");
+  }
 
   const [tpls, deps, lvls, positions, cats, params, bnds, emps, periods, masterParams, appraisalCounts, pitList, deptMappings, allJobCategories, allJobPositionMappings] =
     await Promise.all([

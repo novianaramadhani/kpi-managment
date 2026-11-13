@@ -11,6 +11,7 @@ import {
 import { asc, desc, eq, sql } from "drizzle-orm";
 import { Card, PageHeader } from "@/components/ui";
 import { getCurrentUser } from "@/lib/auth";
+import { hasUserPermission } from "@/lib/rbac-catalog";
 import { DashboardKpiClient } from "@/components/dashboard-kpi-client";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +33,7 @@ export default async function DashboardPage() {
         name: employees.name,
         departmentId: employees.departmentId,
         jobLevelId: employees.jobLevelId,
+        operatingUnit: employees.operatingUnit,
         isActive: employees.isActive,
       })
       .from(employees)
@@ -48,6 +50,7 @@ export default async function DashboardPage() {
         isEligible: appraisals.isEligible,
         empName: employees.name,
         nik: employees.nik,
+        operatingUnit: employees.operatingUnit,
         deptName: departments.name,
         deptId: departments.id,
         updatedAt: appraisals.updatedAt,
@@ -112,10 +115,19 @@ export default async function DashboardPage() {
     rec[row.month] = scoreNum;
   }
 
-  const allAppraisals = rawAppraisals.map((a) => ({
-    ...a,
-    monthlyScores: monthlyMap.get(a.id) ?? null,
-  }));
+  const canViewAllOu = hasUserPermission(currentUser, "ou.view_all");
+  const userOu = (currentUser?.operatingUnit || "HO").toUpperCase();
+
+  const filteredEmps = canViewAllOu
+    ? emps
+    : emps.filter((e) => (e.operatingUnit || "HO").toUpperCase() === userOu);
+
+  const allAppraisals = rawAppraisals
+    .filter((a) => (canViewAllOu ? true : (a.operatingUnit || "HO").toUpperCase() === userOu))
+    .map((a) => ({
+      ...a,
+      monthlyScores: monthlyMap.get(a.id) ?? null,
+    }));
 
   return (
     <DashboardKpiClient
@@ -123,7 +135,7 @@ export default async function DashboardPage() {
       activePeriod={activePeriod}
       periods={periods}
       departments={deps}
-      allEmployees={emps}
+      allEmployees={filteredEmps}
       allAppraisals={allAppraisals}
     />
   );

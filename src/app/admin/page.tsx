@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
+import { hasUserPermission } from "@/lib/rbac-catalog";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +10,17 @@ export default async function AdminMenuPage() {
 
   if (!currentUser) {
     redirect("/login");
+  }
+
+  const canAccess =
+    currentUser.role === "ADMIN" ||
+    currentUser.role === "HR" ||
+    currentUser.isCustomRole ||
+    hasUserPermission(currentUser, "ou.view_all") ||
+    hasUserPermission(currentUser, "master.employee.view");
+
+  if (!canAccess) {
+    redirect("/dashboard");
   }
 
   const modules = [
@@ -71,17 +83,6 @@ export default async function AdminMenuPage() {
         </svg>
       ),
       iconBg: "bg-purple-50 text-purple-600",
-    },
-    {
-      title: "Approvals",
-      subtitle: "Manage pending reviews & final approvals",
-      href: "/review",
-      icon: (
-        <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-        </svg>
-      ),
-      iconBg: "bg-amber-50 text-amber-600",
     },
     {
       title: "Input KPI",

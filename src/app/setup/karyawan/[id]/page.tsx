@@ -16,6 +16,7 @@ import { notFound, redirect } from "next/navigation";
 import { upsertEmployee } from "@/lib/actions";
 import { resetEmployeePasswordAction, getCurrentUser } from "@/lib/auth";
 import { hasUserPermission } from "@/lib/rbac-catalog";
+import { getSitesAction } from "@/lib/site-actions";
 import { EmployeeDetailClient, UnifiedLogItem } from "./employee-detail-client";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +24,15 @@ export const dynamic = "force-dynamic";
 export default async function EmployeeDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const currentUser = await getCurrentUser();
   if (!currentUser) redirect("/login");
-  if (currentUser.role !== "ADMIN" && currentUser.role !== "HR") {
+  const canAccessEmployee =
+    currentUser.role === "ADMIN" ||
+    currentUser.role === "HR" ||
+    currentUser.isCustomRole ||
+    hasUserPermission(currentUser, "ou.view_all") ||
+    hasUserPermission(currentUser, "master.employee.view") ||
+    hasUserPermission(currentUser, "master.employee.edit");
+
+  if (!canAccessEmployee) {
     redirect("/dashboard");
   }
 
@@ -34,13 +43,14 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
     notFound();
   }
 
-  const [rawEmp, deps, lvls, positions, pitList, mappingsList] = await Promise.all([
+  const [rawEmp, deps, lvls, positions, pitList, mappingsList, siteList] = await Promise.all([
     db.select().from(employees).where(eq(employees.id, empId)).limit(1).then((res) => res[0]),
     db.select().from(departments).orderBy(asc(departments.code)),
     db.select().from(jobLevels).orderBy(asc(jobLevels.rank)),
     db.select().from(jobPositions).orderBy(asc(jobPositions.name)),
     db.select().from(pits).where(eq(pits.isActive, true)).orderBy(asc(pits.name)),
     db.select().from(departmentMappings),
+    getSitesAction(),
   ]);
 
   if (!rawEmp) {
@@ -262,6 +272,7 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
         mappings={mappingsList}
         permission={permission}
         auditLogs={unifiedLogs}
+        operatingUnits={siteList}
         canEditNik={canEditNik}
         upsertAction={handleUpsertEmployee}
         resetPasswordAction={resetEmployeePasswordAction}
