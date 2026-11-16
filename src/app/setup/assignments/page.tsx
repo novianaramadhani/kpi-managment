@@ -176,6 +176,41 @@ export default async function AssignmentsPage({
         })}
       </div>
 
+      {/* Banner Integrasi Staging Approval */}
+      <div className="rounded-xl border border-sky-200 bg-sky-50/80 p-4 shadow-2xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-700">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div>
+              <h4 className="text-xs font-bold text-sky-950">
+                Sistem Penilaian Terintegrasi dengan Staging Approval & Hirarki
+              </h4>
+              <p className="mt-0.5 text-[11px] text-sky-800 leading-relaxed">
+                Penilai otomatis mengikuti Atasan Langsung (Hirarki) dan alur persetujuan bertahap di Staging Approval. Penilaian dilakukan pada 1 formulir utuh tanpa pemecahan per parameter.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Link
+              href="/setup/access?tab=staging-approval"
+              className="inline-flex items-center gap-1 rounded-lg border border-sky-300 bg-white px-3 py-1.5 text-xs font-semibold text-sky-800 shadow-2xs hover:bg-sky-50 transition"
+            >
+              <span>Atur Staging Approval →</span>
+            </Link>
+            <Link
+              href="/setup/access?tab=approval"
+              className="inline-flex items-center gap-1 rounded-lg border border-sky-300 bg-white px-3 py-1.5 text-xs font-semibold text-sky-800 shadow-2xs hover:bg-sky-50 transition"
+            >
+              <span>Hirarki Penilai →</span>
+            </Link>
+          </div>
+        </div>
+      </div>
+
       {/* Tab 1: Penugasan Asesor KPI (Berdasarkan Daftar Template yang Sudah Ada) */}
       {activeTab === "asesor" && (
         <AssessorMatrixManager

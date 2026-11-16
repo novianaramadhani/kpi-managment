@@ -11,8 +11,8 @@ interface PortalPageClientProps {
     name: string;
     evaluationDate: string;
   } | null;
-  empCount: number;
-  depCount: number;
+  empCount?: number;
+  depCount?: number;
 }
 
 export function PortalPageClient({
@@ -158,26 +158,30 @@ export function PortalPageClient({
       {/* Top Navigation Bar (Clean Light Theme) */}
       <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/90 backdrop-blur-md">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3.5">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-sky-400 to-blue-500 font-black text-white text-xs shadow-sm shadow-sky-500/20">
-              KPI
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-sky-500 via-blue-600 to-indigo-600 font-black text-white text-xs shadow-sm shadow-blue-500/20">
+              GPE
             </div>
             <div>
-              <span className="font-black tracking-wider text-slate-900 text-sm block leading-none">KPI SYSTEM</span>
-              <span className="block text-[10px] text-sky-600 font-bold uppercase tracking-wider mt-0.5">Performance Management</span>
+              <span className="font-black tracking-wider text-slate-900 text-sm block leading-none">
+                PT GRAHA PRIMA ENERGY
+              </span>
+              <span className="block text-[10px] text-sky-600 font-bold uppercase tracking-wider mt-0.5">
+                Performance Management System
+              </span>
             </div>
           </div>
 
           <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-slate-600">
-            <a href="#fitur" className="hover:text-sky-600 transition">Fitur Utama</a>
-            <a href="#alur" className="hover:text-sky-600 transition">Alur Approval</a>
-            <a href="#sites" className="hover:text-sky-600 transition">Operating Units</a>
+            <a href="#tentang-gpe" className="hover:text-sky-600 transition">Tentang GPE</a>
+            <a href="#pilar-kinerja" className="hover:text-sky-600 transition">Pilar Kinerja</a>
+            <a href="#keunggulan" className="hover:text-sky-600 transition">Keunggulan Sistem</a>
           </nav>
         </div>
       </header>
 
-      {/* Hero Section (Soft Light Blue Concept) */}
-      <section className="relative overflow-hidden bg-gradient-to-b from-sky-50/60 via-white to-slate-50 pt-16 pb-20 md:pt-24 md:pb-28">
+      {/* Hero Section (Clean Corporate Concept - PT Graha Prima Energy) */}
+      <section className="relative overflow-hidden bg-gradient-to-b from-sky-50/60 via-white to-slate-50 pt-16 pb-20 md:pt-24 md:pb-24">
         {/* Soft Ambient Glow */}
         <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[650px] h-[350px] bg-sky-200/30 blur-[120px] rounded-full pointer-events-none" />
 
@@ -188,19 +192,19 @@ export function PortalPageClient({
               <span className="flex h-2 w-2 rounded-full bg-sky-500 animate-pulse" />
               <span>Periode Berjalan: <b>{activePeriod.name}</b></span>
               <span className="text-sky-300">·</span>
-              <span className="text-slate-500">Cut-off: {activePeriod.evaluationDate}</span>
+              <span className="text-slate-500">PT Graha Prima Energy</span>
             </div>
           )}
 
           <h1 className="text-4xl sm:text-5xl md:text-6xl font-black tracking-tight text-slate-900 leading-tight">
-            Sistem Evaluasi Kinerja &{" "}
+            Sistem Manajemen Kinerja &{" "}
             <span className="bg-gradient-to-r from-sky-500 via-sky-600 to-blue-600 bg-clip-text text-transparent">
               KPI Karyawan Terpadu
             </span>
           </h1>
 
-          <p className="mt-6 text-base sm:text-lg text-slate-600 max-w-2xl mx-auto leading-relaxed">
-            Platform evaluasi kinerja karyawan untuk penetapan target tahunan, input realisasi bulanan, auto-fill bukti Excel, dan alur persetujuan bertingkat yang transparan per departemen.
+          <p className="mt-6 text-base sm:text-lg text-slate-600 max-w-3xl mx-auto leading-relaxed">
+            Platform evaluasi target kinerja dan pencapaian indikator KPI karyawan <strong>PT Graha Prima Energy</strong> yang objektif, transparan, dan terukur demi mendorong keunggulan operasional, keselamatan kerja (HSE), dan pertumbuhan berkelanjutan.
           </p>
 
           {/* Action CTA Buttons */}
@@ -208,65 +212,199 @@ export function PortalPageClient({
             <button
               type="button"
               onClick={handleOpenLogin}
-              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-sky-500 via-sky-600 to-blue-600 hover:from-sky-600 hover:to-blue-700 px-7 py-3.5 text-sm font-bold text-white shadow-md shadow-sky-600/20 transition transform hover:-translate-y-0.5 cursor-pointer active:scale-98"
+              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-sky-500 via-sky-600 to-blue-600 hover:from-sky-600 hover:to-blue-700 px-8 py-3.5 text-sm font-bold text-white shadow-md shadow-sky-600/25 transition transform hover:-translate-y-0.5 cursor-pointer active:scale-98"
             >
-              <span>Login</span>
+              <span>Login Portal KPI</span>
               <span>→</span>
             </button>
           </div>
+        </div>
+      </section>
 
-          {/* Realtime Stats Bar (Light Cards) */}
-          <div className="mt-16 grid grid-cols-2 gap-4 sm:grid-cols-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-md">
-            <div className="p-2">
-              <div className="text-3xl font-black text-slate-900">{empCount}</div>
-              <div className="text-xs text-slate-500 mt-1 font-medium">Karyawan Terdaftar</div>
+      {/* Profil Perusahaan & Nilai Budaya (Tentang PT Graha Prima Energy) */}
+      <section id="tentang-gpe" className="py-20 bg-white border-y border-slate-200">
+        <div className="mx-auto max-w-7xl px-6">
+          <div className="text-center max-w-3xl mx-auto mb-16">
+            <span className="text-xs font-bold uppercase tracking-wider text-sky-700 bg-sky-50 px-3 py-1 rounded-full border border-sky-200">
+              Tentang PT Graha Prima Energy
+            </span>
+            <h2 className="mt-3 text-3xl font-black text-slate-900">
+              Komitmen Keunggulan Operasional & Manajemen Berkelanjutan
+            </h2>
+            <p className="mt-3 text-sm text-slate-600 leading-relaxed">
+              Sebagai mitra strategis di sektor jasa pertambangan dan penyedia energi terkemuka, <strong>PT Graha Prima Energy (GPE)</strong> berdedikasi menciptakan nilai tambah berkesinambungan melalui profesionalisme kerja, pemanfaatan armada modern, dan kepatuhan penuh terhadap standar keselamatan kerja serta lingkungan.
+            </p>
+          </div>
+
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            {/* Core Value 1: Safety & Health */}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-6 shadow-xs hover:border-sky-300 hover:bg-white hover:shadow-md transition">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 font-bold mb-4">
+                <svg className="w-6 h-6 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+              </div>
+              <h3 className="text-base font-bold text-slate-900">Safety & K3L Utama</h3>
+              <p className="mt-2 text-xs text-slate-600 leading-relaxed">
+                Keselamatan dan kesehatan kerja tanpa kompromi demi tercapainya target Zero Incident dan kelestarian lingkungan kerja tambang.
+              </p>
             </div>
-            <div className="p-2 border-l border-slate-200">
-              <div className="text-3xl font-black text-slate-900">{depCount}</div>
-              <div className="text-xs text-slate-500 mt-1 font-medium">Departemen Operasional</div>
+
+            {/* Core Value 2: Integrity & Accountability */}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-6 shadow-xs hover:border-sky-300 hover:bg-white hover:shadow-md transition">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 text-blue-600 font-bold mb-4">
+                <svg className="w-6 h-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+              <h3 className="text-base font-bold text-slate-900">Integritas & Akuntabilitas</h3>
+              <p className="mt-2 text-xs text-slate-600 leading-relaxed">
+                Menjunjung tinggi transparansi, kejujuran data, dan tanggung jawab profesional dalam setiap pencapaian kinerja individu maupun tim.
+              </p>
             </div>
-            <div className="p-2 border-l border-slate-200">
-              <div className="text-3xl font-black text-blue-700">3 Sites</div>
-              <div className="text-xs text-slate-500 mt-1 font-medium">GAM, AKP & Head Office</div>
+
+            {/* Core Value 3: Operational Excellence */}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-6 shadow-xs hover:border-sky-300 hover:bg-white hover:shadow-md transition">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-sky-50 text-sky-600 font-bold mb-4">
+                <svg className="w-6 h-6 text-sky-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              </div>
+              <h3 className="text-base font-bold text-slate-900">Keunggulan Operasional</h3>
+              <p className="mt-2 text-xs text-slate-600 leading-relaxed">
+                Eksekusi operasional yang presisi, efisiensi konsumsi bahan bakar, kesiapan alat optimal, dan ketepatan pemenuhan jadwal produksi.
+              </p>
             </div>
-            <div className="p-2 border-l border-slate-200">
-              <div className="text-3xl font-black text-sky-600">100%</div>
-              <div className="text-xs text-slate-500 mt-1 font-medium">Otomasi Scoring Matrix</div>
+
+            {/* Core Value 4: Continuous Improvement */}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-6 shadow-xs hover:border-sky-300 hover:bg-white hover:shadow-md transition">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-purple-50 text-purple-600 font-bold mb-4">
+                <svg className="w-6 h-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </div>
+              <h3 className="text-base font-bold text-slate-900">Inovasi Berkelanjutan</h3>
+              <p className="mt-2 text-xs text-slate-600 leading-relaxed">
+                Terus berkembang melalui digitalisasi proses evaluasi kinerja, peningkatan kompetensi talenta, dan perbaikan berkelanjutan.
+              </p>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Feature Highlights Section */}
-      <section id="fitur" className="py-20 bg-white border-y border-slate-200">
+      {/* Pilar Evaluasi Kinerja KPI GPE */}
+      <section id="pilar-kinerja" className="py-20 bg-slate-50">
         <div className="mx-auto max-w-7xl px-6">
-          <div className="text-center max-w-2xl mx-auto mb-16">
-            <span className="text-xs font-bold uppercase tracking-wider text-blue-700 bg-blue-50 px-3 py-1 rounded-full border border-blue-200">
-              Keunggulan Sistem
+          <div className="text-center max-w-3xl mx-auto mb-16">
+            <span className="text-xs font-bold uppercase tracking-wider text-blue-700 bg-blue-100 px-3 py-1 rounded-full">
+              Pilar Kinerja GPE
             </span>
             <h2 className="mt-3 text-3xl font-black text-slate-900">
-              Solusi Efisiensi Manajemen Kinerja Terintegrasi
+              Fokus Penilaian Kinerja Karyawan
             </h2>
             <p className="mt-3 text-sm text-slate-600">
-              Menggantikan form manual dengan alur digital berstandar korporasi, akurat, dan dapat diaudit setiap saat.
+              Kerangka evaluasi terstandarisasi yang dirancang untuk mengukur kontribusi nyata setiap karyawan terhadap target strategis perusahaan.
+            </p>
+          </div>
+
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            {/* Pilar 1: Operasional & Produksi */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs hover:border-sky-400 hover:shadow-lg transition">
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-xs font-bold uppercase tracking-wider text-sky-700 bg-sky-50 px-2.5 py-1 rounded-md border border-sky-200">
+                  Pilar 1
+                </span>
+                <span className="text-xs text-slate-400 font-medium">Core Operations</span>
+              </div>
+              <h3 className="text-base font-bold text-slate-900">
+                Operasional & Produksi
+              </h3>
+              <p className="mt-2 text-xs text-slate-600 leading-relaxed">
+                Pencapaian target fisik bulanan, kesiapan mekanis (mechanical availability), utilisasi armada, dan ketepatan alur kerja operasional.
+              </p>
+            </div>
+
+            {/* Pilar 2: HSE & Keselamatan Kerja */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs hover:border-emerald-400 hover:shadow-lg transition">
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-xs font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
+                  Pilar 2
+                </span>
+                <span className="text-xs text-slate-400 font-medium">Safety First</span>
+              </div>
+              <h3 className="text-base font-bold text-slate-900">
+                K3L & Keselamatan Kerja
+              </h3>
+              <p className="mt-2 text-xs text-slate-600 leading-relaxed">
+                Penerapan disiplin Golden Rules keselamatan tambang, kepatuhan inspeksi K3L, mitigasi risiko bahaya, dan kelestarian lingkungan.
+              </p>
+            </div>
+
+            {/* Pilar 3: Efisiensi Biaya */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs hover:border-blue-400 hover:shadow-lg transition">
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-xs font-bold uppercase tracking-wider text-blue-700 bg-blue-50 px-2.5 py-1 rounded-md border border-blue-200">
+                  Pilar 3
+                </span>
+                <span className="text-xs text-slate-400 font-medium">Cost Control</span>
+              </div>
+              <h3 className="text-base font-bold text-slate-900">
+                Efisiensi & Pengendalian Biaya
+              </h3>
+              <p className="mt-2 text-xs text-slate-600 leading-relaxed">
+                Optimasi penggunaan bahan bakar (fuel ratio), pemeliharaan suku cadang efisien, serta kepatuhan anggaran proyek secara ketat.
+              </p>
+            </div>
+
+            {/* Pilar 4: Disiplin & SDM */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs hover:border-purple-400 hover:shadow-lg transition">
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-xs font-bold uppercase tracking-wider text-purple-700 bg-purple-50 px-2.5 py-1 rounded-md border border-purple-200">
+                  Pilar 4
+                </span>
+                <span className="text-xs text-slate-400 font-medium">People & Culture</span>
+              </div>
+              <h3 className="text-base font-bold text-slate-900">
+                Disiplin & Pengembangan SDM
+              </h3>
+              <p className="mt-2 text-xs text-slate-600 leading-relaxed">
+                Tingkat kehadiran, ketepatan waktu kerja, kerja sama lintas fungsi, kepemimpinan tim, dan komitmen pengembangan kapabilitas diri.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Keunggulan Sistem KPI Section */}
+      <section id="keunggulan" className="py-20 bg-white border-t border-slate-200">
+        <div className="mx-auto max-w-7xl px-6">
+          <div className="text-center max-w-2xl mx-auto mb-16">
+            <span className="text-xs font-bold uppercase tracking-wider text-sky-700 bg-sky-50 px-3 py-1 rounded-full border border-sky-200">
+              Keunggulan Sistem Digital
+            </span>
+            <h2 className="mt-3 text-3xl font-black text-slate-900">
+              Evaluasi Kinerja yang Akurat & Terpercaya
+            </h2>
+            <p className="mt-3 text-sm text-slate-600">
+              Menggantikan pencatatan manual dengan platform digital modern yang transparan, presisi, dan dapat dipertanggungjawabkan.
             </p>
           </div>
 
           <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
             <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-6 shadow-xs hover:border-sky-300 hover:shadow-md transition">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-sky-50 text-sky-600 text-2xl font-bold mb-4">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-sky-50 text-sky-600 font-bold mb-4">
                 <svg className="w-6 h-6 text-sky-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                 </svg>
               </div>
               <h3 className="text-base font-bold text-slate-900">Input 12 Bulan Fleksibel</h3>
               <p className="mt-2 text-xs text-slate-600 leading-relaxed">
-                Pengisian target tahunan dan realisasi bulanan Jan–Des dengan perhitungan otomatis (SUM, AVG, atau LAST_VALUE) sesuai karakteristik KPI.
+                Pencatatan target tahunan dan realisasi bulanan Jan–Des dengan kalkulasi otomatis (SUM, AVG, LAST_VALUE) sesuai karakteristik indikator KPI.
               </p>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-6 shadow-xs hover:border-emerald-300 hover:shadow-md transition">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-100 text-blue-800 text-2xl font-bold mb-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-6 shadow-xs hover:border-blue-300 hover:shadow-md transition">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50 text-blue-600 font-bold mb-4">
                 <svg className="w-6 h-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
@@ -277,95 +415,16 @@ export function PortalPageClient({
               </p>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-6 shadow-xs hover:border-emerald-300 hover:shadow-md transition">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-purple-100 text-purple-800 text-2xl font-bold mb-4">
-                <svg className="w-6 h-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-6 shadow-xs hover:border-indigo-300 hover:shadow-md transition">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 font-bold mb-4">
+                <svg className="w-6 h-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </div>
-              <h3 className="text-base font-bold text-slate-900">Alur Approval Bertingkat</h3>
+              <h3 className="text-base font-bold text-slate-900">Audit & Penilaian Terstandarisasi</h3>
               <p className="mt-2 text-xs text-slate-600 leading-relaxed">
-                Verifikasi berjenjang dari Penilai (Supervisor) ke Head Department dengan validasi kelengkapan data sebelum finalisasi hasil.
+                Penetapan skor akhir berbasis matriks baku korporat yang terekam dalam log audit transparan demi keadilan dan apresiasi kinerja karyawan.
               </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Operating Units Section */}
-      <section id="sites" className="py-20 bg-slate-50">
-        <div className="mx-auto max-w-7xl px-6">
-          <div className="text-center max-w-2xl mx-auto mb-16">
-            <span className="text-xs font-bold uppercase tracking-wider text-blue-700 bg-blue-100 px-3 py-1 rounded-full">
-              Cakupan Operasional
-            </span>
-            <h2 className="mt-3 text-3xl font-black text-slate-900">
-              Unit Operasional & Wilayah Kerja
-            </h2>
-            <p className="mt-3 text-sm text-slate-600">
-              Mendukung klasifikasi form KPI khusus sesuai karakteristik area operasional lapangan dan kantor pusat.
-            </p>
-          </div>
-
-          <div className="grid gap-6 md:grid-cols-3">
-            {/* Site GAM */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs hover:border-emerald-500 hover:shadow-lg transition group">
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
-                  Site GAM
-                </span>
-                <span className="text-xs text-slate-500">Operasional Tambang Batubara</span>
-              </div>
-              <h3 className="text-lg font-bold text-slate-900 group-hover:text-emerald-700 transition">
-                PT Ganda Alam Makmur (GAM)
-              </h3>
-              <p className="mt-2 text-xs text-slate-600 leading-relaxed">
-                Perusahaan pertambangan batu bara yang berlokasi di Kalimantan Timur (afiliasi LX International Corp). Fokus pada keselamatan kerja (HSE), efisiensi produksi batubara, dan pemeliharaan alat berat operasional.
-              </p>
-              <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold">
-                <span>Departemen Terkait</span>
-                <span className="text-slate-800">Production, HSE, Eng</span>
-              </div>
-            </div>
-
-            {/* Site AKP */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs hover:border-blue-500 hover:shadow-lg transition group">
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-xs font-bold uppercase tracking-wider text-blue-700 bg-blue-50 px-2.5 py-1 rounded-md border border-blue-200">
-                  Site AKP
-                </span>
-                <span className="text-xs text-slate-500">Operasional Tambang Nikel</span>
-              </div>
-              <h3 className="text-lg font-bold text-slate-900 group-hover:text-blue-700 transition">
-                PT Adhi Kartiko Pratama Tbk (AKP)
-              </h3>
-              <p className="mt-2 text-xs text-slate-600 leading-relaxed">
-                Perusahaan pertambangan nikel di Konawe Utara, Sulawesi Tenggara. Fokus pada eksplorasi & penambangan bijih nikel laterit, efisiensi rantai pasok, manajemen pelabuhan (port/jetty), barging, dan ketepatan pengiriman.
-              </p>
-              <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold">
-                <span>Departemen Terkait</span>
-                <span className="text-slate-800">Mining Ops, Port, Supply Chain</span>
-              </div>
-            </div>
-
-            {/* Head Office */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs hover:border-purple-500 hover:shadow-lg transition group">
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-xs font-bold uppercase tracking-wider text-purple-700 bg-purple-50 px-2.5 py-1 rounded-md border border-purple-200">
-                  Head Office (HO)
-                </span>
-                <span className="text-xs text-slate-500">Kantor Pusat (Samarinda)</span>
-              </div>
-              <h3 className="text-lg font-bold text-slate-900 group-hover:text-purple-700 transition">
-                Head Office Samarinda
-              </h3>
-              <p className="mt-2 text-xs text-slate-600 leading-relaxed">
-                Pusat manajemen dan koordinasi korporasi di Samarinda, Kalimantan Timur. Fokus pada perencanaan strategis, keuangan & akuntansi, SDM (HRGA), TI, legal, dan tata kelola operasional terpadu.
-              </p>
-              <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold">
-                <span>Departemen Terkait</span>
-                <span className="text-slate-800">HRGA, Finance, IT, Admin</span>
-              </div>
             </div>
           </div>
         </div>
@@ -375,12 +434,14 @@ export function PortalPageClient({
       <footer className="border-t border-slate-200 bg-white py-8 text-xs text-slate-500">
         <div className="mx-auto max-w-7xl px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-500 text-white font-black text-xs">
-              KPI
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-tr from-sky-500 via-blue-600 to-indigo-600 text-white font-black text-xs">
+              GPE
             </div>
-            <span className="font-bold text-slate-800">KPI Management System</span>
+            <span className="font-bold text-slate-800">PT GRAHA PRIMA ENERGY</span>
+            <span className="text-slate-300">·</span>
+            <span>Performance Management System</span>
           </div>
-          <div>© {new Date().getFullYear()} KPI SYSTEM · Hak Cipta Dilindungi.</div>
+          <div>© {new Date().getFullYear()} PT Graha Prima Energy (GPE). Seluruh Hak Cipta Dilindungi.</div>
         </div>
       </footer>
 

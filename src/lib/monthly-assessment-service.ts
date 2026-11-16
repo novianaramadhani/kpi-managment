@@ -529,6 +529,64 @@ export async function getMonthlyAssessmentDetail(params: {
 
   const isAppraisalLockedFinal = apprRow.appraisal.status === "FINAL";
 
+  // Persiapan Resolusi Penilai Form KPI berdasarkan Staging Approval & Hirarki
+  const todayDateStr = new Date().toISOString().slice(0, 10);
+  const currentUserDelegations = currentUser
+    ? await db
+        .select({ delegatorId: kpiAssessorDelegations.delegatorEmployeeId })
+        .from(kpiAssessorDelegations)
+        .where(
+          and(
+            eq(kpiAssessorDelegations.periodId, period.id),
+            eq(kpiAssessorDelegations.delegateeEmployeeId, currentUser.id),
+            eq(kpiAssessorDelegations.isActive, true),
+            sql`${kpiAssessorDelegations.startDate} <= ${todayDateStr}`,
+            sql`${kpiAssessorDelegations.endDate} >= ${todayDateStr}`
+          )
+        )
+    : [];
+  const delegatorIds = currentUserDelegations.map((d) => d.delegatorId);
+
+  const primaryPenilaiOfficials = workflowResolved.steps[0]?.resolvedOfficials || [];
+  const isGlobalAdminOrHr = currentUser?.role === "ADMIN" || currentUser?.role === "HR";
+  const isTargetSelf = currentUser?.id === apprRow.employee.id;
+  const isDirectPenilai = Boolean(
+    currentUser &&
+      (primaryPenilaiOfficials.some((off) => off.id === currentUser.id) ||
+        apprRow.employee.appraiserId === currentUser.id ||
+        apprRow.appraisal.appraiserId === currentUser.id)
+  );
+  const isDelegatedPenilai = Boolean(
+    currentUser &&
+      delegatorIds.some(
+        (dId) =>
+          primaryPenilaiOfficials.some((off) => off.id === dId) ||
+          apprRow.employee.appraiserId === dId
+      )
+  );
+  const isAuthorizedPenilai = (isDirectPenilai || isDelegatedPenilai) && !isTargetSelf;
+
+  const formAssessors: AssessorInfo[] =
+    primaryPenilaiOfficials.length > 0
+      ? primaryPenilaiOfficials.map((off) => ({
+          id: off.id,
+          nik: off.nik,
+          name: off.name,
+          jobPosition: off.jobPosition,
+          departmentName: off.departmentName || "-",
+        }))
+      : apprRow.employee.appraiserId
+      ? [
+          {
+            id: apprRow.employee.appraiserId,
+            nik: "-",
+            name: "Atasan Langsung",
+            jobPosition: "Atasan Langsung",
+            departmentName: "-",
+          },
+        ]
+      : [];
+
   for (const row of items) {
     const it = row.item;
     const catId = row.category?.id ?? 0;
@@ -827,62 +885,39 @@ export async function getMonthlyAssessmentDetail(params: {
       unit: indUnit,
     });
 
-    // Resolusi asesor yang sah untuk parameter ini
-    let isEditable = true;
-    let assignedAssessors: AssessorInfo[] = [];
-    let assessorResolutionSource: "NIK_OVERRIDE" | "DEPT_ASSIGNMENT" | "GLOBAL_ASSIGNMENT" | "DEFAULT_HIERARCHY" = "DEFAULT_HIERARCHY";
-    let isDelegatedAccess = false;
+    // Hak edit nilai di tingkat form berdasarkan Staging Approval & Hirarki
+    let isEditable = false;
+    const apprStatus = String(apprRow.appraisal.status);
 
-    if (catId) {
-      const authRes = await getAuthorizedAssessorIds({
-        periodId: period.id,
-        categoryId: catId,
-        targetEmployeeId: apprRow.employee.id,
-        targetDepartmentId: apprRow.employee.departmentId,
-        parameterPicRole: row.parameter?.picRole,
-        employeeAppraiserId: apprRow.employee.appraiserId,
-        employeeHeadDeptId: apprRow.employee.headDeptId,
-        employeeManagerId: apprRow.employee.managerId,
-      });
-
-      assignedAssessors = authRes.assessors;
-      assessorResolutionSource = authRes.source;
-
-      if (currentUser) {
-        const isAssessor = authRes.effectiveAssessorIds.includes(currentUser.id);
-        isDelegatedAccess = authRes.delegatedAssessorIds.includes(currentUser.id);
-        const apprStatus = String(apprRow.appraisal.status);
-
-        if (
-          apprStatus === "FINAL" ||
-          apprStatus === "REVIEWED" ||
-          apprStatus.startsWith("PENDING_")
-        ) {
-          // Terkunci di tahap Review/Final kecuali tahap workflow aktif memberi hak koreksi nilai (canEditScore)
-          isEditable = Boolean(workflowResolved.canCurrentUserEditScore && apprStatus !== "FINAL");
-        } else if (apprStatus.startsWith("REVISED_")) {
-          // Dalam Revisi: parameter yang ditandai revisi dapat diedit oleh penilai, atau dikoreksi oleh reviewer berwenang
-          const isFlagged = it.isRevisionFlagged ?? false;
-          isEditable =
-            Boolean(workflowResolved.canCurrentUserEditScore && currentStage !== "PENILAI") ||
-            ((currentUser.role === "ADMIN" || isAssessor) && (isFlagged || currentStage !== "PENILAI"));
+    if (isTargetSelf) {
+      isEditable = false;
+    } else if (apprStatus === "FINAL") {
+      isEditable = false;
+    } else if (apprStatus.startsWith("PENDING_") || apprStatus === "REVIEWED") {
+      // Di tahap review/approval, hanya bisa diedit jika workflow staging mengizinkan canEditScore
+      isEditable = Boolean(workflowResolved.canCurrentUserEditScore);
+    } else if (apprStatus.startsWith("REVISED_")) {
+      // Dalam revisi: penilai atau admin/reviewer berwenang dapat memperbaiki nilai
+      isEditable = isGlobalAdminOrHr || isAuthorizedPenilai || Boolean(workflowResolved.canCurrentUserEditScore);
+    } else {
+      // Draft / Not Started
+      if (isGlobalAdminOrHr) {
+        isEditable = true;
+      } else if (isAuthorizedPenilai) {
+        // Jika penilai ini sudah kirim untuk bulan ini, kunci
+        if (curMonthVal?.status === "SUBMITTED" || curMonthVal?.status === "APPROVED") {
+          isEditable = false;
         } else {
-          // In Draft: Only authorized assessor (or admin) can edit
-          if (currentUser.role === "ADMIN") {
-            isEditable = true;
-          } else if (currentUser.id === apprRow.employee.id) {
-            isEditable = false;
-          } else {
-            // Kunci jika penilai ini sudah mengirimkan penilaian untuk bulan ini
-            if (curMonthVal?.status === "SUBMITTED" || curMonthVal?.status === "APPROVED") {
-              isEditable = false;
-            } else {
-              isEditable = isAssessor;
-            }
-          }
+          isEditable = true;
         }
+      } else {
+        isEditable = false;
       }
     }
+
+    const assignedAssessors: AssessorInfo[] = formAssessors;
+    const assessorResolutionSource = "DEFAULT_HIERARCHY" as const;
+    const isDelegatedAccess = isDelegatedPenilai;
 
     categoryMap.get(catId)!.indicators.push({
       appraisalItemId: it.id,
@@ -1027,85 +1062,34 @@ export async function getMonthlyAssessmentDetail(params: {
     overallMonthlyStatus = "DRAFT";
   }
 
-  // Hitung progres per penilai unik untuk penilaian paralel
-  const assessorMap = new Map<number, {
-    assessorId: number;
-    assessorName: string;
-    assessorNik: string;
-    role: string;
-    categoryNames: Set<string>;
-    totalIndicators: number;
-    filledIndicators: number;
-    submittedIndicators: number;
-  }>();
+  const isFormSubmitted = isDetailFinal || hasSubmitted;
+  const isMyAssigned = Boolean((isGlobalAdminOrHr || isAuthorizedPenilai) && !isTargetSelf);
+  const myTotalIndicators = totalCount;
+  const myFilledIndicators = totalFilled;
+  const mySubmittedIndicators = isFormSubmitted ? totalCount : 0;
+  const myHasRevisionPending = Boolean(apprRow.appraisal.rejectionReason) || Boolean(items.some((it) => it.item.isRevisionFlagged));
 
-  let myTotalIndicators = 0;
-  let myFilledIndicators = 0;
-  let mySubmittedIndicators = 0;
-  let myHasRevisionPending = false;
-  let isMyAssigned = false;
+  const allCategoryNames = Array.from(categoryMap.values()).map((c) => c.categoryName);
 
-  for (const cat of categoriesList) {
-    for (const ind of cat.indicators) {
-      const isFilled = ind.actualValue !== null && ind.actualValue !== undefined;
-      const isSub = ind.monthlyStatus === "SUBMITTED" || ind.monthlyStatus === "APPROVED";
-
-      if (currentUser) {
-        const isAssignedToMe = currentUser.role === "ADMIN" || ind.assignedAssessors?.some((a) => a.id === currentUser.id);
-        if (isAssignedToMe) {
-          isMyAssigned = true;
-          myTotalIndicators++;
-          if (isFilled) myFilledIndicators++;
-          if (isSub) mySubmittedIndicators++;
-          if (ind.isRevisionFlagged) myHasRevisionPending = true;
-        }
-      }
-
-      if (ind.assignedAssessors && ind.assignedAssessors.length > 0) {
-        for (const a of ind.assignedAssessors) {
-          if (!assessorMap.has(a.id)) {
-            assessorMap.set(a.id, {
-              assessorId: a.id,
-              assessorName: a.name,
-              assessorNik: a.nik,
-              role: a.jobPosition || "Penilai",
-              categoryNames: new Set([cat.categoryName]),
-              totalIndicators: 1,
-              filledIndicators: isFilled ? 1 : 0,
-              submittedIndicators: isSub ? 1 : 0,
-            });
-          } else {
-            const entry = assessorMap.get(a.id)!;
-            entry.categoryNames.add(cat.categoryName);
-            entry.totalIndicators++;
-            if (isFilled) entry.filledIndicators++;
-            if (isSub) entry.submittedIndicators++;
-          }
-        }
-      }
-    }
-  }
-
-  const assessorProgress = Array.from(assessorMap.values()).map((e) => ({
-    assessorId: e.assessorId,
-    assessorName: e.assessorName,
-    assessorNik: e.assessorNik,
-    role: e.role,
-    categoryNames: Array.from(e.categoryNames),
-    totalIndicators: e.totalIndicators,
-    filledIndicators: e.filledIndicators,
-    submittedIndicators: e.submittedIndicators,
-    isSubmitted: e.totalIndicators > 0 && e.submittedIndicators === e.totalIndicators,
+  const assessorProgress = formAssessors.map((e) => ({
+    assessorId: e.id,
+    assessorName: e.name,
+    assessorNik: e.nik,
+    role: e.jobPosition || "Penilai",
+    categoryNames: allCategoryNames,
+    totalIndicators: totalCount,
+    filledIndicators: totalFilled,
+    submittedIndicators: isFormSubmitted ? totalCount : 0,
+    isSubmitted: totalCount > 0 && isFormSubmitted,
   }));
 
-  const myAssessorEntry = currentUser ? assessorMap.get(currentUser.id) : undefined;
   const myAssessmentStatus = currentUser ? {
     isAssigned: isMyAssigned,
-    assignedCategoryNames: myAssessorEntry ? Array.from(myAssessorEntry.categoryNames) : [],
+    assignedCategoryNames: allCategoryNames,
     totalIndicators: myTotalIndicators,
     filledIndicators: myFilledIndicators,
     submittedIndicators: mySubmittedIndicators,
-    isSubmitted: myTotalIndicators > 0 && mySubmittedIndicators === myTotalIndicators,
+    isSubmitted: totalCount > 0 && isFormSubmitted,
     hasRevisionPending: myHasRevisionPending,
   } : undefined;
 
@@ -2046,40 +2030,71 @@ export async function submitMyAssessorAssessment(params: {
     return { success: false, isAllSubmitted: false, submittedCount: 0, error: "Tidak ada indikator pada dokumen ini." };
   }
 
-  // 3. Saring indikator yang menjadi kewenangan penilai saat ini
-  const myItems: typeof items = [];
+  // 3. Verifikasi Kewenangan Penilai Sesuai Hirarki / Staging Approval
+  const isGlobalAdminOrHr = actor.role === "ADMIN" || actor.role === "HR";
+  const isTargetSelf = actor.id === appr.employee.id;
 
-  for (const row of items) {
-    const catId = row.parameter?.categoryId || row.category?.id;
-    if (!catId) {
-      if (actor.role === "ADMIN") myItems.push(row);
-      continue;
-    }
-
-    const authRes = await getAuthorizedAssessorIds({
-      periodId: appr.appraisal.periodId,
-      categoryId: catId,
-      targetEmployeeId: appr.employee.id,
-      targetDepartmentId: appr.employee.departmentId,
-      parameterPicRole: row.parameter?.picRole,
-      employeeAppraiserId: appr.employee.appraiserId,
-      employeeHeadDeptId: appr.employee.headDeptId,
-      employeeManagerId: appr.employee.managerId,
-    });
-
-    if (actor.role === "ADMIN" || authRes.effectiveAssessorIds.includes(actor.id)) {
-      myItems.push(row);
-    }
-  }
-
-  if (myItems.length === 0) {
+  if (isTargetSelf) {
     return {
       success: false,
       isAllSubmitted: false,
       submittedCount: 0,
-      error: "Anda tidak memiliki tugas penilaian yang ditugaskan pada dokumen ini sesuai Master Template.",
+      error: "Karyawan tidak diperkenankan memberikan penilaian pada formulir KPI diri sendiri.",
     };
   }
+
+  let isAuthorized = isGlobalAdminOrHr;
+  if (!isAuthorized) {
+    if (appr.employee.appraiserId === actor.id || appr.appraisal.appraiserId === actor.id) {
+      isAuthorized = true;
+    } else {
+      const workflow = await resolveWorkflowForEmployee({
+        employeeId: appr.employee.id,
+        appraisalStatus: appr.appraisal.status,
+        currentStageKey: "PENILAI",
+        currentUser: actor,
+      });
+      const isWorkflowPenilai = Boolean(
+        workflow.steps[0]?.resolvedOfficials.some((off) => off.id === actor.id)
+      );
+      if (isWorkflowPenilai) {
+        isAuthorized = true;
+      } else {
+        const todayDateStr = new Date().toISOString().slice(0, 10);
+        const effectiveDelegations = await db
+          .select({ delegatorId: kpiAssessorDelegations.delegatorEmployeeId })
+          .from(kpiAssessorDelegations)
+          .where(
+            and(
+              eq(kpiAssessorDelegations.periodId, appr.appraisal.periodId),
+              eq(kpiAssessorDelegations.delegateeEmployeeId, actor.id),
+              eq(kpiAssessorDelegations.isActive, true),
+              sql`${kpiAssessorDelegations.startDate} <= ${todayDateStr}`,
+              sql`${kpiAssessorDelegations.endDate} >= ${todayDateStr}`
+            )
+          );
+        const delegatorIds = effectiveDelegations.map((d) => d.delegatorId);
+        if (
+          (appr.employee.appraiserId && delegatorIds.includes(appr.employee.appraiserId)) ||
+          (appr.appraisal.appraiserId && delegatorIds.includes(appr.appraisal.appraiserId)) ||
+          workflow.steps[0]?.resolvedOfficials.some((off) => delegatorIds.includes(off.id))
+        ) {
+          isAuthorized = true;
+        }
+      }
+    }
+  }
+
+  if (!isAuthorized) {
+    return {
+      success: false,
+      isAllSubmitted: false,
+      submittedCount: 0,
+      error: "Anda tidak memiliki kewenangan sebagai Penilai untuk dokumen evaluasi karyawan ini sesuai Hirarki Approval.",
+    };
+  }
+
+  const myItems: typeof items = items;
 
   // 4. Validasi Kelengkapan Nilai
   const myItemIds = myItems.map((m) => m.item.id);
@@ -2217,7 +2232,7 @@ export async function submitMyAssessorAssessment(params: {
     actorId: actor.id > 0 ? actor.id : null,
     actorName: actor.name,
     actorRole: actor.role,
-    notes: notes || `Penilai ${actor.name} menyerahkan penilaian untuk ${myItems.length} indikator tugasnya.`,
+    notes: notes || `Penilai ${actor.name} menyerahkan penilaian KPI karyawan untuk seluruh indikator formulir.`,
     createdAt: now,
   });
 

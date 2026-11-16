@@ -2332,25 +2332,30 @@ export function MonthlyAssessmentView({
     const empName = initialDetail.employee.name || currentEmp?.name || "Karyawan";
     const myStatus = initialDetail.myAssessmentStatus;
     const isRevision = Boolean(myStatus?.hasRevisionPending);
-    const catNames = myStatus?.assignedCategoryNames?.join(", ") || "parameter tugas Anda";
 
     const confirmRes = await Swal.fire({
-      title: isRevision ? "Kirim Ulang Revisi Saya?" : "Kirim Penilaian Saya?",
+      title: isRevision ? "Kirim Ulang Revisi Penilaian?" : "Kirim Formulir Penilaian KPI?",
       html: `
-        <div class="text-left text-xs text-slate-600 space-y-2">
-          <p>Anda akan mengirimkan hasil penilaian untuk <strong>${empName}</strong>.</p>
-          <div class="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
-            <span class="font-bold text-slate-800 block mb-1">Parameter Tugas Anda:</span>
-            <span class="text-slate-600">${catNames}</span>
+        <div class="text-left text-xs text-slate-600 space-y-2.5">
+          <p>Anda akan mengirimkan formulir evaluasi penilaian KPI untuk <strong>${empName}</strong> (${initialDetail?.employee.jobPosition || "-"}).</p>
+          <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+            <div class="flex items-center justify-between text-slate-700">
+              <span class="font-semibold">Departemen:</span>
+              <span>${initialDetail?.employee.departmentName || "-"}</span>
+            </div>
+            <div class="flex items-center justify-between text-slate-700">
+              <span class="font-semibold">Total Indikator:</span>
+              <span class="font-bold text-blue-600">${allIndicatorPoints.length} Indikator</span>
+            </div>
           </div>
           <p class="text-[11px] text-slate-500">
-            Setelah dikirim, nilai parameter tugas Anda akan dikunci. Pastikan seluruh indikator telah terisi dengan benar.
+            Setelah dikirim, nilai akan dikunci dan berkas diteruskan ke tahap persetujuan berikutnya sesuai alur Staging Approval.
           </p>
         </div>
       `,
       icon: "question",
       showCancelButton: true,
-      confirmButtonText: isRevision ? "Ya, Kirim Revisi" : "Ya, Kirim Penilaian Saya",
+      confirmButtonText: isRevision ? "Ya, Kirim Revisi" : "Ya, Kirim Penilaian",
       cancelButtonText: "Batal Periksa Kembali",
       confirmButtonColor: "#2563eb",
       cancelButtonColor: "#64748b",
@@ -3092,98 +3097,104 @@ export function MonthlyAssessmentView({
       {/* 2. EMPLOYEE & ASSESSMENT SUMMARY (HORIZONTAL)      */}
       {/* ================================================== */}
       <section className="mb-4 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-2xs">
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-12 gap-x-5 gap-y-3.5 items-start">
-          {/* 1. Nama Karyawan */}
-          <div className="min-w-0 col-span-2 sm:col-span-2 lg:col-span-2">
-            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              Nama Karyawan
-            </span>
-            <span
-              className="mt-1 block text-xs sm:text-sm font-bold text-slate-900 truncate"
-              title={initialDetail?.employee.name || currentEmp?.name || "-"}
-            >
-              {initialDetail?.employee.name || currentEmp?.name || "-"}
-            </span>
-          </div>
-
-          {/* 2. Departemen */}
-          <div className="min-w-0 col-span-2 sm:col-span-2 lg:col-span-2">
-            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              Departemen
-            </span>
-            <span
-              className="mt-1 block text-xs sm:text-sm font-semibold text-slate-700 truncate"
-              style={{ wordBreak: "keep-all", overflowWrap: "normal" }}
-              title={initialDetail?.employee.departmentName || currentEmp?.departmentName || "-"}
-            >
-              {initialDetail?.employee.departmentName || currentEmp?.departmentName || "-"}
-            </span>
-          </div>
-
-          {/* 3. Jabatan */}
-          <div className="min-w-0 col-span-2 sm:col-span-2 lg:col-span-2">
-            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              Jabatan
-            </span>
-            <span
-              className="mt-1 block text-xs sm:text-sm font-medium text-slate-700 leading-snug break-normal"
-              title={initialDetail?.employee.jobPosition || currentEmp?.jobPosition || "-"}
-            >
-              {initialDetail?.employee.jobPosition || currentEmp?.jobPosition || "-"}
-            </span>
-          </div>
-
-          {/* 4. Penilai */}
-          <div className="min-w-0 col-span-2 sm:col-span-2 lg:col-span-2">
-            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              Penilai
-            </span>
-            <span
-              className="mt-1 block text-xs sm:text-sm font-medium text-slate-700 truncate"
-              title={appraiserName}
-            >
-              {appraiserName}
-            </span>
-          </div>
-
-          {/* 5. Total Skor */}
-          <div className="min-w-0 col-span-1 sm:col-span-1 lg:col-span-1">
-            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 whitespace-nowrap">
-              Total Skor
-            </span>
-            <div className="mt-1 flex items-baseline gap-1 whitespace-nowrap">
-              <span className="text-xs sm:text-sm font-bold text-blue-600">
-                {liveAnnualOverall.overallScoreDisplay}
+        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-y-3.5 gap-x-6">
+          {/* 1-4. Informasi Karyawan */}
+          <div className="grid grid-cols-2 sm:grid-cols-12 gap-x-5 gap-y-3 flex-1 min-w-0">
+            {/* 1. Nama Karyawan (Alokasi ruang lebih lebar + text wrap bila panjang agar terbaca penuh) */}
+            <div className="min-w-0 col-span-2 sm:col-span-5 lg:col-span-4">
+              <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Nama Karyawan
               </span>
-              <span className="text-[11px] font-semibold text-blue-600">
-                ({liveAnnualOverall.grade})
-              </span>
-            </div>
-          </div>
-
-          {/* 6. Progress */}
-          <div className="min-w-0 col-span-1 sm:col-span-1 lg:col-span-1">
-            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 whitespace-nowrap">
-              Progress
-            </span>
-            <div className="mt-1 text-xs sm:text-sm font-semibold text-slate-800 whitespace-nowrap">
-              {overallProgressParameters} Parameter
-            </div>
-          </div>
-
-          {/* 7. Status */}
-          <div className="min-w-0 col-span-2 sm:col-span-2 lg:col-span-2">
-            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 whitespace-nowrap">
-              Status
-            </span>
-            <div className="mt-1">
               <span
-                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border whitespace-nowrap ${lifecycleStatus.badgeClass}`}
-                title={lifecycleStatus.description}
+                className="mt-1 block text-xs sm:text-sm font-bold text-slate-900 leading-snug break-words"
+                title={initialDetail?.employee.name || currentEmp?.name || "-"}
               >
-                <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${lifecycleStatus.dotClass}`} />
-                <span className="truncate">{lifecycleStatus.label}</span>
+                {initialDetail?.employee.name || currentEmp?.name || "-"}
               </span>
+            </div>
+
+            {/* 2. Departemen */}
+            <div className="min-w-0 col-span-1 sm:col-span-2 lg:col-span-2">
+              <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Departemen
+              </span>
+              <span
+                className="mt-1 block text-xs sm:text-sm font-semibold text-slate-700 leading-snug break-words"
+                style={{ wordBreak: "keep-all", overflowWrap: "normal" }}
+                title={initialDetail?.employee.departmentName || currentEmp?.departmentName || "-"}
+              >
+                {initialDetail?.employee.departmentName || currentEmp?.departmentName || "-"}
+              </span>
+            </div>
+
+            {/* 3. Jabatan */}
+            <div className="min-w-0 col-span-1 sm:col-span-2 lg:col-span-3">
+              <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Jabatan
+              </span>
+              <span
+                className="mt-1 block text-xs sm:text-sm font-medium text-slate-700 leading-snug break-words"
+                title={initialDetail?.employee.jobPosition || currentEmp?.jobPosition || "-"}
+              >
+                {initialDetail?.employee.jobPosition || currentEmp?.jobPosition || "-"}
+              </span>
+            </div>
+
+            {/* 4. Penilai */}
+            <div className="min-w-0 col-span-2 sm:col-span-3 lg:col-span-3">
+              <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Penilai
+              </span>
+              <span
+                className="mt-1 block text-xs sm:text-sm font-medium text-slate-700 leading-snug break-words"
+                title={appraiserName}
+              >
+                {appraiserName}
+              </span>
+            </div>
+          </div>
+
+          {/* 5-7. Metrik Penilaian & Status (Dedicated Flex Row - Bebas Bentrok/Ketumpuk) */}
+          <div className="flex items-center gap-6 sm:gap-8 shrink-0 pt-3 lg:pt-0 border-t lg:border-t-0 lg:border-l lg:border-slate-200 lg:pl-6">
+            {/* 5. Total Skor */}
+            <div className="min-w-0 shrink-0">
+              <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 whitespace-nowrap">
+                Total Skor
+              </span>
+              <div className="mt-1 flex items-baseline gap-1 whitespace-nowrap">
+                <span className="text-xs sm:text-sm font-bold text-blue-600">
+                  {liveAnnualOverall.overallScoreDisplay}
+                </span>
+                <span className="text-[11px] font-semibold text-blue-600">
+                  ({liveAnnualOverall.grade})
+                </span>
+              </div>
+            </div>
+
+            {/* 6. Progress */}
+            <div className="min-w-0 shrink-0">
+              <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 whitespace-nowrap">
+                Progress
+              </span>
+              <div className="mt-1 text-xs sm:text-sm font-semibold text-slate-800 whitespace-nowrap">
+                {overallProgressParameters} Parameter
+              </div>
+            </div>
+
+            {/* 7. Status */}
+            <div className="min-w-0 shrink-0">
+              <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 whitespace-nowrap">
+                Status
+              </span>
+              <div className="mt-1">
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border whitespace-nowrap ${lifecycleStatus.badgeClass}`}
+                  title={lifecycleStatus.description}
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${lifecycleStatus.dotClass}`} />
+                  <span>{lifecycleStatus.label}</span>
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -3316,20 +3327,20 @@ export function MonthlyAssessmentView({
                 disabled={isSubmittingMyAssessment}
                 onClick={handleSubmitMyAssessment}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 px-4 py-2 text-xs font-semibold text-white shadow-xs transition active:scale-95 cursor-pointer disabled:opacity-60"
-                title="Kirim ulang nilai parameter tugas Anda yang telah direvisi"
+                title="Kirim ulang formulir penilaian yang telah diperbaiki"
               >
                 <RotateCcw className="h-4 w-4" />
-                <span>{isSubmittingMyAssessment ? "Mengirim..." : "Kirim Ulang Revisi Saya"}</span>
+                <span>{isSubmittingMyAssessment ? "Mengirim..." : "Kirim Revisi Penilaian"}</span>
               </button>
             ) : initialDetail?.myAssessmentStatus?.isSubmitted ? (
               <button
                 type="button"
                 onClick={() => setIsAuditModalOpen(true)}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3.5 py-2 text-xs font-semibold text-emerald-800 shadow-2xs hover:bg-emerald-100 transition cursor-pointer"
-                title="Penilaian Anda telah dikirim dan terkunci. Klik untuk melihat detail audit."
+                title="Penilaian telah dikirim dan terkunci. Klik untuk melihat detail audit."
               >
                 <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                <span>Penilaian Saya Terkirim ✓</span>
+                <span>Penilaian Terkirim ✓</span>
               </button>
             ) : (
               <div className="flex items-center gap-2">
